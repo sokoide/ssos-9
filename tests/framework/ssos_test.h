@@ -1,0 +1,168 @@
+#pragma once
+
+#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+
+// Test framework for SSOS - designed for LOCAL_MODE testing
+// Lightweight framework focusing on fast feedback and regression detection
+
+// Global test statistics
+extern int total_tests;
+extern int failed_tests;
+extern const char* current_test_name;
+
+// Reset all stub/simulated HW state before a test (defined in test_mocks.c)
+void reset_test_state(void);
+
+// Test definition macros
+#define TEST(name) \
+    void test_##name(void); \
+    void test_##name(void)
+
+// Test execution macro
+#define RUN_TEST(name) \
+    do { \
+        current_test_name = #name; \
+        total_tests++; \
+        printf("Running test: %s... ", #name); \
+        fflush(stdout); \
+        int failures_before = failed_tests; \
+        test_##name(); \
+        if (failed_tests == failures_before) printf("PASS\n"); \
+    } while(0)
+
+// Assertion macros
+#define ASSERT_EQ(a, b) \
+    do { \
+        if ((a) != (b)) { \
+            printf("FAIL\n"); \
+            printf("  %s:%d: Expected ", __FILE__, __LINE__); \
+            _print_value((uintptr_t)b); \
+            printf(", got "); \
+            _print_value((uintptr_t)a); \
+            printf("\n"); \
+            failed_tests++; \
+            return; \
+        } \
+    } while(0)
+
+#define ASSERT_NEQ(a, b) \
+    do { \
+        if ((a) == (b)) { \
+            printf("FAIL\n"); \
+            printf("  %s:%d: Expected ", __FILE__, __LINE__); \
+            _print_value((uintptr_t)a); \
+            printf(" != "); \
+            _print_value((uintptr_t)b); \
+            printf("\n"); \
+            failed_tests++; \
+            return; \
+        } \
+    } while(0)
+
+#define ASSERT_NOT_NULL(ptr) \
+    do { \
+        if ((ptr) == NULL) { \
+            printf("FAIL\n"); \
+            printf("  %s:%d: Expected non-NULL pointer\n", __FILE__, __LINE__); \
+            failed_tests++; \
+            return; \
+        } \
+    } while(0)
+
+#define ASSERT_NULL(ptr) \
+    do { \
+        if ((ptr) != NULL) { \
+            printf("FAIL\n"); \
+            printf("  %s:%d: Expected NULL pointer, got %p\n", __FILE__, __LINE__, (void*)(ptr)); \
+            failed_tests++; \
+            return; \
+        } \
+    } while(0)
+
+#define ASSERT_TRUE(condition) \
+    do { \
+        if (!(condition)) { \
+            printf("FAIL\n"); \
+            printf("  %s:%d: Expected true condition\n", __FILE__, __LINE__); \
+            failed_tests++; \
+            return; \
+        } \
+    } while(0)
+
+#define ASSERT_FALSE(condition) \
+    do { \
+        if (condition) { \
+            printf("FAIL\n"); \
+            printf("  %s:%d: Expected false condition\n", __FILE__, __LINE__); \
+            failed_tests++; \
+            return; \
+        } \
+    } while(0)
+
+// Memory-specific assertions
+#define ASSERT_ALIGNED_4K(ptr) \
+    do { \
+        uintptr_t addr = (uintptr_t)(ptr); \
+        if (addr & 0xFFF) { \
+            printf("FAIL\n"); \
+            printf("  %s:%d: Address 0x%08lx not 4K-aligned\n", __FILE__, __LINE__, (unsigned long)addr); \
+            failed_tests++; \
+            return; \
+        } \
+    } while(0)
+
+#define ASSERT_IN_RANGE(val, min, max) \
+    do { \
+        if ((val) < (min) || (val) > (max)) { \
+            printf("FAIL\n"); \
+            printf("  %s:%d: Value ", __FILE__, __LINE__); \
+            _print_value((uintptr_t)val); \
+            printf(" not in range ["); \
+            _print_value((uintptr_t)min); \
+            printf(", "); \
+            _print_value((uintptr_t)max); \
+            printf("]\n"); \
+            failed_tests++; \
+            return; \
+        } \
+    } while(0)
+
+// Test utilities
+void test_framework_init(void);
+void test_framework_report(void);
+int test_framework_exit_code(void);
+
+// Mock/stub support
+void reset_mocks(void);  /* deprecated alias of reset_test_state() */
+
+// String assertion helper (used by numfmt tests, etc.)
+#define ASSERT_STR_EQ(actual, expected) \
+    do { \
+        if (strcmp((actual), (expected)) != 0) { \
+            printf("FAIL\n"); \
+            printf("  %s:%d: Expected \"%s\", got \"%s\"\n", \
+                   __FILE__, __LINE__, (expected), (actual)); \
+            failed_tests++; \
+            return; \
+        } \
+    } while(0)
+
+// Helper function for printing values of different types
+static inline void _print_value(uintptr_t val) {
+    // Check if this looks like a negative integer (high bits set in 32-bit space)
+    // For error codes, we expect 32-bit signed integers
+    if ((val & 0x80000000U) != 0) {
+        // High bit is set, this is a negative integer in two's complement
+        printf("%d", (int32_t)val);
+    } else if (val == 0) {
+        printf("0");
+    } else if (val >= 0x1000 && val <= 0x7FFFFFFFULL) {
+        // Looks like a valid pointer or positive integer
+        printf("%p", (void*)val);
+    } else {
+        // Treat as regular integer
+        printf("%d", (int)val);
+    }
+}

@@ -1,0 +1,52 @@
+#ifndef SS_WIN_H
+#define SS_WIN_H
+
+#include <stdint.h>
+#include "../gfx/gfx.h"
+
+#define SS_MAX_WINDOWS  32
+#define SS_WIN_VISIBLE  0x01
+#define SS_WIN_DIRTY    0x02
+
+typedef struct SSWindow SSWindow;
+struct SSWindow {
+    uint16_t x, y, w, h;
+    uint16_t z;
+    uint16_t flags;
+    uint16_t dirty_x, dirty_y, dirty_w, dirty_h;
+    void (*render)(SSWindow* self, const SSGfxRect* clip);
+    uint16_t id;
+    char title[20];
+    char content[3][30];
+    char content_prev[3][30];
+};
+
+/* The UI task owns the window model and all rendering. Local IRQ guards on
+ * selected setters do not make the full API safe for concurrent callers. */
+void     ss_win_init(void);
+/* Returns 0 when geometry is not representable or no slot is available. */
+uint16_t ss_win_create(int x, int y, int w, int h, uint16_t z);
+void     ss_win_destroy(uint16_t id);
+void     ss_win_show(uint16_t id);
+void     ss_win_hide(uint16_t id);
+void     ss_win_damage(uint16_t id, int x, int y, int w, int h);
+void     ss_win_render_all(void);
+void     ss_win_render_region(int rx, int ry, int rw, int rh);
+void     ss_win_move(uint16_t id, int x, int y);
+int      ss_win_hit_test(int mx, int my);
+int      ss_win_get_x(uint16_t id);
+int      ss_win_get_y(uint16_t id);
+int      ss_win_get_w(uint16_t id);
+int      ss_win_get_h(uint16_t id);
+int      ss_win_get_z(uint16_t id);
+/* Returns NULL for an invalid or destroyed window ID. */
+SSWindow* ss_win_get_ptr(uint16_t id);
+void     ss_win_set_title(uint16_t id, const char* title);
+void     ss_win_set_content_line(uint16_t id, int line, const char* text);
+void     ss_win_set_render(uint16_t id, void (*render)(SSWindow*, const SSGfxRect*));
+void     ss_win_set_z(uint16_t id, uint16_t z);
+void     ss_win_mark_dirty(uint16_t id);
+
+extern uint16_t ss_win_active_z;   /* highest visible z, set by render_all */
+
+#endif /* SS_WIN_H */

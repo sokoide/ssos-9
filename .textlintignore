@@ -1,0 +1,7 @@
+.git/*
+.gemini/*
+.codex/*
+.claude/*
+.serena/*
+.omc/*
+node_modules/*

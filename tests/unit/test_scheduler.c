@@ -1,0 +1,327 @@
+/* test_scheduler.c - scheduler queue / task lifecycle / sleep-wakeup tests.
+ *
+ * Learning objective: the scheduler's C logic (priority bitmap queue, task
+ * state machine, timed wakeups) is HW-independent; only the interrupt guards,
+ * tick source, and context-switch asm touch HW. Those are stubbed in
+ * test_mocks.c, so the same scheduler.c we ship runs here. The stub does NOT
+ * swap register state — ss_task_yield just drives the queue rotation — so we
+ * test state transitions, not true concurrency.
+ *
+ * Native coverage for the supported preemptive scheduler implementation
+ * because their queue/task/wakeup logic is identical. */
+
+#include "kernel.h"
+#include "sched_profile.h"
+#include "scheduler.h"
+#include "ssos_test.h"
+
+/* ss_tick_counter is defined in test_mocks.c; bump it to simulate ticks. */
+#define ADVANCE_TICK(n) (ss_tick_counter += (n))
+
+static void* dummy_entry(void* arg) {
+    (void)arg;
+    return NULL;
+}
+
+/* Create a task at the given priority using the auto stack arena. */
+static uint16_t make_task(uint8_t pri) {
+    SSTaskInfo info = {
+        .entry = dummy_entry,
+        .pri = pri,
+        .ctx_level = SS_CTX_NORMAL,
+        .stack_size = SS_TASK_STACK,
+        .stack = NULL, /* auto-allocate from ss_task_stack_base */
+    };
+    return ss_task_create(&info);
+}
+
+/* ---- queue primitives ---- */
+
+TEST(sched_init_clears_state) {
+    ss_sched_init();
+    ASSERT_EQ(ready_queue.pri_bitmap, 0);
+    ASSERT_NULL(ss_curr_task);
+    ASSERT_NULL(ss_scheduled_task);
+}
+
+TEST(pick_empty_returns_null) {
+    ss_sched_init();
+    ASSERT_NULL(ss_sched_pick());
+}
+
+TEST(enqueue_dequeue_single_pri) {
+    ss_sched_init();
+    SSTask a = {.pri = 5}, b = {.pri = 5};
+    ss_sched_enqueue(&a);
+    ss_sched_enqueue(&b);
+    /* FIFO: head=a, tail=b. */
+    ASSERT_EQ(ready_queue.heads[5], &a);
+    ASSERT_EQ(ready_queue.tails[5], &b);
+    ASSERT_NEQ(ready_queue.pri_bitmap & (1 << (15 - 5)), 0);
+
+    ASSERT_EQ(ss_sched_pick(), &a); /* head of highest set pri */
+
+    ss_sched_dequeue(&a);
+    ASSERT_EQ(ready_queue.heads[5], &b);
+    ss_sched_dequeue(&b);
+    ASSERT_EQ(ready_queue.pri_bitmap, 0); /* bit cleared when empty */
+}
+
+TEST(pick_prefers_lower_pri_number) {
+    ss_sched_init();
+    SSTask hi = {.pri = 0}; /* pri 0 = highest (bit 15) */
+    SSTask lo = {.pri = 10};
+    ss_sched_enqueue(&lo);
+    ss_sched_enqueue(&hi);
+    ASSERT_EQ(ss_sched_pick(), &hi);
+}
+
+/* ---- task lifecycle ---- */
+
+TEST(task_create_null_entry_rejected) {
+    ss_sched_init();
+    SSTaskInfo info = {
+        .entry = NULL, .pri = 1, .stack_size = SS_TASK_STACK, .stack = NULL};
+    ASSERT_EQ(ss_task_create(&info), (uint16_t)SS_ERR_PARAM);
+}
+
+TEST(task_create_bad_pri_rejected) {
+    ss_sched_init();
+    SSTaskInfo info = {.entry = dummy_entry,
+                       .pri = SS_MAX_PRI,
+                       .stack_size = SS_TASK_STACK,
+                       .stack = NULL};
+    ASSERT_EQ(ss_task_create(&info), (uint16_t)SS_ERR_PARAM);
+}
+
+TEST(task_create_bad_context_level_rejected) {
+    ss_sched_init();
+    SSTaskInfo info = {
+        .entry = dummy_entry, .pri = 1, .ctx_level = SS_CTX_FULL + 1};
+    ASSERT_EQ(ss_task_create(&info), (uint16_t)SS_ERR_PARAM);
+}
+
+TEST(task_create_custom_stack_minimum) {
+    ss_sched_init();
+    uint32_t stack[SS_MIN_TASK_STACK / sizeof(uint32_t)];
+    SSTaskInfo info = {.entry = dummy_entry,
+                       .pri = 1,
+                       .stack_size = SS_MIN_TASK_STACK - 4,
+                       .stack =
+                           &stack[SS_MIN_TASK_STACK / sizeof(uint32_t) - 1]};
+    ASSERT_EQ(ss_task_create(&info), (uint16_t)SS_ERR_PARAM);
+    info.stack_size = SS_MIN_TASK_STACK;
+    ASSERT_EQ(ss_task_create(&info), 1);
+}
+
+TEST(task_create_bad_custom_stack_rejected) {
+    ss_sched_init();
+    SSTaskInfo info = {
+        .entry = dummy_entry,
+        .pri = 1,
+        .stack_size = 6,
+        .stack = (void*)(uintptr_t)1,
+    };
+    ASSERT_EQ(ss_task_create(&info), (uint16_t)SS_ERR_PARAM);
+}
+
+TEST(task_create_missing_arena_does_not_consume_slot) {
+    ss_sched_init();
+    uint8_t* arena = ss_task_stack_base;
+    ss_task_stack_base = NULL;
+
+    ASSERT_EQ(make_task(1), (uint16_t)SS_ERR_STATE);
+    ASSERT_EQ(tcb_table[0].state, SS_TS_NONE);
+
+    ss_task_stack_base = arena;
+    ASSERT_EQ(make_task(1), 1);
+}
+
+TEST(task_create_returns_ascending_ids) {
+    ss_sched_init();
+    uint16_t a = make_task(1);
+    uint16_t b = make_task(1);
+    ASSERT_EQ(a, 1);
+    ASSERT_EQ(b, 2);
+    ASSERT_EQ(tcb_table[a - 1].state, SS_TS_DORMANT);
+    ASSERT_EQ(tcb_table[a - 1].pri, 1);
+}
+
+TEST(task_create_exhaustion) {
+    ss_sched_init();
+    uintptr_t arena_start = (uintptr_t)ss_task_stack_base;
+    uintptr_t arena_end = arena_start + SS_MAX_TASKS * SS_TASK_STACK;
+    for (int i = 0; i < SS_MAX_TASKS; i++) {
+        uint16_t id = make_task(1);
+        ASSERT_EQ(id, (uint16_t)(i + 1));
+
+        SSTask* tcb = &tcb_table[id - 1];
+        uintptr_t stack_end = (uintptr_t)tcb->stack_base + 4;
+        uintptr_t stack_start = stack_end - tcb->stack_size;
+        ASSERT_EQ(stack_start, arena_start + i * SS_TASK_STACK);
+        ASSERT_EQ(stack_end, arena_start + (i + 1) * SS_TASK_STACK);
+        ASSERT_TRUE(stack_start >= arena_start && stack_end <= arena_end);
+        ASSERT_EQ(*(uint32_t*)stack_start, 0xDEADCAFEu);
+        ASSERT_EQ(*(uint32_t*)(stack_end - 4), 0xDEADCAFEu);
+    }
+    /* Table full -> SS_ERR_LIMIT. */
+    ASSERT_EQ(make_task(1), (uint16_t)SS_ERR_LIMIT);
+}
+
+TEST(task_start_moves_to_ready) {
+    ss_sched_init();
+    uint16_t id = make_task(1);
+    ASSERT_EQ(ss_task_start(id), (uint16_t)SS_OK);
+    ASSERT_EQ(tcb_table[id - 1].state, SS_TS_READY);
+    /* First started task becomes current. */
+    ASSERT_EQ(ss_curr_task, &tcb_table[id - 1]);
+    ASSERT_NEQ(ready_queue.pri_bitmap & (1 << (15 - 1)), 0);
+}
+
+TEST(task_start_double_rejected) {
+    ss_sched_init();
+    uint16_t id = make_task(1);
+    ss_task_start(id);
+    ASSERT_EQ(ss_task_start(id), (uint16_t)SS_ERR_STATE);
+}
+
+TEST(task_start_invalid_id_rejected) {
+    ss_sched_init();
+    ASSERT_EQ(ss_task_start(0), (uint16_t)SS_ERR_ID);
+    ASSERT_EQ(ss_task_start(SS_MAX_TASKS + 1), (uint16_t)SS_ERR_ID);
+}
+
+/* ---- context switch (round-robin within a priority) ---- */
+
+TEST(context_switch_rotates_same_pri) {
+    ss_sched_init();
+    uint16_t a = make_task(1);
+    uint16_t b = make_task(1);
+    ss_task_start(a);
+    ss_task_start(b);
+    /* curr == a (first started). Both ready. */
+    ASSERT_EQ(ss_curr_task, &tcb_table[a - 1]);
+    ss_do_context_switch();
+    /* a rotated to tail, b picked as next. */
+    ASSERT_EQ(ss_curr_task, &tcb_table[b - 1]);
+}
+
+/* ---- sleep / wakeup ---- */
+
+TEST(task_sleep_waits_and_wakes) {
+    ss_sched_init();
+    uint16_t a = make_task(1);
+    uint16_t b = make_task(1);
+    ss_task_start(a);
+    ss_task_start(b);
+    SSTask* t = &tcb_table[a - 1];
+
+    /* Sleep 10 ticks: state -> WAIT, removed from ready queue. */
+    ASSERT_EQ(ss_task_sleep(10), (uint16_t)SS_OK);
+    ASSERT_EQ(t->state, SS_TS_WAIT);
+    ASSERT_EQ(ss_curr_task, &tcb_table[b - 1]);
+
+    /* Not yet elapsed: wakeups keeps it asleep. */
+    ADVANCE_TICK(5);
+    ss_do_wakeups();
+    ASSERT_EQ(t->state, SS_TS_WAIT);
+
+    /* Elapsed: reaped back to READY and re-enqueued. */
+    ADVANCE_TICK(5); /* now == 10 == wait_until */
+    ss_do_wakeups();
+    ASSERT_EQ(t->state, SS_TS_READY);
+    ASSERT_NEQ(ready_queue.pri_bitmap & (1 << (15 - 1)), 0);
+}
+
+TEST(task_sleep_no_current_fails) {
+    ss_sched_init();
+    ASSERT_EQ(ss_task_sleep(5), (uint16_t)SS_ERR_STATE);
+}
+
+TEST(task_sleep_without_runnable_peer_fails) {
+    ss_sched_init();
+    uint16_t id = make_task(1);
+    ss_task_start(id);
+
+    ASSERT_EQ(ss_task_sleep(5), (uint16_t)SS_ERR_STATE);
+    ASSERT_EQ(tcb_table[id - 1].state, SS_TS_READY);
+    ASSERT_EQ(ss_sched_pick(), &tcb_table[id - 1]);
+}
+
+TEST(task_sleep_rejects_ambiguous_long_delay) {
+    ss_sched_init();
+    ASSERT_EQ(ss_task_sleep(SS_MAX_SLEEP_TICKS + 1u), (uint16_t)SS_ERR_PARAM);
+}
+
+TEST(task_sleep_wakes_across_tick_wrap) {
+    ss_sched_init();
+    uint16_t a = make_task(1);
+    uint16_t b = make_task(1);
+    ss_task_start(a);
+    ss_task_start(b);
+    SSTask* sleeper = &tcb_table[a - 1];
+
+    ss_tick_counter = UINT32_MAX - 3u;
+    ASSERT_EQ(ss_task_sleep(8), (uint16_t)SS_OK);
+    ASSERT_EQ(sleeper->wait_until, 4u);
+
+    ss_tick_counter = 0;
+    ss_do_wakeups();
+    ASSERT_EQ(sleeper->state, SS_TS_WAIT);
+
+    ss_tick_counter = 4;
+    ss_do_wakeups();
+    ASSERT_EQ(sleeper->state, SS_TS_READY);
+}
+
+TEST(task_initializing_cannot_start) {
+    ss_sched_init();
+    uint16_t id = make_task(1);
+    extern uint16_t ss_test_create_probe_result(void);
+    ASSERT_EQ(ss_test_create_probe_result(), (uint16_t)SS_ERR_STATE);
+    ASSERT_EQ(tcb_table[id - 1].state, SS_TS_DORMANT);
+    ASSERT_EQ(ss_task_start(id), SS_OK);
+}
+
+TEST(scheduler_latency_separates_ready_from_execution) {
+    reset_test_state();
+    ss_sched_init();
+    uint16_t a = make_task(1), b = make_task(8);
+    ss_task_start(a);
+    ss_task_start(b);
+    ASSERT_EQ(ss_task_sleep(5), SS_OK);
+    ss_tick_counter = 8;
+    ss_do_wakeups();
+    ss_tick_counter = 10;
+    ss_do_context_switch();
+    SSSchedProfile p;
+    ss_sched_profile_snapshot(&p);
+    ASSERT_EQ(p.max_deadline_to_ready_ticks, 3u);
+    ASSERT_EQ(p.max_ready_to_run_ticks, 2u);
+    ASSERT_EQ(p.wakeups, 1u);
+}
+void run_scheduler_tests(void) {
+    RUN_TEST(scheduler_latency_separates_ready_from_execution);
+    RUN_TEST(task_initializing_cannot_start);
+    RUN_TEST(sched_init_clears_state);
+    RUN_TEST(pick_empty_returns_null);
+    RUN_TEST(enqueue_dequeue_single_pri);
+    RUN_TEST(pick_prefers_lower_pri_number);
+    RUN_TEST(task_create_null_entry_rejected);
+    RUN_TEST(task_create_bad_pri_rejected);
+    RUN_TEST(task_create_bad_context_level_rejected);
+    RUN_TEST(task_create_custom_stack_minimum);
+    RUN_TEST(task_create_bad_custom_stack_rejected);
+    RUN_TEST(task_create_missing_arena_does_not_consume_slot);
+    RUN_TEST(task_create_returns_ascending_ids);
+    RUN_TEST(task_create_exhaustion);
+    RUN_TEST(task_start_moves_to_ready);
+    RUN_TEST(task_start_double_rejected);
+    RUN_TEST(task_start_invalid_id_rejected);
+    RUN_TEST(context_switch_rotates_same_pri);
+    RUN_TEST(task_sleep_waits_and_wakes);
+    RUN_TEST(task_sleep_no_current_fails);
+    RUN_TEST(task_sleep_without_runnable_peer_fails);
+    RUN_TEST(task_sleep_rejects_ambiguous_long_delay);
+    RUN_TEST(task_sleep_wakes_across_tick_wrap);
+}

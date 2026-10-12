@@ -1,0 +1,84 @@
+# SSOS
+tags
+*.x
+*.X
+*.bin
+*.o
+*.elf
+*.lst
+*.map
+empty.xdf
+*.xdf
+compile_commands.json
+.cache
+tools/makedisk/makedisk
+test_runner_native_*
+
+# ---- OS / Editor ----
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Machine-specific LSP config (contains absolute toolchain path)
+.clangd
+
+# VSCode / Claude / MCP / Codex / Gemini
+.vscode/
+.claude/
+.serena/
+.codex/
+.gemini/
+.omc/
+.zcode/
+
+# ---- Build artifacts ----
+*.o
+*.obj
+*.so
+*.dll
+*.dylib
+*.a
+*.lib
+*.lo
+*.la
+*.lai
+*.out
+*.exe
+*.dSYM/
+
+# ---- C/C++ specific ----
+*.d
+*.gcda
+*.gcno
+*.gcov
+*.profraw
+*.profdata
+
+# ---- Build system dirs ----
+/build/
+/ssos/**/build/
+/dist/
+/out/
+/bin/
+/CMakeFiles/
+/CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# ---- Node.js ----
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# ---- Logs & Temp ----
+*.log
+*.tmp
+*.bak
+
+/tests/**/build/
+__pycache__/
+
+/tools/makedisk/build/

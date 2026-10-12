@@ -1,0 +1,75 @@
+# Native unit tests for the preemptive-only scheduler.
+
+BUILD_DEF = -DSS_BUILD_PREEMPTIVE
+
+CC      = cc
+CFLAGS  = -O2 -g -Wall -Wextra -Werror -std=c11 $(BUILD_DEF) -DSS_HOST_TEST -DSS_PROFILE_RUNTIME=1 -DSS_TASK_CREATE_PROBE -DSS_PROFILE_GFX=1 \
+          -Iframework -I../ssos/os/util -I../ssos/os/mem \
+          -I../ssos/os/kernel -I../ssos/os/win -I../ssos/os/gfx \
+          -I../ssos/os/ipc -I../ssos/os/app
+
+SSOS    = ../ssos/os
+TARGET  = test_runner_native_preemptive
+
+# Keep instrumented runners separate so switching modes cannot reuse a stale
+# binary. Stop at the first sanitizer finding, including undefined behavior.
+ifeq ($(SANITIZE),1)
+TARGET := $(TARGET)_sanitize
+CFLAGS += -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+endif
+
+# Pure-logic + host-seamed graphics + stubbed-HW sources. premain.c/main.c
+# and the asm objects (entry.s, interrupts.s) remain excluded.
+include ../ssos/common-sources.mk
+OS_SRCS = $(addprefix $(SSOS)/,$(SS_CORE_SRCS) $(SS_XDF_SRCS))
+
+FRAMEWORK_SRCS = \
+	framework/test_runner.c \
+	framework/test_mocks.c
+
+UNIT_SRCS = \
+	unit/test_runtime_guard.c \
+	unit/test_numfmt.c \
+	unit/test_mem.c \
+	unit/test_scheduler.c \
+	unit/test_work_queue.c \
+	unit/test_window.c \
+	unit/test_gfx.c \
+	unit/test_ipc.c \
+	unit/test_scene.c
+
+ALL_SRCS = $(FRAMEWORK_SRCS) $(UNIT_SRCS) $(OS_SRCS)
+# This suite is compiled in one invocation; any shared header change must
+# invalidate the runner just like a source change. Patterns that match
+# nothing expand away, so reserve every include location up front: the
+# tests root, unit/, and two levels under os/ (kernel/<sched>/ included).
+HEADERS = $(wildcard *.h framework/*.h unit/*.h \
+           $(SSOS)/*.h $(SSOS)/*/*.h $(SSOS)/*/*/*.h)
+
+.PHONY: all test clean
+all: $(TARGET)
+
+test: $(TARGET)
+@echo "=== SSOS Native Tests (preemptive) ==="
+	./$(TARGET)
+
+$(TARGET): $(ALL_SRCS) $(HEADERS) Makefile.native ../ssos/common-sources.mk
+	$(CC) $(CFLAGS) $(ALL_SRCS) -o $(TARGET)
+
+clean:
+	rm -f test_runner_native_preemptive test_runner_native_preemptive_sanitize
+
+.PHONY: FORCE
+FORCE:
+build/native-preemptive-$(SANITIZE).config: FORCE
+	@python3 ../tools/build-config.py $@ $(CC) $(CFLAGS)
+$(TARGET): build/native-preemptive-$(SANITIZE).config
+
+BENCH_PROFILE ?= 1
+BENCH_TARGET = build/native-bench-preemptive-profile$(BENCH_PROFILE)
+.PHONY: bench
+bench: $(BENCH_TARGET)
+	./$(BENCH_TARGET)
+$(BENCH_TARGET): bench/native_bench.c framework/test_mocks.c $(OS_SRCS) $(HEADERS) Makefile.native ../ssos/common-sources.mk
+	@mkdir -p build
+	$(CC) $(subst -DSS_PROFILE_RUNTIME=1,-DSS_PROFILE_RUNTIME=$(BENCH_PROFILE),$(subst -DSS_PROFILE_GFX=1,-DSS_PROFILE_GFX=$(BENCH_PROFILE),$(CFLAGS))) bench/native_bench.c framework/test_mocks.c $(OS_SRCS) -o $@

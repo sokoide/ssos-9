@@ -1,0 +1,793 @@
+#include "gfx.h"
+#include "profile.h"
+#include <stdint.h>
+#include <string.h>
+
+/* Native pixel tests use RAM pages of the same layout as GVRAM.  Keeping the
+ * replacement behind SS_HOST_TEST leaves target addresses and volatile MMIO
+ * semantics unchanged in production builds. */
+#ifdef SS_HOST_TEST
+static volatile uint16_t test_page0[1024 * 512];
+static volatile uint16_t test_page1[1024 * 512];
+volatile uint16_t ss_gfx_test_crtc[32];
+#define SS_GFX_PAGE0 test_page0
+#define SS_GFX_PAGE1 test_page1
+#else
+#define SS_GFX_PAGE0 ((volatile uint16_t*)0xC00000)
+#define SS_GFX_PAGE1 ((volatile uint16_t*)0xC80000)
+#endif
+
+/* Graphics Mode Table */
+static const SSGfxMode mode_table[] = {
+    [SS_CRTMOD_8] =
+        {
+            .crtmod = 8,
+            .screen_w = 512,
+            .screen_h = 512,
+            .display_w = 512,
+            .display_h = 512,
+            .color_count = 256,
+            .page_count = 2,
+            .bytes_per_line = 1024,
+            .page_size = 1024 * 512,
+            .page0 = SS_GFX_PAGE0,
+            .page1 = SS_GFX_PAGE1,
+        },
+    [SS_CRTMOD_16] =
+        {
+            .crtmod = 16,
+            .screen_w = 1024,
+            .screen_h = 1024,
+            .display_w = 768,
+            .display_h = 512,
+            .color_count = 16,
+            .page_count = 1,
+            .bytes_per_line = 2048,
+            .page_size = 2048 * 512,
+            .page0 = SS_GFX_PAGE0,
+            .page1 = NULL,
+        },
+};
+
+/* Current graphics mode pointer (default: mode 16) */
+const SSGfxMode* ss_current_mode = &mode_table[SS_CRTMOD_16];
+
+/* Mode Selection Function */
+void ss_gfx_set_mode(int mode) {
+    if (ss_gfx_dma_stop_unconfirmed())
+        return;
+    if (mode == SS_CRTMOD_8 || mode == SS_CRTMOD_16) {
+        ss_current_mode = &mode_table[mode];
+    }
+}
+
+volatile uint16_t* ss_draw_page;
+volatile uint16_t* ss_display_page;
+uint8_t ss_draw_idx;
+uint8_t ss_display_idx;
+
+#ifdef SS_HOST_TEST
+static volatile SSDmaReg test_dma_ch2;
+static volatile SSDmaReg* dma_ch2 = &test_dma_ch2;
+#else
+static volatile SSDmaReg* dma_ch2 = (volatile SSDmaReg*)SS_DMA_CH2_BASE;
+#endif
+static uint16_t dma_fill_buf[512];
+static SSXfrInf xfr_table __attribute__((aligned(2)));
+
+#define DMA_CSR_COC 0x80
+#define DMA_CSR_ERR 0x10
+#define DMA_CSR_ACT 0x08
+#define DMA_CCR_SAB 0x10
+/* A timeout indicates that waiting for this DMA path is not productive for
+ * the rest of the process.  Keep the decision outside the per-phase profile,
+ * which is reset between benchmark phases. */
+#ifdef SS_HOST_TEST
+/* Native tests validate CPU rasterization against RAM.  DMAC register and bus
+ * timing remain an X68000 integration concern, so do not enter that path. */
+static uint8_t dma_disabled_after_timeout = 1;
+#else
+static uint8_t dma_disabled_after_timeout;
+#endif
+/* If SAB did not clear ACT, the transfer may still write GVRAM or read the
+ * shared source/descriptor.  This state is sticky until process exit. */
+static volatile uint8_t dma_stop_unconfirmed;
+static volatile uint8_t dma_transfer_owned;
+
+#if SS_PROFILE_GFX
+static int dma_bench_mode;
+
+void ss_gfx_set_dma_bench_mode(int mode) {
+    if (mode >= 0 && mode <= 2)
+        dma_bench_mode = mode;
+}
+#endif
+
+int ss_gfx_dma_stop_unconfirmed(void) { return dma_stop_unconfirmed != 0; }
+
+#ifdef SS_HOST_TEST
+/* -1: CPU only, 0: register stub, 1: abort clears ACT, 2: ACT stays set. */
+static int dma_test_status_mode;
+
+void ss_gfx_test_dma_status_mode(int mode) {
+    dma_test_status_mode = mode;
+    dma_disabled_after_timeout = mode < 0;
+    dma_stop_unconfirmed = 0;
+    dma_transfer_owned = 0;
+}
+
+void ss_gfx_test_dma_in_flight(int mode) {
+    ss_gfx_test_dma_status_mode(mode);
+    dma_transfer_owned = 1;
+}
+
+uint16_t ss_gfx_test_dma_source_first(void) { return dma_fill_buf[0]; }
+#endif
+
+static uint8_t dma_read_status(int aborting) {
+#ifdef SS_HOST_TEST
+    if (dma_test_status_mode == 1)
+        return aborting ? 0 : DMA_CSR_ACT;
+    if (dma_test_status_mode == 2)
+        return DMA_CSR_ACT;
+#endif
+    (void)aborting;
+    return dma_ch2->csr;
+}
+
+const uint8_t ss_font_data[][SS_FONT_H] = {
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, /* 0x20 ' ' */
+    {0x20, 0x20, 0x20, 0x20, 0x20, 0x00, 0x20, 0x00}, /* 0x21 ! */
+    {0x50, 0x50, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00}, /* 0x22 " */
+    {0x00, 0x50, 0xF8, 0x50, 0x50, 0xF8, 0x50, 0x00}, /* 0x23 # */
+    {0x20, 0x70, 0xA0, 0x60, 0x30, 0x30, 0xE0, 0x20}, /* 0x24 $ */
+    {0x10, 0x90, 0xA0, 0x20, 0x40, 0x50, 0x90, 0x80}, /* 0x25 % */
+    {0x20, 0x50, 0x50, 0x60, 0xA8, 0x90, 0x68, 0x00}, /* 0x26 & */
+    {0x20, 0x20, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00}, /* 0x27 ' */
+    {0x10, 0x20, 0x40, 0x40, 0x40, 0x40, 0x20, 0x10}, /* 0x28 ( */
+    {0x40, 0x20, 0x10, 0x10, 0x10, 0x10, 0x20, 0x40}, /* 0x29 ) */
+    {0x00, 0x00, 0x90, 0x60, 0xF0, 0x60, 0x90, 0x00}, /* 0x2A * */
+    {0x00, 0x00, 0x20, 0x20, 0xF8, 0x20, 0x20, 0x00}, /* 0x2B + */
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x20, 0x40}, /* 0x2C , */
+    {0x00, 0x00, 0x00, 0x00, 0xF0, 0x00, 0x00, 0x00}, /* 0x2D - */
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00}, /* 0x2E . */
+    {0x10, 0x10, 0x20, 0x20, 0x40, 0x40, 0x80, 0x80}, /* 0x2F / */
+    {0x00, 0x60, 0x90, 0xB0, 0xD0, 0x90, 0x60, 0x00}, /* 0x30 0 */
+    {0x00, 0x20, 0x60, 0x20, 0x20, 0x20, 0x70, 0x00}, /* 0x31 1 */
+    {0x00, 0x60, 0x90, 0x10, 0x60, 0x80, 0xF0, 0x00}, /* 0x32 2 */
+    {0x00, 0x60, 0x90, 0x20, 0x10, 0x90, 0x60, 0x00}, /* 0x33 3 */
+    {0x00, 0x80, 0xA0, 0xA0, 0xF0, 0x20, 0x20, 0x00}, /* 0x34 4 */
+    {0x00, 0xF0, 0x80, 0xE0, 0x10, 0x10, 0xE0, 0x00}, /* 0x35 5 */
+    {0x00, 0x60, 0x80, 0xE0, 0x90, 0x90, 0x60, 0x00}, /* 0x36 6 */
+    {0x00, 0xF0, 0x90, 0x10, 0x20, 0x40, 0x40, 0x00}, /* 0x37 7 */
+    {0x00, 0x60, 0x90, 0x60, 0x90, 0x90, 0x60, 0x00}, /* 0x38 8 */
+    {0x00, 0x60, 0x90, 0x90, 0x70, 0x10, 0x60, 0x00}, /* 0x39 9 */
+    {0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x20, 0x00}, /* 0x3A : */
+    {0x00, 0x00, 0x00, 0x20, 0x00, 0x20, 0x20, 0x40}, /* 0x3B ; */
+    {0x00, 0x10, 0x20, 0x40, 0x40, 0x20, 0x10, 0x00}, /* 0x3C < */
+    {0x00, 0x00, 0x00, 0xF0, 0x00, 0xF0, 0x00, 0x00}, /* 0x3D = */
+    {0x00, 0x40, 0x20, 0x10, 0x10, 0x20, 0x40, 0x00}, /* 0x3E > */
+    {0x60, 0x90, 0x10, 0x20, 0x40, 0x00, 0x40, 0x00}, /* 0x3F ? */
+    {0x00, 0x60, 0x90, 0xB0, 0xB0, 0x80, 0x70, 0x00}, /* 0x40 @ */
+    {0x00, 0x60, 0x90, 0x90, 0xF0, 0x90, 0x90, 0x00}, /* 0x41 A */
+    {0x00, 0xE0, 0x90, 0xE0, 0x90, 0x90, 0xE0, 0x00}, /* 0x42 B */
+    {0x00, 0x70, 0x80, 0x80, 0x80, 0x80, 0x70, 0x00}, /* 0x43 C */
+    {0x00, 0xE0, 0x90, 0x90, 0x90, 0x90, 0xE0, 0x00}, /* 0x44 D */
+    {0x00, 0x70, 0x80, 0xE0, 0x80, 0x80, 0x70, 0x00}, /* 0x45 E */
+    {0x00, 0x70, 0x80, 0x80, 0xE0, 0x80, 0x80, 0x00}, /* 0x46 F */
+    {0x00, 0x70, 0x80, 0xB0, 0x90, 0x90, 0x70, 0x00}, /* 0x47 G */
+    {0x00, 0x90, 0x90, 0xF0, 0x90, 0x90, 0x90, 0x00}, /* 0x48 H */
+    {0x00, 0x70, 0x20, 0x20, 0x20, 0x20, 0x70, 0x00}, /* 0x49 I */
+    {0x00, 0x70, 0x20, 0x20, 0x20, 0x20, 0xC0, 0x00}, /* 0x4A J */
+    {0x00, 0x90, 0x90, 0xE0, 0x90, 0x90, 0x90, 0x00}, /* 0x4B K */
+    {0x00, 0x80, 0x80, 0x80, 0x80, 0x80, 0x70, 0x00}, /* 0x4C L */
+    {0x00, 0x90, 0xF0, 0xF0, 0x90, 0x90, 0x90, 0x00}, /* 0x4D M */
+    {0x00, 0x90, 0xD0, 0xD0, 0xB0, 0xB0, 0x90, 0x00}, /* 0x4E N */
+    {0x00, 0x60, 0x90, 0x90, 0x90, 0x90, 0x60, 0x00}, /* 0x4F O */
+    {0x00, 0xE0, 0x90, 0x90, 0xE0, 0x80, 0x80, 0x00}, /* 0x50 P */
+    {0x00, 0x60, 0x90, 0x90, 0x90, 0x90, 0x60, 0x30}, /* 0x51 Q */
+    {0x00, 0xE0, 0x90, 0x90, 0xE0, 0x90, 0x90, 0x00}, /* 0x52 R */
+    {0x00, 0x70, 0x80, 0x60, 0x10, 0x10, 0xE0, 0x00}, /* 0x53 S */
+    {0x00, 0xF8, 0x20, 0x20, 0x20, 0x20, 0x20, 0x00}, /* 0x54 T */
+    {0x00, 0x90, 0x90, 0x90, 0x90, 0x90, 0x70, 0x00}, /* 0x55 U */
+    {0x00, 0x90, 0x90, 0x90, 0x90, 0x60, 0x60, 0x00}, /* 0x56 V */
+    {0x00, 0x90, 0x90, 0x90, 0xF0, 0xF0, 0x90, 0x00}, /* 0x57 W */
+    {0x00, 0x90, 0x90, 0x60, 0x60, 0x90, 0x90, 0x00}, /* 0x58 X */
+    {0x00, 0x90, 0x90, 0x90, 0x70, 0x10, 0xE0, 0x00}, /* 0x59 Y */
+    {0x00, 0xF0, 0x10, 0x20, 0x40, 0x80, 0xF0, 0x00}, /* 0x5A Z */
+    {0x70, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x70}, /* 0x5B [ */
+    {0x80, 0x80, 0x40, 0x40, 0x20, 0x20, 0x10, 0x10}, /* 0x5C \ */
+    {0x70, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x70}, /* 0x5D ] */
+    {0x00, 0x20, 0x50, 0x88, 0x00, 0x00, 0x00, 0x00}, /* 0x5E ^ */
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0}, /* 0x5F _ */
+    {0x40, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, /* 0x60 ` */
+    {0x00, 0x00, 0x60, 0x10, 0x70, 0x90, 0x70, 0x00}, /* 0x61 a */
+    {0x80, 0x80, 0xE0, 0x90, 0x90, 0x90, 0xE0, 0x00}, /* 0x62 b */
+    {0x00, 0x00, 0x70, 0x80, 0x80, 0x80, 0x70, 0x00}, /* 0x63 c */
+    {0x10, 0x10, 0x70, 0x90, 0x90, 0x90, 0x70, 0x00}, /* 0x64 d */
+    {0x00, 0x00, 0x70, 0x90, 0xF0, 0x80, 0x70, 0x00}, /* 0x65 e */
+    {0x30, 0x40, 0x40, 0xE0, 0x40, 0x40, 0x40, 0x00}, /* 0x66 f */
+    {0x00, 0x00, 0x70, 0x90, 0x90, 0x60, 0x10, 0xE0}, /* 0x67 g */
+    {0x80, 0x80, 0xE0, 0x90, 0x90, 0x90, 0x90, 0x00}, /* 0x68 h */
+    {0x00, 0x20, 0x00, 0x60, 0x20, 0x20, 0x30, 0x00}, /* 0x69 i */
+    {0x00, 0x20, 0x00, 0x20, 0x20, 0x20, 0x20, 0xC0}, /* 0x6A j */
+    {0x80, 0x80, 0x90, 0xA0, 0xC0, 0xA0, 0x90, 0x00}, /* 0x6B k */
+    {0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x30, 0x00}, /* 0x6C l */
+    {0x00, 0x00, 0x90, 0xF0, 0xF0, 0x90, 0x90, 0x00}, /* 0x6D m */
+    {0x00, 0x00, 0xE0, 0x90, 0x90, 0x90, 0x90, 0x00}, /* 0x6E n */
+    {0x00, 0x00, 0x60, 0x90, 0x90, 0x90, 0x60, 0x00}, /* 0x6F o */
+    {0x00, 0x00, 0xE0, 0x90, 0x90, 0xE0, 0x80, 0x80}, /* 0x70 p */
+    {0x00, 0x00, 0x70, 0x90, 0x90, 0x70, 0x10, 0x10}, /* 0x71 q */
+    {0x00, 0x00, 0x70, 0x90, 0x80, 0x80, 0x80, 0x00}, /* 0x72 r */
+    {0x00, 0x00, 0x70, 0x80, 0x60, 0x10, 0xE0, 0x00}, /* 0x73 s */
+    {0x40, 0x40, 0xE0, 0x40, 0x40, 0x40, 0x30, 0x00}, /* 0x74 t */
+    {0x00, 0x00, 0x90, 0x90, 0x90, 0x90, 0x70, 0x00}, /* 0x75 u */
+    {0x00, 0x00, 0x90, 0x90, 0x90, 0x60, 0x60, 0x00}, /* 0x76 v */
+    {0x00, 0x00, 0x90, 0x90, 0xF0, 0xF0, 0x90, 0x00}, /* 0x77 w */
+    {0x00, 0x00, 0x90, 0x60, 0x60, 0x90, 0x90, 0x00}, /* 0x78 x */
+    {0x00, 0x00, 0x90, 0x90, 0x90, 0x70, 0x10, 0xE0}, /* 0x79 y */
+    {0x00, 0x00, 0xF0, 0x10, 0x20, 0x40, 0xF0, 0x00}, /* 0x7A z */
+    {0x30, 0x40, 0x40, 0xC0, 0xC0, 0x40, 0x40, 0x30}, /* 0x7B { */
+    {0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20}, /* 0x7C | */
+    {0xC0, 0x20, 0x20, 0x30, 0x30, 0x20, 0x20, 0xC0}, /* 0x7D } */
+    {0x00, 0x00, 0x00, 0x48, 0xB0, 0x00, 0x00, 0x00}, /* 0x7E ~ */
+};
+
+void ss_fill_long(volatile uint32_t* dst, uint32_t val, uint32_t count) {
+    while (count >= 4) {
+        *dst++ = val;
+        *dst++ = val;
+        *dst++ = val;
+        *dst++ = val;
+        count -= 4;
+    }
+    while (count--) *dst++ = val;
+}
+
+static void dma_fill_init(void) {
+    if (dma_stop_unconfirmed)
+        return;
+    const uint8_t dcr = 0x08;
+    const uint8_t ocr = 0x19; /* MAR=RAM (dma_fill_buf) -> DAR=GVRAM */
+    const uint8_t scr = 0x05;
+    const uint8_t mfc = 0x05;
+    const uint8_t dfc = 0x05;
+    const uint8_t bfc = 0x05;
+
+    dma_ch2->ccr = 0x00;
+    dma_ch2->csr = 0xFF;
+    dma_ch2->dcr = dcr;
+    dma_ch2->ocr = ocr;
+    dma_ch2->scr = scr;
+    dma_ch2->mfc = mfc;
+    dma_ch2->dfc = dfc;
+    dma_ch2->bfc = bfc;
+    SS_PROFILE_DMA_CONFIG(dcr, ocr, scr, mfc, dfc, bfc);
+}
+
+void ss_dma_fill_setup(uint16_t value, int count) {
+    if (dma_stop_unconfirmed)
+        return;
+    for (int i = 0; i < count && i < 512; i++) {
+        dma_fill_buf[i] = value;
+    }
+}
+
+static int dma_abort_and_confirm(void) {
+    int timeout = 10000;
+    dma_ch2->ccr = DMA_CCR_SAB;
+    while ((dma_read_status(1) & DMA_CSR_ACT) && --timeout > 0) {
+    }
+    if (dma_read_status(1) & DMA_CSR_ACT) {
+        dma_stop_unconfirmed = 1;
+        return -3;
+    }
+    dma_ch2->ccr = 0x00;
+    dma_ch2->csr = 0xFF;
+    dma_transfer_owned = 0;
+    return -2;
+}
+
+int ss_gfx_dma_quiesce(void) {
+    if (dma_stop_unconfirmed)
+        return -3;
+    if (!dma_transfer_owned)
+        return 0;
+#ifdef SS_HOST_TEST
+    if (dma_test_status_mode < 0)
+        return 0;
+#endif
+    if (!(dma_read_status(0) & DMA_CSR_ACT)) {
+        dma_transfer_owned = 0;
+        return 0;
+    }
+    return dma_abort_and_confirm() == -3 ? -3 : 0;
+}
+
+int ss_dma_fill_row(volatile uint16_t* dst, int count) {
+    if (dst == NULL || count <= 0 || count > 512)
+        return -1;
+    if (dma_stop_unconfirmed)
+        return -3;
+    int timeout = 10000;
+    xfr_table.mar = (uint8_t*)dma_fill_buf;
+    xfr_table.mtc = (uint16_t)count;
+    dma_ch2->csr = 0xFF;
+    dma_ch2->dar = (uint8_t*)dst;
+    dma_ch2->bar = (uint8_t*)&xfr_table;
+    dma_ch2->btc = 1;
+    dma_transfer_owned = 1;
+    dma_ch2->ccr = 0x80;
+
+    while (timeout-- > 0) {
+        uint8_t csr = dma_read_status(0);
+        if (csr & DMA_CSR_ERR) {
+            SS_PROFILE_DMA_ERROR_STATUS(csr, dma_ch2->cer);
+            if (csr & DMA_CSR_ACT) {
+                int stop = dma_abort_and_confirm();
+                return stop == -3 ? -3 : -1;
+            }
+            dma_ch2->csr = 0xFF;
+            dma_transfer_owned = 0;
+            return -1;
+        }
+        if ((csr & DMA_CSR_COC) && !(csr & DMA_CSR_ACT)) {
+            dma_ch2->csr = 0xFF;
+            dma_transfer_owned = 0;
+            return 0;
+        }
+    }
+    /* A status clear does not stop an active channel.  Abort before the CPU
+     * fallback so a late DMA write cannot race with the same VRAM row. */
+    return dma_abort_and_confirm();
+}
+
+void ss_gfx_init(void) {
+    if (dma_stop_unconfirmed)
+        return;
+    ss_draw_page = ss_current_mode->page0;
+    ss_display_page = ss_current_mode->page0;
+    ss_draw_idx = 0;
+    ss_display_idx = 0;
+    ss_gfx_clear(0);
+}
+
+void ss_gfx_flip(void) {
+    if (dma_stop_unconfirmed)
+        return;
+    if (ss_current_mode->page_count < 2) {
+        /* Single page mode: no page flip */
+        return;
+    }
+    ss_display_idx = ss_draw_idx;
+    ss_draw_idx ^= 1;
+    ss_draw_page =
+        ss_draw_idx ? ss_current_mode->page1 : ss_current_mode->page0;
+    ss_display_page =
+        ss_display_idx ? ss_current_mode->page1 : ss_current_mode->page0;
+
+    SS_CRTC_BASE[SS_CRTC_SCROLL_Y] =
+        ss_display_idx ? (uint16_t)ss_current_mode->screen_h : 0;
+}
+
+void ss_gfx_clear(uint16_t color) {
+    if (dma_stop_unconfirmed)
+        return;
+    uint32_t c2 = ((uint32_t)color << 16) | color;
+    uint32_t n = (uint32_t)(ss_current_mode->page_size / 4);
+    ss_fill_long((volatile uint32_t*)ss_draw_page, c2, n);
+    SS_PROFILE_PRIMITIVE_CALL();
+    SS_PROFILE_GVRAM_WRITE(ss_current_mode->page_size / 2);
+}
+
+void ss_gfx_rect(int x, int y, int w, int h, uint16_t color) {
+    if (dma_stop_unconfirmed)
+        return;
+    int submitted_w = w;
+    int submitted_h = h;
+    SS_PROFILE_PRIMITIVE_CALL();
+    SS_PROFILE_RECT_CALL();
+    if (submitted_w > 0 && submitted_h > 0)
+        SS_PROFILE_SUBMITTED_AREA((uint32_t)submitted_w *
+                                  (uint32_t)submitted_h);
+    if (x < 0) {
+        w += x;
+        x = 0;
+    }
+    if (y < 0) {
+        h += y;
+        y = 0;
+    }
+    if (x + w > ss_current_mode->display_w)
+        w = ss_current_mode->display_w - x;
+    if (y + h > ss_current_mode->display_h)
+        h = ss_current_mode->display_h - y;
+    if (w <= 0 || h <= 0)
+        return;
+    SS_PROFILE_CLIPPED_AREA((uint32_t)w * (uint32_t)h);
+    SS_PROFILE_GVRAM_WRITE((uint32_t)w * (uint32_t)h);
+
+    uint32_t c2 = ((uint32_t)color << 16) | color;
+    uint32_t stride = ss_current_mode->bytes_per_line / 2; /* words per line */
+
+    /* Validate VRAM pointer range */
+    volatile uint16_t* vram_start = ss_draw_page;
+    volatile uint16_t* vram_end = ss_draw_page + ss_current_mode->page_size / 2;
+
+    int use_dma = w > SS_DMA_FILL_THRESHOLD && w <= 512 && h > 4;
+#if SS_PROFILE_GFX
+    if (dma_bench_mode == 1)
+        use_dma = 0;
+    if (dma_bench_mode == 2)
+        use_dma = w <= 512;
+#endif
+    if (use_dma && !dma_disabled_after_timeout) {
+        ss_dma_fill_setup(color, w);
+        dma_fill_init();
+        int ok = 1;
+        int dma_rows = 0;
+        for (int row = y; row < y + h && ok; row++) {
+            volatile uint16_t* b = ss_draw_page + row * stride + x;
+            /* Check if pointer is within valid VRAM range */
+            if (b < vram_start || b + w > vram_end) {
+                ok = 0;
+                break;
+            }
+            SS_PROFILE_DMA_ATTEMPT();
+            int dma_result = ss_dma_fill_row(b, w);
+            if (dma_result == 0) {
+                SS_PROFILE_DMA_OK();
+                dma_rows++;
+            } else {
+                if (dma_result == -2 || dma_result == -3) {
+                    SS_PROFILE_DMA_TIMEOUT();
+                    dma_disabled_after_timeout = 1;
+                } else {
+                    SS_PROFILE_DMA_ERROR();
+                }
+                ok = 0;
+            }
+        }
+        if (dma_stop_unconfirmed)
+            return;
+        dma_ch2->ccr = 0x00;
+        if (ok)
+            return;
+        /* Completed DMA rows are already correct.  Starting CPU fallback at
+         * the failed row avoids redundant GVRAM writes after a partial DMA
+         * sequence while still rewriting a row whose transfer failed. */
+        y += dma_rows;
+        h -= dma_rows;
+        SS_PROFILE_DMA_FALLBACK_ROWS(h);
+    }
+
+    for (int row = y; row < y + h; row++) {
+        volatile uint16_t* b = ss_draw_page + row * stride;
+        /* Check if pointer is within valid VRAM range */
+        if (b < vram_start || b + x + w > vram_end)
+            break;
+
+        int cx = x;
+        if (cx & 1) {
+            b[cx++] = color;
+        }
+        int n = (x + w - cx) / 2;
+        /* Additional check before ss_fill_long */
+        volatile uint32_t* dst = (volatile uint32_t*)(b + cx);
+        if ((volatile uint16_t*)dst + n * 2 > vram_end)
+            break;
+
+        ss_fill_long(dst, c2, (uint32_t)n);
+        if ((x + w - cx) & 1) {
+            b[x + w - 1] = color;
+        }
+    }
+}
+
+void ss_gfx_rect_region(SSGfxRect rect, const SSGfxRect* clip, uint16_t color) {
+    if (clip == NULL) {
+        ss_gfx_rect(rect.x, rect.y, rect.w, rect.h, color);
+        return;
+    }
+
+    int left = rect.x > clip->x ? rect.x : clip->x;
+    int top = rect.y > clip->y ? rect.y : clip->y;
+    int right = rect.x + rect.w < clip->x + clip->w ? rect.x + rect.w
+                                                    : clip->x + clip->w;
+    int bottom = rect.y + rect.h < clip->y + clip->h ? rect.y + rect.h
+                                                     : clip->y + clip->h;
+    if (right <= left || bottom <= top)
+        return;
+
+    ss_gfx_rect(left, top, right - left, bottom - top, color);
+}
+
+void ss_gfx_hline(int x, int y, int w, uint16_t color) {
+    SS_PROFILE_HLINE_CALL();
+    ss_gfx_rect(x, y, w, 1, color);
+}
+
+void ss_gfx_fill_stipple(int x, int y, int w, int h, uint16_t c1, uint16_t c2) {
+    if (dma_stop_unconfirmed)
+        return;
+    int submitted_w = w;
+    int submitted_h = h;
+    SS_PROFILE_PRIMITIVE_CALL();
+    SS_PROFILE_STIPPLE_CALL();
+    if (submitted_w > 0 && submitted_h > 0)
+        SS_PROFILE_SUBMITTED_AREA((uint32_t)submitted_w *
+                                  (uint32_t)submitted_h);
+    if (x < 0) {
+        w += x;
+        x = 0;
+    }
+    if (y < 0) {
+        h += y;
+        y = 0;
+    }
+    if (x + w > ss_current_mode->display_w)
+        w = ss_current_mode->display_w - x;
+    if (y + h > ss_current_mode->display_h)
+        h = ss_current_mode->display_h - y;
+    if (w <= 0 || h <= 0)
+        return;
+    SS_PROFILE_CLIPPED_AREA((uint32_t)w * (uint32_t)h);
+    SS_PROFILE_GVRAM_WRITE((uint32_t)w * (uint32_t)h);
+
+    int x1 = x + w - 1;
+    int y1 = y + h - 1;
+    uint32_t stride = ss_current_mode->bytes_per_line / 2; /* words per line */
+
+    uint32_t pat[2];
+    pat[0] = ((uint32_t)c2 << 16) | c1;
+    pat[1] = ((uint32_t)c1 << 16) | c2;
+
+    for (int yy = y; yy <= y1; yy++) {
+        volatile uint16_t* b = ss_draw_page + yy * stride;
+        int xx = x;
+        if (xx & 1) {
+            b[xx] = ((xx + yy) & 1) ? c1 : c2;
+            xx++;
+        }
+        int n = (x1 - xx + 1) / 2;
+        ss_fill_long((volatile uint32_t*)(b + xx), pat[yy & 1], (uint32_t)n);
+        if ((x1 - xx + 1) & 1) {
+            b[x1] = ((x1 + yy) & 1) ? c1 : c2;
+        }
+    }
+}
+
+void ss_gfx_char(int x, int y, char ch, uint16_t fg, uint16_t bg) {
+    if (dma_stop_unconfirmed)
+        return;
+    uint32_t writes = 0;
+    SS_PROFILE_PRIMITIVE_CALL();
+    SS_PROFILE_GLYPH_SLOW();
+    uint8_t c = (uint8_t)ch;
+    if (c < 0x20 || c > 0x7E)
+        c = ' ';
+    const uint8_t* g = ss_font_data[c - 0x20];
+    uint32_t stride = ss_current_mode->bytes_per_line / 2; /* words per line */
+    for (int r = 0; r < SS_FONT_H; r++) {
+        int yy = y + r;
+        if (yy < 0 || yy >= ss_current_mode->display_h)
+            continue;
+        volatile uint16_t* row = ss_draw_page + yy * stride;
+        uint8_t bits = g[r];
+        for (int b = 0; b < SS_FONT_W; b++) {
+            int xx = x + b;
+            if (xx >= 0 && xx < ss_current_mode->display_w) {
+                row[xx] = (bits & (0x80 >> b)) ? fg : bg;
+                writes++;
+            }
+        }
+    }
+    SS_PROFILE_GVRAM_WRITE(writes);
+}
+
+void ss_gfx_draw_text(int x, int y, const char* str, uint16_t fg, uint16_t bg) {
+    SS_PROFILE_TEXT_CALL();
+    while (*str) {
+        ss_gfx_char(x, y, *str++, fg, bg);
+        x += SS_FONT_ADV;
+    }
+}
+
+void ss_gfx_char_fast(int x, int y, char ch, uint16_t fg, uint16_t bg) {
+    if (dma_stop_unconfirmed)
+        return;
+    /* Caller guarantees the glyph is fully on-screen, so we drop the
+     * per-pixel bounds checks and unroll the 5 font columns. The row
+     * pointer is advanced by the word stride each scanline. */
+    uint8_t c = (uint8_t)ch;
+    SS_PROFILE_PRIMITIVE_CALL();
+    SS_PROFILE_GLYPH_FAST();
+    if (c < 0x20 || c > 0x7E)
+        c = ' ';
+    const uint8_t* g = ss_font_data[c - 0x20];
+    uint32_t stride = ss_current_mode->bytes_per_line / 2; /* words per line */
+    volatile uint16_t* row = ss_draw_page + (uint32_t)y * stride + x;
+    for (int r = 0; r < SS_FONT_H; r++) {
+        uint8_t bits = g[r];
+        row[0] = (bits & 0x80) ? fg : bg;
+        row[1] = (bits & 0x40) ? fg : bg;
+        row[2] = (bits & 0x20) ? fg : bg;
+        row[3] = (bits & 0x10) ? fg : bg;
+        row[4] = (bits & 0x08) ? fg : bg;
+        row += stride;
+    }
+    SS_PROFILE_GVRAM_WRITE(SS_FONT_W * SS_FONT_H);
+}
+
+void ss_gfx_draw_text_fast(int x, int y, const char* str, uint16_t fg,
+                           uint16_t bg) {
+    SS_PROFILE_TEXT_CALL();
+    while (*str) {
+        ss_gfx_char_fast(x, y, *str++, fg, bg);
+        x += SS_FONT_ADV;
+    }
+}
+
+static void ss_gfx_char_region(int x, int y, char ch, uint16_t fg, uint16_t bg,
+                               const SSGfxRect* clip) {
+    uint8_t c = (uint8_t)ch;
+    SS_PROFILE_PRIMITIVE_CALL();
+    SS_PROFILE_GLYPH_CLIP();
+    if (c < 0x20 || c > 0x7E)
+        c = ' ';
+    const uint8_t* g = ss_font_data[c - 0x20];
+    uint32_t stride = ss_current_mode->bytes_per_line / 2;
+    uint32_t writes = 0;
+    for (int r = 0; r < SS_FONT_H; r++) {
+        int yy = y + r;
+        if (yy < 0 || yy >= ss_current_mode->display_h || yy < clip->y ||
+            yy >= clip->y + clip->h)
+            continue;
+        volatile uint16_t* row = ss_draw_page + yy * stride;
+        uint8_t bits = g[r];
+        for (int b = 0; b < SS_FONT_W; b++) {
+            int xx = x + b;
+            if (xx < 0 || xx >= ss_current_mode->display_w || xx < clip->x ||
+                xx >= clip->x + clip->w)
+                continue;
+            row[xx] = (bits & (0x80 >> b)) ? fg : bg;
+            writes++;
+        }
+    }
+    SS_PROFILE_GVRAM_WRITE(writes);
+}
+
+void ss_gfx_draw_text_region(int x, int y, const char* str, uint16_t fg,
+                             uint16_t bg, const SSGfxRect* clip) {
+    if (dma_stop_unconfirmed)
+        return;
+    if (clip == NULL) {
+        ss_gfx_draw_text_fast(x, y, str, fg, bg);
+        return;
+    }
+    SS_PROFILE_TEXT_CALL();
+    while (*str) {
+        ss_gfx_char_region(x, y, *str++, fg, bg, clip);
+        x += SS_FONT_ADV;
+    }
+}
+
+static uint32_t ss_gfx_xor_hline(volatile uint16_t* row, int x0, int x1) {
+    uint32_t accesses = 0;
+
+    /* Keep the long access word-aligned: each pixel occupies one word. */
+    if (x0 & 1) {
+        row[x0] ^= 0xFFFF;
+        x0++;
+        accesses++;
+    }
+    while (x0 + 1 < x1) {
+        volatile uint32_t* row32 = (volatile uint32_t*)row;
+        row32[x0 / 2] ^= 0xFFFFFFFFUL;
+        x0 += 2;
+        accesses += 2;
+    }
+    if (x0 < x1) {
+        row[x0] ^= 0xFFFF;
+        accesses++;
+    }
+    return accesses;
+}
+
+void ss_gfx_xor_rect(int x, int y, int w, int h) {
+    if (dma_stop_unconfirmed)
+        return;
+    /* XOR 0xFFFF on the rectangle perimeter, clipped to the screen.
+     * Self-erasing: two passes over the same rect restore the original,
+     * so callers use it for transient UI (cursor, drag outline) with no
+     * save buffer, but each XOR is a GVRAM read-modify-write. */
+    uint32_t stride = ss_current_mode->bytes_per_line / 2;
+    int W = ss_current_mode->display_w, H = ss_current_mode->display_h;
+    volatile uint16_t* v = ss_draw_page;
+    uint32_t accesses = 0;
+    SS_PROFILE_PRIMITIVE_CALL();
+    SS_PROFILE_XOR_RECT_CALL();
+    if (w > 0 && h > 0) {
+        int x0 = x < 0 ? 0 : x;
+        int x1 = x + w;
+        if (x1 > W)
+            x1 = W;
+        if (x0 < x1) {
+            if (y >= 0 && y < H) {
+                accesses += ss_gfx_xor_hline(v + y * stride, x0, x1);
+            }
+            int y2 = y + h - 1;
+            if (y2 != y && y2 >= 0 && y2 < H) {
+                accesses += ss_gfx_xor_hline(v + y2 * stride, x0, x1);
+            }
+        }
+    }
+    /* Horizontal edges already include the corners.  Touch only interior
+     * scanlines here so every perimeter pixel is XORed exactly once. */
+    for (int dy = 1; dy < h - 1; dy++) {
+        int yy = y + dy;
+        if (yy < 0 || yy >= H)
+            continue;
+        if (x >= 0 && x < W) {
+            v[yy * stride + x] ^= 0xFFFF;
+            accesses++;
+        }
+        int x2 = x + w - 1;
+        if (x2 != x && x2 >= 0 && x2 < W) {
+            v[yy * stride + x2] ^= 0xFFFF;
+            accesses++;
+        }
+    }
+    SS_PROFILE_GVRAM_READ(accesses);
+    SS_PROFILE_GVRAM_WRITE(accesses);
+}
+
+void ss_gfx_char_clip(int x, int y, char ch, uint16_t fg, uint16_t bg,
+                      const int* clip_wins, int nclip, int zpos) {
+    if (dma_stop_unconfirmed)
+        return;
+    uint32_t writes = 0;
+    SS_PROFILE_PRIMITIVE_CALL();
+    SS_PROFILE_GLYPH_CLIP();
+    uint8_t c = (uint8_t)ch;
+    if (c < 0x20 || c > 0x7E)
+        c = ' ';
+    const uint8_t* g = ss_font_data[c - 0x20];
+    uint32_t stride = ss_current_mode->bytes_per_line / 2; /* words per line */
+    for (int r = 0; r < SS_FONT_H; r++) {
+        int yy = y + r;
+        if (yy < 0 || yy >= ss_current_mode->display_h)
+            continue;
+        volatile uint16_t* row = ss_draw_page + yy * stride;
+        uint8_t bits = g[r];
+        for (int b = 0; b < SS_FONT_W; b++) {
+            int xx = x + b;
+            if (xx < 0 || xx >= ss_current_mode->display_w)
+                continue;
+            int covered = 0;
+            for (int k = zpos + 1; k < nclip; k++) {
+                const int* cw = &clip_wins[k * 4];
+                if (xx >= cw[0] && xx < cw[0] + cw[2] && yy >= cw[1] &&
+                    yy < cw[1] + cw[3]) {
+                    covered = 1;
+                    break;
+                }
+            }
+            if (!covered) {
+                row[xx] = (bits & (0x80 >> b)) ? fg : bg;
+                writes++;
+            }
+        }
+    }
+    SS_PROFILE_GVRAM_WRITE(writes);
+}
+
+void ss_gfx_draw_text_clip(int x, int y, const char* str, uint16_t fg,
+                           uint16_t bg, const int* clip_wins, int nclip,
+                           int zpos) {
+    SS_PROFILE_TEXT_CALL();
+    while (*str) {
+        ss_gfx_char_clip(x, y, *str++, fg, bg, clip_wins, nclip, zpos);
+        x += SS_FONT_ADV;
+    }
+}

@@ -1,0 +1,302 @@
+#include "scheduler.h"
+#include "sched_profile.h"
+#include <stdint.h>
+#include <string.h>
+
+SSTask tcb_table[SS_MAX_TASKS];
+SSReadyQueue ready_queue;
+SSTask* ss_curr_task;
+SSTask* ss_scheduled_task;
+static SSTask* sleeping_tasks;
+
+/* Stack canary magic number */
+#define STACK_CANARY 0xDEADCAFE
+
+/* Write canary at bottom of each task stack, return remaining bytes */
+uint32_t ss_stack_check(uint16_t id) {
+    if (id == 0 || id > SS_MAX_TASKS)
+        return 0;
+    SSTask* tcb = &tcb_table[id - 1];
+    if (tcb->stack_size == 0)
+        return 0;
+
+    /* Bottom of stack = stack_base - stack_size + 4 */
+    uint8_t* bottom =
+        (uint8_t*)((uintptr_t)tcb->stack_base - tcb->stack_size + 4);
+
+    /* Scan from bottom upward to find first non-canary word */
+    uint32_t used = 0;
+    for (uint32_t offset = 0; offset < tcb->stack_size; offset += 4) {
+        if (*(uint32_t*)(bottom + offset) != STACK_CANARY) {
+            used = tcb->stack_size - offset;
+            break;
+        }
+    }
+    return tcb->stack_size - used; /* remaining bytes */
+}
+
+/* Write canary pattern to entire task stack */
+void ss_stack_canary_init(uint16_t id) {
+    if (id == 0 || id > SS_MAX_TASKS)
+        return;
+    SSTask* tcb = &tcb_table[id - 1];
+    if (tcb->stack_size == 0)
+        return;
+
+    uint8_t* bottom =
+        (uint8_t*)((uintptr_t)tcb->stack_base - tcb->stack_size + 4);
+    for (uint32_t offset = 0; offset < tcb->stack_size; offset += 4) {
+        *(uint32_t*)(bottom + offset) = STACK_CANARY;
+    }
+}
+
+void ss_sched_init(void) {
+    ss_sched_profile_reset();
+    memset(tcb_table, 0, sizeof(tcb_table));
+    memset(&ready_queue, 0, sizeof(ready_queue));
+    ss_curr_task = NULL;
+    ss_scheduled_task = NULL;
+    sleeping_tasks = NULL;
+}
+
+void ss_sched_enqueue(SSTask* tcb) {
+    uint8_t pri = tcb->pri;
+    if (pri >= SS_MAX_PRI)
+        return;
+
+    tcb->next = NULL;
+    if (ready_queue.tails[pri] == NULL) {
+        ready_queue.heads[pri] = tcb;
+        ready_queue.tails[pri] = tcb;
+        tcb->prev = NULL;
+    } else {
+        ready_queue.tails[pri]->next = tcb;
+        tcb->prev = ready_queue.tails[pri];
+        ready_queue.tails[pri] = tcb;
+    }
+    ready_queue.pri_bitmap |= (1 << (15 - pri));
+    ss_sched_profile_ready(tcb);
+}
+
+void ss_sched_dequeue(SSTask* tcb) {
+    uint8_t pri = tcb->pri;
+    if (pri >= SS_MAX_PRI)
+        return;
+
+    if (tcb->prev) {
+        tcb->prev->next = tcb->next;
+    } else {
+        ready_queue.heads[pri] = tcb->next;
+    }
+    if (tcb->next) {
+        tcb->next->prev = tcb->prev;
+    } else {
+        ready_queue.tails[pri] = tcb->prev;
+    }
+    tcb->prev = NULL;
+    tcb->next = NULL;
+
+    if (ready_queue.heads[pri] == NULL) {
+        ready_queue.pri_bitmap &= ~(1 << (15 - pri));
+    }
+}
+
+SSTask* ss_sched_pick(void) {
+    if (ready_queue.pri_bitmap == 0)
+        return NULL;
+
+    uint16_t bits = ready_queue.pri_bitmap;
+    int pri = 0;
+    while (!(bits & 0x8000) && pri < 16) {
+        bits <<= 1;
+        pri++;
+    }
+    if (pri >= SS_MAX_PRI)
+        return NULL;
+    return ready_queue.heads[pri];
+}
+
+uint16_t ss_task_create(SSTaskInfo* info) {
+    if (info == NULL || info->entry == NULL)
+        return SS_ERR_PARAM;
+    if (info->pri >= SS_MAX_PRI || info->ctx_level > SS_CTX_FULL)
+        return SS_ERR_PARAM;
+    if (info->stack != NULL &&
+        (((uintptr_t)info->stack & 3u) != 0 ||
+         info->stack_size < SS_MIN_TASK_STACK || (info->stack_size & 3u) != 0))
+        return SS_ERR_PARAM;
+
+    extern uint8_t* ss_task_stack_base;
+
+    uint16_t saved_sr = ss_irq_save();
+
+    uint16_t i;
+    for (i = 0; i < SS_MAX_TASKS; i++) {
+        if (tcb_table[i].state == SS_TS_NONE)
+            break;
+    }
+    if (i >= SS_MAX_TASKS) {
+        ss_irq_restore(saved_sr);
+        return SS_ERR_LIMIT;
+    }
+    if (info->stack == NULL && ss_task_stack_base == NULL) {
+        ss_irq_restore(saved_sr);
+        return SS_ERR_STATE;
+    }
+
+    SSTask* tcb = &tcb_table[i];
+    memset(tcb, 0, sizeof(SSTask));
+    tcb->state = SS_TS_INITIALIZING;
+    tcb->entry = info->entry;
+    tcb->arg = info->arg;
+    tcb->pri = info->pri;
+    tcb->ctx_level = info->ctx_level;
+
+    if (info->stack != NULL) {
+        tcb->stack_base = info->stack;
+        tcb->stack_size = info->stack_size;
+    } else {
+        uintptr_t stack_end =
+            (uintptr_t)(ss_task_stack_base + (i + 1) * SS_TASK_STACK);
+        tcb->stack_base = (uint8_t*)((stack_end - 4) & ~(uintptr_t)3);
+        tcb->stack_size = SS_TASK_STACK;
+    }
+
+    tcb->context = tcb->stack_base;
+
+    ss_irq_restore(saved_sr);
+
+    /* Fill the 16 KiB canary pattern with interrupts re-enabled: the slot is
+     * reserved as INITIALIZING and rejected by ss_task_start,
+     * so keeping this multi-millisecond write inside the masked window would
+     * only stretch Timer D / V-DISP latency. */
+#ifdef SS_TASK_CREATE_PROBE
+    extern void ss_task_create_probe(uint16_t id);
+    ss_task_create_probe(i + 1);
+#endif
+    ss_stack_canary_init(i + 1);
+    saved_sr = ss_irq_save();
+    tcb->state = SS_TS_DORMANT;
+    ss_irq_restore(saved_sr);
+
+    return i + 1; /* 1-based ID */
+}
+
+uint16_t ss_task_start(uint16_t id) {
+    if (id == 0 || id > SS_MAX_TASKS)
+        return SS_ERR_ID;
+
+    uint16_t saved_sr = ss_irq_save();
+    SSTask* tcb = &tcb_table[id - 1];
+
+    if (tcb->state != SS_TS_DORMANT) {
+        ss_irq_restore(saved_sr);
+        return SS_ERR_STATE;
+    }
+
+    tcb->state = SS_TS_READY;
+    ss_sched_enqueue(tcb);
+
+    if (ss_curr_task == NULL) {
+        ss_curr_task = tcb;
+    }
+
+    ss_irq_restore(saved_sr);
+    return SS_OK;
+}
+
+void ss_do_context_switch(void) {
+    /*
+     * Disable interrupts while manipulating the ready queue to prevent
+     * the TimerD ISR (which calls ss_do_wakeups → ss_sched_enqueue)
+     * from corrupting the queue mid-operation.
+     *
+     * Interrupts remain disabled on return. Assembly restores the selected
+     * task's SR from its yield frame or CPU exception frame.
+     */
+    (void)ss_irq_save();
+
+    SSTask* curr = ss_curr_task;
+    if (curr == NULL) {
+        return;
+    }
+
+    if (curr->state == SS_TS_READY) {
+        ss_sched_dequeue(curr);
+        ss_sched_enqueue(curr);
+    }
+
+    /* Process due sleepers at the scheduler boundary with interrupts masked. */
+    ss_process_wakeups();
+
+    SSTask* next = ss_sched_pick();
+    if (next == NULL || next == curr) {
+        ss_scheduled_task = curr;
+        return;
+    }
+
+    ss_scheduled_task = next;
+    ss_curr_task = next;
+    ss_sched_profile_run(next);
+}
+
+uint16_t ss_task_sleep(uint32_t ticks) {
+    if (ticks > SS_MAX_SLEEP_TICKS)
+        return SS_ERR_PARAM;
+
+    SSTask* curr = ss_curr_task;
+    if (curr == NULL)
+        return SS_ERR_STATE;
+
+    uint16_t saved_sr = ss_irq_save();
+    curr->state = SS_TS_WAIT;
+    curr->wait_until = ss_tick_counter + ticks;
+    ss_sched_dequeue(curr);
+    if (ready_queue.pri_bitmap == 0) {
+        curr->state = SS_TS_READY;
+        curr->wait_until = 0;
+        ss_sched_enqueue(curr);
+        ss_irq_restore(saved_sr);
+        return SS_ERR_STATE;
+    }
+    curr->sleep_next = sleeping_tasks;
+    sleeping_tasks = curr;
+    /* Yield saves the masked SR; resume restores it before returning here. */
+    ss_task_yield();
+    ss_irq_restore(saved_sr);
+    return SS_OK;
+}
+
+static int deadline_reached(uint32_t now, uint32_t deadline) {
+    return now - deadline <= SS_MAX_SLEEP_TICKS;
+}
+
+void ss_do_wakeups(void) {
+    uint32_t now = ss_tick_counter;
+    SSTask** link = &sleeping_tasks;
+    while (*link != NULL) {
+        SSTask* tcb = *link;
+        if (deadline_reached(now, tcb->wait_until)) {
+            ss_sched_profile_wake(now - tcb->wait_until);
+            *link = tcb->sleep_next;
+            tcb->sleep_next = NULL;
+            tcb->state = SS_TS_READY;
+            tcb->wait_until = 0;
+            ss_sched_enqueue(tcb);
+        } else {
+            link = &tcb->sleep_next;
+        }
+    }
+}
+
+/* A returned task cannot release or reuse its stack while executing on it. */
+void ss_task_exit(void) {
+    uint16_t saved_sr = ss_irq_save();
+    SSTask* curr = ss_curr_task;
+    if (curr != NULL && curr->state == SS_TS_READY) {
+        ss_sched_dequeue(curr);
+        curr->state = SS_TS_TERMINATED;
+    }
+    ss_irq_restore(saved_sr);
+    for (;;) ss_task_yield();
+}

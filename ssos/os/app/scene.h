@@ -1,0 +1,46 @@
+#ifndef SS_APP_SCENE_H
+#define SS_APP_SCENE_H
+
+#include <stdint.h>
+
+/* Host-independent UI scene.  The host owns IOCS/MFP setup and supplies
+ * optional wait/stop hooks; rendering, input sampling, drag and content
+ * updates live in the shared implementation. */
+typedef struct {
+    int (*wait_vsync)(void *ctx); /* 0 = frame ready, nonzero = stop */
+    int (*should_stop)(void *ctx);
+    void *ctx;
+    int (*read_input)(void* ctx, uint32_t frame, int* mx, int* my,
+                      int* buttons, int* key);
+    void (*after_frame)(void* ctx, uint32_t frame, int dragging);
+    uint8_t collect_pixel_checksum; /* opt-in VRAM scan after timing; benchmarks only */
+} SSSceneHooks;
+
+typedef struct {
+    uint32_t frames;
+    uint32_t vsyncs;
+    uint32_t ticks, max_frame_ticks, input_checksum, pixel_checksum;
+    /* pixel_checksum is 0 when not requested or DMA stop is unconfirmed. */
+} SSSceneStats;
+
+#define SS_SCENE_WINDOW_COUNT 3
+
+/* The normal UI and standalone benchmark use the same model layout.  Their
+ * renderers deliberately remain separate: the benchmark measures primitive
+ * compositor paths while the UI uses its content-aware callback. */
+typedef struct {
+    int x, y, w, h;
+    uint16_t z;
+    const char *title;
+} SSSceneWindowSpec;
+
+extern const SSSceneWindowSpec ss_scene_default_windows[SS_SCENE_WINDOW_COUNT];
+
+void ss_scene_run(const SSSceneHooks *hooks, SSSceneStats *stats);
+int ss_scene_last_key(void);
+
+#ifdef SS_HOST_TEST
+void ss_scene_test_set_input(int mx, int my, int btn);
+#endif
+
+#endif /* SS_APP_SCENE_H */
