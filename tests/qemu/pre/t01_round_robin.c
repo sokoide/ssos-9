@@ -3,9 +3,9 @@
  * This is the test Phase B and Native tests cannot do: drive the SSOS
  * preemptive scheduler through the REAL ISR path. The unmodified shared
  * scheduler.c runs on a real m68k; preempt_ctx_switch.s is the
- * Timer D handler (driven via trap #0) plus the resume_task/rte machinery.
+ * Timer D handler (driven via trap #1) plus the resume_task/rte machinery.
  *
- * main + two workers all fire `trap #0` to trigger preemption. Each trap
+ * main + two workers all fire `trap #1` to trigger preemption. Each trap
  * enters the ISR, which calls ss_do_wakeups + ss_do_context_switch and returns
  * via `.resume_interrupted` -> `rte`, landing in whichever task the scheduler
  * picked next. Seeing `1212...` proves tasks swap via the rte path (a CPU
@@ -25,11 +25,11 @@
 static volatile unsigned task1_n = 0;
 static volatile unsigned task2_n = 0;
 
-/* Fire the Timer D ISR simulation. trap #0 -> vector 0x80 -> ss_timerd_handler
+/* Fire the Timer D ISR simulation. trap #1 -> vector 0x84 -> ss_timerd_handler
  * (set up in preempt_ctx_switch.s:_start). The exception frame it pushes is
  * what `rte` later pops to land in the next task. */
 static inline void emulate_timer_tick(void) {
-    __asm__ volatile("trap #0" ::: "memory");
+    __asm__ volatile("trap #1" ::: "memory");
 }
 
 static void* task1_entry(void* arg) {
@@ -84,7 +84,7 @@ int main(void) {
     ss_task_start(id1);
     ss_task_start(id2);
 
-    /* main joins the round-robin by firing trap #0 itself. Workers and main
+    /* main joins the round-robin by firing trap #1 itself. Workers and main
      * take turns; workers print 1/2, main watches the counters. */
     while (task1_n < GOAL || task2_n < GOAL) {
         emulate_timer_tick();

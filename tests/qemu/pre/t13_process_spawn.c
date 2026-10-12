@@ -3,11 +3,21 @@
 #include "builtin.h"
 #include "main_task.h"
 #include "process.h"
+#include "ssos9/syscall.h"
+#include "syscall.h"
 #include "system_arena.h"
 #include "tty.h"
 
 static SSTask main_tcb;
 static uint8_t image[124];
+extern void ss_test_install_syscall_vector(void);
+
+static int32_t call_sys(uint32_t number, uint32_t request) {
+    register uint32_t d0 __asm__("d0") = number;
+    register uint32_t d1 __asm__("d1") = request;
+    __asm__ volatile("trap #0" : "+d"(d0), "+d"(d1) : : "cc", "memory");
+    return (int32_t)d0;
+}
 
 static void put16(uint8_t* p, uint16_t value) {
     p[0] = (uint8_t)(value >> 8);
@@ -61,13 +71,13 @@ static void make_image(void) {
     put32(&image[0x44], 1);
     for (unsigned i = 0; i < 8; i++) image[104 + i] = (uint8_t)"qcounter"[i];
 
-    /* movea.l (a5),a0; addq.l #1,(a0); trap #0; bra.s back to start. */
+    /* movea.l (a5),a0; addq.l #1,(a0); trap #1; bra.s back to start. */
     image[80] = 0x20;
     image[81] = 0x55;
     image[82] = 0x52;
     image[83] = 0x90;
     image[84] = 0x4e;
-    image[85] = 0x40;
+    image[85] = 0x41;
     image[86] = 0x60;
     image[87] = 0xf8;
     put32(&image[112], 0);
@@ -80,10 +90,10 @@ static void fail(const char* reason) {
     tty_puts("FAIL ");
     tty_puts(reason);
     tty_puts("\n");
-    for (;;) __asm__ volatile("trap #0" ::: "memory");
+    for (;;) __asm__ volatile("trap #1" ::: "memory");
 }
 
-static void tick(void) { __asm__ volatile("trap #0" ::: "memory"); }
+static void tick(void) { __asm__ volatile("trap #1" ::: "memory"); }
 
 static void set_counter(void* data, uint32_t value) {
     put32((uint8_t*)data + 8, value);
@@ -95,6 +105,7 @@ static void run_ticks(unsigned count) {
 
 int main(void) {
     tty_puts("START process-spawn\n");
+    ss_test_install_syscall_vector();
     if (ss_memory_init() != SS_OK)
         fail("memory init");
     ss_module_registry_init();
@@ -105,6 +116,10 @@ int main(void) {
         ss_idle_task_start() != SS_OK || ss_reaper_task_start() != SS_OK ||
         ss_process_init(&main_tcb) != SS_OK)
         fail("kernel tables init");
+    if (call_sys(SS9_SYS_VERSION, 0) != SS9_ABI_VERSION ||
+        call_sys(SS9_SYS_GETPID, 0) != 1 || call_sys(SS9_SYS_GETPPID, 0) != 0 ||
+        call_sys(0xffffffffu, 0) != SS9_ERR_NOSYS)
+        fail("syscall ABI basics");
 
     make_image();
     SSModuleId module_id;
@@ -142,28 +157,52 @@ int main(void) {
         first.state != SS_PROCESS_READY || second.state != SS_PROCESS_READY)
         fail("running process was reaped");
 
+    SS9ProcessInfo info;
+    SS9ProcessInfoRequest info_request = {first_pid,
+                                          (uint32_t)(uintptr_t)&info};
+    SS9ProcessInfo entries[SS_PROCESS_MAX];
+    SS9ProcessListRequest list_request = {SS_PROCESS_MAX, 0,
+                                          (uint32_t)(uintptr_t)entries};
+    if (call_sys(SS9_SYS_PROC_INFO, (uint32_t)(uintptr_t)&info_request) !=
+            SS_OK ||
+        info.pid != first_pid || info.ppid != 1 ||
+        call_sys(SS9_SYS_PROC_LIST, (uint32_t)(uintptr_t)&list_request) != 3 ||
+        list_request.count != 3)
+        fail("syscall process queries");
+
+    const char* syscall_name = "qcounter";
+    const char* syscall_argv[] = {"qcounter"};
+    SS9SpawnRequest spawn_request = {(uint32_t)(uintptr_t)syscall_name, 1, 0,
+                                     (uint32_t)(uintptr_t)syscall_argv};
+    int32_t spawned_pid =
+        call_sys(SS9_SYS_SPAWN, (uint32_t)(uintptr_t)&spawn_request);
+    if (spawned_pid <= 1)
+        fail("syscall spawn");
+
     uint16_t status;
-    if (ss_process_kill(first_pid) != SS_OK)
-        fail("kill first");
-    int16_t wait_status = SS_ERR_STATE;
-    for (unsigned i = 0; i < 32 && wait_status == SS_ERR_STATE; i++) {
-        wait_status = ss_process_wait(1, first_pid, &status);
-        if (wait_status == SS_ERR_STATE)
-            tick();
-    }
-    if (wait_status != SS_OK || status != 0)
-        fail("reap/wait first");
+    SS9WaitRequest wait_request = {first_pid, 0, 0};
+    if (call_sys(SS9_SYS_KILL, first_pid) != SS_OK)
+        fail("syscall kill first");
+    if (call_sys(SS9_SYS_WAIT, (uint32_t)(uintptr_t)&wait_request) !=
+            (int32_t)first_pid ||
+        wait_request.exit_status != 0)
+        fail("syscall wait first");
     if (ss_process_kill(second_pid) != SS_OK)
         fail("kill second");
-    wait_status = SS_ERR_STATE;
+    int16_t wait_status = SS_ERR_STATE;
     for (unsigned i = 0; i < 32 && wait_status == SS_ERR_STATE; i++) {
         wait_status = ss_process_wait(1, second_pid, &status);
         if (wait_status == SS_ERR_STATE)
             tick();
     }
-    if (wait_status != SS_OK || status != 0 ||
-        ss_memory_free_bytes() != free_before)
-        fail("reap/wait second or RAM leak");
+    if (wait_status != SS_OK || status != 0)
+        fail("reap/wait second");
+    SS9WaitRequest syscall_wait = {(uint32_t)spawned_pid, 0, 0};
+    if (call_sys(SS9_SYS_KILL, (uint32_t)spawned_pid) != SS_OK ||
+        call_sys(SS9_SYS_WAIT, (uint32_t)(uintptr_t)&syscall_wait) !=
+            spawned_pid ||
+        syscall_wait.exit_status != 0 || ss_memory_free_bytes() != free_before)
+        fail("syscall spawn/kill/wait reclaim");
 
     tty_puts("OK shared code/private A5 data\n");
     for (;;) tick();

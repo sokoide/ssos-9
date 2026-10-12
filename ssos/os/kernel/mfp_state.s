@@ -19,6 +19,9 @@ save_interrupts:
 	|      Key
 	move.l 0x130, d0
 	move.l d0, 8(a0)
+	|      User trap #0 vector, owned temporarily by the syscall ABI.
+	move.l 0x080, d0
+	move.l d0, 32(a0)
 
 	|      Save MFP registers
 	lea    0xe88007, a1
@@ -91,6 +94,8 @@ ss_restore_interrupts:
 	move.l d0, 0x110
 	move.l 8(a0), d0
 	move.l d0, 0x130
+	move.l 32(a0), d0
+	move.l d0, 0x080
 
 	|      Restore MFP registers
 	move.b 12(a0), d0

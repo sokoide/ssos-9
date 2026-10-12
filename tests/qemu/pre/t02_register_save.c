@@ -1,7 +1,7 @@
 /* t02_register_save.c - verify the preemptive (trap/rte) context switch
  * preserves callee registers.
  *
- * The switch is driven by `trap #0`
+ * The switch is driven by `trap #1`
  * (the Timer D ISR simulation) and tasks resume via `.resume_interrupted`
  * (movem.l + rte). Two tasks keep distinct d2-d7 patterns across many traps;
  * any corruption is reported and stops the test. This proves the rte path
@@ -17,7 +17,7 @@
 static volatile int n1 = 0, n2 = 0, failed = 0;
 
 static inline void emulate_timer_tick(void) {
-    __asm__ volatile("trap #0" ::: "memory");
+    __asm__ volatile("trap #1" ::: "memory");
 }
 
 #define CHECK(task, r2, r3, r4, r5, r6, r7, A, B, C, D, E, F)                  \

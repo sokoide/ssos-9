@@ -7,7 +7,7 @@ static SSTask main_tcb;
 static volatile unsigned worker_started;
 
 static void emulate_timer_tick(void) {
-    __asm__ volatile("trap #0" ::: "memory");
+    __asm__ volatile("trap #1" ::: "memory");
 }
 
 static void fail(const char* reason) {

@@ -276,6 +276,43 @@ int16_t ss_process_wait(SSProcessId parent, SSProcessId child,
     return SS_OK;
 }
 
+SSProcessId ss_process_current_id(void) {
+    uint16_t saved_sr = ss_irq_save();
+    SSTask* current = ss_curr_task;
+    if (current == process_tasks[0]) {
+        ss_irq_restore(saved_sr);
+        return SS_PROCESS_ROOT_PID;
+    }
+    for (uint16_t i = 1; i < SS_PROCESS_MAX; i++) {
+        if (process_table[i].state == SS_PROCESS_READY &&
+            process_tasks[i] == current) {
+            SSProcessId pid = process_table[i].pid;
+            ss_irq_restore(saved_sr);
+            return pid;
+        }
+    }
+    ss_irq_restore(saved_sr);
+    return 0;
+}
+
+SSProcessId ss_process_current_parent_id(void) {
+    SSProcessId pid = ss_process_current_id();
+    uint16_t saved_sr = ss_irq_save();
+    int16_t slot = find_slot_by_pid(pid);
+    SSProcessId parent = slot < 0 ? 0 : process_table[slot].ppid;
+    ss_irq_restore(saved_sr);
+    return parent;
+}
+
+void ss_process_exit_current(uint16_t exit_status) {
+    SSProcessId pid = ss_process_current_id();
+    uint16_t saved_sr = ss_irq_save();
+    int16_t slot = find_slot_by_pid(pid);
+    if (slot >= 0 && process_table[slot].state == SS_PROCESS_READY)
+        process_table[slot].exit_status = exit_status;
+    ss_irq_restore(saved_sr);
+}
+
 void ss_process_reap_task(uint16_t task_id) {
     if (task_id == 0 || task_id > SS_MAX_TASKS)
         return;

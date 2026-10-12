@@ -13,7 +13,7 @@ volatile uint32_t seen_a5;
 extern void ss_process_frame_entry(void);
 
 static void emulate_timer_tick(void) {
-    __asm__ volatile("trap #0" ::: "memory");
+    __asm__ volatile("trap #1" ::: "memory");
 }
 
 static void fail(const char* reason) {

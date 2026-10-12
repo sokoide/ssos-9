@@ -6,13 +6,13 @@
 	| - .resume_task / .resume_interrupted / .start_task (329-359)
 	|
 	| Timer D hardware does not exist on QEMU virt, so we drive the SAME handler
-	| via `trap #0`. A trap exception frame (SR 2B + PC 4B) is byte-identical to a
+	| via `trap #1`. A trap exception frame (SR 2B + PC 4B) is byte-identical to a
 	| Timer D interrupt frame, so the `.resume_interrupted` -> `rte` path runs
 	| exactly as on real hardware. This is the path Native tests and Phase B
 	| This path returns through rte after preemptive context restoration.
 	|
 	| Differences from the real handler:
-	| * entered via trap #0 (vector 0x80), not MFP Timer D (vector 0x110)
+	| * entered via trap #1 (vector 0x84), not MFP Timer D (vector 0x110)
 	| * MFP EOI writes (0xe88011 bit4 clear) removed - no MFP on QEMU virt
 	| * switch threshold defaults to 1 (switch every tick) for a clear 1212
 	| pattern.  The cadence test builds this source with
@@ -40,13 +40,13 @@
 	.extern main
 
 	| ----------------------------------------------------------------------------
-	| _start: set up stack, install the trap #0 handler (vector at 0x80), run main.
+	| _start: set up stack, install the trap #1 handler (vector at 0x84), run main.
 	| ----------------------------------------------------------------------------
 
 _start:
 	move.l #0x10000, sp
 	lea    ss_timerd_handler, a0
-	move.l a0, 0x80               | vector 32 (trap #0) -> our ISR
+	move.l a0, 0x84               | vector 32 (trap #1) -> our ISR
 	move.w #0x2000, %sr            | interrupts on
 	bsr    main
 
@@ -90,7 +90,7 @@ ss_task_yield:
 	rts
 
 	| ----------------------------------------------------------------------------
-	| ss_timerd_handler - the Timer D ISR, driven here by trap #0.
+	| ss_timerd_handler - the Timer D ISR, driven here by trap #1.
 	| Saves regs, bumps counters, and on the switch tick hands off to the
 	| scheduler via ss_context_switch. Non-switch ticks just rte back.
 	| ----------------------------------------------------------------------------

@@ -16,9 +16,9 @@ static void* idle_task(void* arg) {
     (void)arg;
     for (;;) {
 #ifdef SS_QEMU_TEST
-        /* QEMU's virt machine has no MFP Timer D; trap #0 drives its test ISR.
+        /* QEMU's virt machine has no MFP Timer D; trap #1 drives its test ISR.
          */
-        __asm__ volatile("trap #0" ::: "memory");
+        __asm__ volatile("trap #1" ::: "memory");
 #elif defined(__m68k__)
         /* Wake on the next enabled interrupt, normally Timer D. */
         __asm__ volatile("stop #0x2000" ::: "memory");

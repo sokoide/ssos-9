@@ -2,7 +2,7 @@
  * real preemption.
  *
  * task1 prints 'A', sleeps 3 ticks (-> WAIT, yields to main), and prints 'B'
- * when resumed. main fires `trap #0` repeatedly; each trap bumps
+ * when resumed. main fires `trap #1` repeatedly; each trap bumps
  * ss_tick_counter inside the ISR and reaps wakeups. Once enough ticks elapse,
  * task1 is moved back to READY and resumed via the rte path.
  *
@@ -17,7 +17,7 @@
 static volatile int phase = 0; /* 1 = task1 has gone to sleep, 2 = task1 woke */
 
 static inline void emulate_timer_tick(void) {
-    __asm__ volatile("trap #0" ::: "memory");
+    __asm__ volatile("trap #1" ::: "memory");
 }
 
 static void* task1(void* arg) {

@@ -1,6 +1,6 @@
 /* Verify the production Timer D switch cadence (10 hardware ticks).
  *
- * QEMU has no MFP Timer D, so trap #0 synchronously enters the same ported
+ * QEMU has no MFP Timer D, so trap #1 synchronously enters the same ported
  * handler.  Nine ticks must return straight to main without changing the
  * current task.  Tick 10 context-switches main through the interrupted/rte
  * path, starts the worker, and returns to main after the worker sleeps.
@@ -21,7 +21,7 @@ static volatile unsigned phase;
 static SSTask main_tcb;
 
 static inline void emulate_timer_tick(void) {
-    __asm__ volatile("trap #0" ::: "memory");
+    __asm__ volatile("trap #1" ::: "memory");
 }
 
 static int check(int condition, const char* message) {

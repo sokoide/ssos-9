@@ -1,7 +1,7 @@
 # SSOS-9: OS-9型マルチプロセス・ローダー実装計画
 
-状態: 実装中。S9M1 validator/registry、private data fixup、合成 SR/PC frame、Process Table、built-in PIC counter の spawn/kill/wait と CLI コマンドを実装。
-外部 module loader/packer、GCC C runtime、syscall ABI、VFS/redirect、FAT は未実装。
+状態: 実装中。S9M1 validator/registry、private data fixup、合成 SR/PC frame、Process Table、built-in PIC counter の spawn/kill/wait、CLI、初期`trap #0` process-control/info syscall を実装。
+外部 module loader/packer、GCC C runtime/wrapper、VFS/redirect、FAT は未実装。
 
 対象: 16MHz 以上の MC68000 と 12MiB RAM を必須とする X68000、CLI 専用、Timer D による preemptive scheduling。
 `.x`と`.xdf`の両方で同じ process/module/syscall コードを使う。
@@ -439,14 +439,35 @@ IOCS `trap #15`や Human68K の既存 call 機構は横取りしない。
 
 ```text
 D0.l = syscall number
-D1.l = pointer to the call's fixed-layout request, or 0 for no arguments
+D1.l = request pointer, scalar argument, or 0
 return D0.l = nonnegative result, or negative SS_E* error
 ```
 
 D0 以外の register は preserve する。CCR に成功/失敗を依存させない。
 request は 32bit field 中心の専用 wire layout とし、host の pointer 幅や C enum 幅を使わない。
 version を syscall で取得し、未知の番号は`ENOSYS`、予約 field 非 0 は`EINVAL`。
-wrapper は process の stack 上に request を構成する。
+wrapper は process の stack 上に request を構成する。現在の初期実装は syscall entry と
+process 操作の一部に限定しており、以下の将来 ABI 全体はまだ実装していない。
+
+現在実装済みの subset は次のとおり。`SS9ProcessInfo` は PID/PPID/終了値/state/name のみを
+返し、A3/A5/stack 等のアドレスは含まない。`kill` は自分の直接の子だけを対象にする。
+
+| number | 実装済み動作 |
+| --- | --- |
+| `$00` | ABI version 1 |
+| `$01`/`$02` | current PID / parent PID |
+| `$03` | 登録済みmodule名とargvでspawnし、PIDを返す |
+| `$04` | childをstatus付きで終了。PID 1では拒否 |
+| `$05` | 直接のchildをblockしてwait。requestにPID/終了値を格納 |
+| `$06` | 直接のchildをkill |
+| `$07` | tick数を指定してsleep |
+| `$08` | PID/出力pointerによる単一process snapshot |
+| `$09` | 最大8件の固定長process snapshot |
+| `$20`/`$21`/`$22`/`$23` | open/close/read/writeの番号予約。すべて`ENOSYS` |
+
+`spawn`/`wait`/`proc_info`/`proc_list`の request layout は`ssos/include/ssos9/syscall.h`を参照。
+EXIT/KILL/SLEEP は D1 に scalar 値を渡す。共有物理アドレス空間のため、null と一部の
+layout field 以外の user pointer 範囲検証は未実装であり、MMU 保護もない。
 
 kernel は request/文字列/argv を検証して必要な情報をコピーする。read/write buffer は
 process の private block（read/write 可能）または module image（write の source だけ）に
@@ -661,8 +682,9 @@ saved PC/SP は最後の退避時点の値であり、実行中 process の瞬�
 
 順序は上から。idle/reaper 起動、cancel/release、stack pool 設定共有、first-fit arena、
 arena platform 初期化、S9M1 validator/固定長 Module Table、private data/fixup、合成 SR/PC frame、
-PID 1 と built-in PIC counter の spawn/kill/wait、`ps`/`run`/`kill`/`wait`コマンドまで実装済み。
-外部 module loader/packer、GCC C runtime、syscall ABI 以降は未完了。
+PID 1 と built-in PIC counter の spawn/kill/wait、`ps`/`run`/`kill`/`wait`コマンド、
+version/PID/parent、spawn/exit/wait/kill/sleep/proc_info/proc_list syscall entry/dispatch まで実装済み。
+外部 module loader/packer、GCC C runtime/wrapper 以降は未完了。
 FAT を待たず、RAM filesystem までで process と redirect を学べる状態にする。
 
 | phase | 実装 | 完了条件 |

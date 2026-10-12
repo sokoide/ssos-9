@@ -66,7 +66,7 @@ Human68K の他の MFP source の enable/mask 状態を変更しません。MFP 
 
 ## 現在の実装範囲
 
-現在は CLI と heartbeat/idle/reaper の kernel task、S9M1 validator/Module Table、private data/fixup、Process Table、spawn/kill/wait、内蔵 PIC counter を実装しています。`run counter &`で同一コードを複数 process として起動し、各 process の A5/GOT、data、stack を`ps`で観察できます。任意の`.s9m`ファイルを読む loader、GCC C module runtime、syscall ABI、file I/O/redirect は未実装です。kernel worker task は独立 process ではありません。
+現在は CLI と heartbeat/idle/reaper の kernel task、S9M1 validator/Module Table、private data/fixup、Process Table、spawn/kill/wait、内蔵 PIC counter を実装しています。`run counter &`で同一コードを複数 process として起動し、各 process の A5/GOT、data、stack を`ps`で観察できます。`ssos/include/ssos9/syscall.h`に初期`trap #0` ABI を定義し、QEMU で trap 入口、version、PID/親 PID、process 情報/list、child kill/wait を確認します。任意の`.s9m`ファイルを読む loader、GCC C module runtime、user 向け wrapper、file I/O/redirect は未実装です。kernel worker task は独立 process ではありません。
 
 [マルチプロセス・ローダー実装計画](docs/multiprocess-loader-plan.md)に、共有 PIC、process lifecycle、background 起動、syscall、将来の FAT と stdout の`>`/`>>` redirect の設計と実装順序をまとめています。
 

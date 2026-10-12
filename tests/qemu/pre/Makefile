@@ -6,6 +6,7 @@ CFLAGS = -m68000 -O2 -g -ffreestanding -nostdlib -fno-builtin -MMD -MP \
 	-Wall -Wextra -Wno-unused-parameter -I../common \
 	-I../common/include -I../../../ssos/os/kernel -I../../../ssos/os/mem \
 	-I../../../ssos/os/module -I../../../ssos/os/process \
+	-I../../../ssos/include \
 	-DSS_QEMU_TEST \
 	-DSS_MAX_TASKS=$(SS_MAX_TASKS) -DSS_TASK_STACK=$(SS_TASK_STACK) \
 	-DSS_X_ARENA_BYTES=$(SS_X_ARENA_BYTES)
@@ -19,13 +20,17 @@ TESTS = t01_round_robin t02_register_save t03_sleep_wakeup \
 	t04_main_task_register t05_timerd_cadence t06_idle_sleep t07_task_reap \
 	t08_cancel_waiting t09_arena t10_module_image t11_module_registry \
 	t12_interrupted_start t13_process_spawn
-COMMON_OBJS = stub.o sched.o wakeups.o main_task.o arena.o image.o module.o builtin.o process.o \
+COMMON_OBJS = stub.o sched.o syscall.o syscall_entry.o wakeups.o main_task.o arena.o image.o module.o builtin.o process.o \
 	system_arena_local.o preempt_ctx_switch.o
 
 stub.o: ../common/stub.c $(SSOS)/kernel/scheduler.h
 	$(CC) $(CFLAGS) -c $< -o $@
 sched.o: $(SSOS)/kernel/scheduler.c
 	$(CC) $(CFLAGS) -c $< -o $@
+syscall.o: $(SSOS)/kernel/syscall.c
+	$(CC) $(CFLAGS) -c $< -o $@
+syscall_entry.o: $(SSOS)/kernel/syscall_entry.s
+	$(CC) $(ASFLAGS) -c $< -o $@
 wakeups.o: $(SSOS)/kernel/preemptive/wakeups.c
 	$(CC) $(CFLAGS) -c $< -o $@
 main_task.o: $(SSOS)/kernel/main_task.c
@@ -48,6 +53,8 @@ preempt_ctx_switch_10.o: preempt_ctx_switch.s $(SSOS)/kernel/scheduler_abi.h $(S
 	$(CC) $(ASFLAGS) -Wa,--defsym,SS_TIMERD_SWITCH_TICKS=10 -x assembler-with-cpp -c $< -o $@
 t12_interrupted_start_entry.o: t12_interrupted_start.s
 	$(CC) $(ASFLAGS) -c $< -o $@
+t13_test_vectors.o: t13_test_vectors.s
+	$(CC) $(ASFLAGS) -c $< -o $@
 
 -include *.d
 
@@ -62,6 +69,9 @@ t05_timerd_cadence.elf: t05_timerd_cadence.o stub.o sched.o wakeups.o main_task.
 
 t12_interrupted_start.elf: t12_interrupted_start.o t12_interrupted_start_entry.o $(COMMON_OBJS) ../common/linker.ld
 	$(CC) $(CFLAGS) t12_interrupted_start.o t12_interrupted_start_entry.o $(COMMON_OBJS) $(LDFLAGS) -o $@
+
+t13_process_spawn.elf: t13_process_spawn.o t13_test_vectors.o $(COMMON_OBJS) ../common/linker.ld
+	$(CC) $(CFLAGS) t13_process_spawn.o t13_test_vectors.o $(COMMON_OBJS) $(LDFLAGS) -o $@
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -79,5 +89,5 @@ clean:
 FORCE:
 build/config: FORCE
 	@python3 ../../../tools/build-config.py $@ $(CC) $(CFLAGS) $(ASFLAGS) $(LDFLAGS)
-$(COMMON_OBJS) preempt_ctx_switch_10.o t12_interrupted_start_entry.o \
+$(COMMON_OBJS) preempt_ctx_switch_10.o t12_interrupted_start_entry.o t13_test_vectors.o \
 	$(addsuffix .o,$(TESTS)): build/config

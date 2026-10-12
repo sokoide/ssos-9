@@ -30,8 +30,11 @@ ss_set_interrupts:
 	|      Disable interrupts
 	move.w #0x2700, %sr
 
-	|   Save original interrupt state
-	jsr save_interrupts
+	|      Save original interrupt state
+	jsr    save_interrupts
+	|      trap #0 is reserved for the SSOS-9 syscall ABI.
+	lea    ss_syscall_entry, a0
+	move.l a0, 0x80
 
 	|      MFP registers: VR=$E88017, IERB=$E88009, ISRB=$E88011
 	|      IMRB=$E88015, TCDCR=$E8801D, TDDR=$E88025.
@@ -77,10 +80,11 @@ ss_set_interrupts:
 	movem.l (sp)+, d2-d7/a2-a6
 	rts
 
-	|      ============================================================
-	|      Interrupt handlers
-	|      ============================================================
-	.globl ss_timerd_handler
+	|       ============================================================
+	|       Interrupt handlers
+	|       ============================================================
+	.globl  ss_timerd_handler
+	.extern ss_syscall_entry
 
 	|       ============================================================
 	|       TimerD handler - 5ms tick; switch every 10 ticks

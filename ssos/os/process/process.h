@@ -41,6 +41,9 @@ int16_t ss_process_snapshot_at(uint16_t index, SSProcessSnapshot* snapshot);
 int16_t ss_process_kill(SSProcessId pid);
 int16_t ss_process_wait(SSProcessId parent, SSProcessId child,
                         uint16_t* exit_status);
+SSProcessId ss_process_current_id(void);
+SSProcessId ss_process_current_parent_id(void);
+void ss_process_exit_current(uint16_t exit_status);
 void ss_process_reap_task(uint16_t task_id);
 
 #endif
