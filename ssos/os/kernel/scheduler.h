@@ -82,6 +82,9 @@ extern SSTask* ss_scheduled_task;
 extern uint8_t* ss_task_stack_base;
 
 void    ss_sched_init(void);
+int16_t ss_idle_task_start(void);
+int16_t ss_reaper_task_start(void);
+void ss_reaper_set_hook(void (*hook)(uint16_t task_id));
 /*
  * Queue primitives do not manage interrupt state.  Bootstrap callers may
  * use them before interrupts are enabled; live scheduler callers must use
@@ -92,13 +95,18 @@ void    ss_sched_dequeue(SSTask* tcb);
 SSTask* ss_sched_pick(void);
 
 uint16_t ss_task_create(SSTaskInfo* info);
+uint16_t ss_task_create_interrupted(void* stack, uint16_t stack_size,
+                                   const uint32_t regs[SS_FRAME_REG_WORDS],
+                                   void* entry, uint16_t sr);
 uint16_t ss_task_start(uint16_t id);
+uint16_t ss_task_cancel(uint16_t id);
 void     ss_do_context_switch(void);
 void     ss_do_wakeups(void);
 uint16_t ss_task_sleep(uint32_t ticks);
 void     ss_task_yield(void);
 void     ss_process_wakeups(void);
 void     ss_task_exit(void) __attribute__((noreturn));
+uint16_t ss_task_release_terminated(uint16_t id);
 uint16_t ss_trace_read(SSTraceEvent* events, uint16_t capacity);
 
 /* Custom stack is a descending region [stack - stack_size + 4, stack + 4).

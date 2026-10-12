@@ -11,11 +11,11 @@ static void clear_bss(void) {
 
 void premain(void) {
     clear_bss();
-    ss_set_interrupts();
     if (ss_init() != SS_OK) {
         (void)ss_irq_save();
         for (;;) {
         }
     }
+    ss_set_interrupts();
     ss_run();
 }

@@ -12,7 +12,9 @@ MAKEDISK := ../tools/makedisk/makedisk
 BOOT_BIN := boot/build/BOOT.X.bin
 OS_BIN := os/build/SSOS.X.bin
 OS_INPUTS := $(wildcard os/app/cli.c os/kernel/*.c os/kernel/*.h \
-	os/kernel/preemptive/*.c os/kernel/preemptive/*.s os/kernel/linker.ld os/Makefile)
+	os/kernel/preemptive/*.c os/kernel/preemptive/*.s os/mem/*.c os/mem/*.h \
+	os/module/*.c os/module/*.h os/process/*.c os/process/*.h \
+	os/kernel/linker.ld os/Makefile config.mk)
 DISK_DIR := build/disk
 DISK_FILE := $(DISK_DIR)/$(DISK)
 

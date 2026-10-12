@@ -12,10 +12,15 @@
 #define SS_ERR_ID     (-6)
 
 /* Task constants */
-#define SS_MAX_TASKS   8
+#ifndef SS_MAX_TASKS
+#define SS_MAX_TASKS   10
+#endif
 #define SS_MAX_PRI     16
+#ifndef SS_TASK_STACK
 #define SS_TASK_STACK  4096
+#endif
 #define SS_MIN_TASK_STACK 256
+#define SS_IDLE_PRIORITY (SS_MAX_PRI - 1)
 
 /* Context save levels */
 #define SS_CTX_MINIMAL 0x00

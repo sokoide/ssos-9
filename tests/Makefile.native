@@ -1,6 +1,8 @@
 # Host tests for the scheduler's queue and task-state logic.
 CC = cc
+include ../ssos/config.mk
 CFLAGS = -O2 -g -Wall -Wextra -Werror -std=c11 -DSS_HOST_TEST -DSS_TASK_CREATE_PROBE \
+	-DSS_MAX_TASKS=$(SS_MAX_TASKS) -DSS_TASK_STACK=$(SS_TASK_STACK) \
 	-Iframework -I../ssos/os/kernel
 
 ifeq ($(SANITIZE),1)

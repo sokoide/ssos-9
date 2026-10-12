@@ -1,6 +1,10 @@
 #include "../kernel/kernel.h"
 #include "../kernel/main_task.h"
 #include "../kernel/scheduler.h"
+#include "../mem/system_arena.h"
+#include "../module/builtin.h"
+#include "../module/module.h"
+#include "../process/process.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -143,21 +147,190 @@ static void* heartbeat_task(void* arg) {
     return NULL;
 }
 
+static const char* process_state_name(uint8_t state) {
+    switch (state) {
+    case SS_PROCESS_INITIALIZING: return "init";
+    case SS_PROCESS_READY: return "ready";
+    case SS_PROCESS_REAPING: return "reaping";
+    case SS_PROCESS_ZOMBIE: return "zombie";
+    default: return "?";
+    }
+}
+
+static void show_processes(void) {
+    print("PID PPID STATE NAME MODULE DATA GOT STACK\r\n");
+    for (uint16_t i = 0; i < SS_PROCESS_MAX; i++) {
+        SSProcessSnapshot process;
+        if (ss_process_snapshot_at(i, &process) != SS_OK)
+            continue;
+        print_u32(process.pid);
+        print(" ");
+        print_u32(process.ppid);
+        print(" ");
+        print(process_state_name(process.state));
+        print(" ");
+        print(process.name);
+        print(" ");
+        print_hex32(process.module_id);
+        print(" ");
+        print_hex32((uint32_t)(uintptr_t)process.data_base);
+        print(" ");
+        print_hex32((uint32_t)(uintptr_t)process.got_base);
+        print(" ");
+        print_hex32((uint32_t)(uintptr_t)process.stack_low);
+        print("\r\n");
+    }
+}
+
+static int parse_pid(const char* text, SSProcessId* pid) {
+    if (text == NULL || *text == '\0')
+        return 0;
+    uint32_t value = 0;
+    while (*text != '\0') {
+        if (*text < '0' || *text > '9')
+            return 0;
+        uint32_t digit = (uint32_t)(*text++ - '0');
+        if (value > (0x7fffffffu - digit) / 10u)
+            return 0;
+        value = value * 10u + digit;
+    }
+    if (value == 0)
+        return 0;
+    *pid = value;
+    return 1;
+}
+
+static uint16_t tokenize(char* line, char* tokens[], uint16_t capacity) {
+    uint16_t count = 0;
+    char* cursor = line;
+    while (*cursor != '\0') {
+        while (*cursor == ' ' || *cursor == '\t') cursor++;
+        if (*cursor == '\0')
+            break;
+        if (count == capacity)
+            return (uint16_t)(capacity + 1u);
+        tokens[count++] = cursor;
+        while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t') cursor++;
+        if (*cursor != '\0')
+            *cursor++ = '\0';
+    }
+    return count;
+}
+
+static int run_process_command(char* line) {
+    char* tokens[4];
+    uint16_t count = tokenize(line, tokens, 4);
+    if (count == 0)
+        return 0;
+    if (count > 4) {
+        print("Too many arguments.\r\n");
+        return 0;
+    }
+
+    if (strcmp(tokens[0], "ps") == 0 && count == 1) {
+        show_processes();
+    } else if (strcmp(tokens[0], "run") == 0 && count == 3 &&
+               strcmp(tokens[1], "counter") == 0 &&
+               strcmp(tokens[2], "&") == 0) {
+        SSModuleId module_id;
+        SSProcessId pid;
+        const char* argv[] = {"counter"};
+        if (ss_module_find("counter", &module_id) != SS_OK ||
+            ss_process_spawn(1, module_id, 1, argv, &pid) != SS_OK) {
+            print("Unable to start counter.\r\n");
+        } else {
+            print("Started counter as PID ");
+            print_u32(pid);
+            print("\r\n");
+        }
+    } else if (strcmp(tokens[0], "kill") == 0 && count == 2) {
+        SSProcessId pid;
+        if (!parse_pid(tokens[1], &pid) || ss_process_kill(pid) != SS_OK)
+            print("Cannot kill that PID.\r\n");
+        else
+            print("Kill requested. Use wait PID to collect it.\r\n");
+    } else if (strcmp(tokens[0], "wait") == 0 && count == 2) {
+        SSProcessId pid;
+        uint16_t exit_status;
+        if (!parse_pid(tokens[1], &pid)) {
+            print("Invalid PID.\r\n");
+            return 0;
+        }
+        int16_t status;
+        while ((status = ss_process_wait(1, pid, &exit_status)) == SS_ERR_STATE)
+            (void)ss_task_sleep(1);
+        if (status == SS_OK) {
+            print("PID ");
+            print_u32(pid);
+            print(" exited with status ");
+            print_u32(exit_status);
+            print("\r\n");
+        } else {
+            print("No child with that PID.\r\n");
+        }
+    } else {
+        return -1;
+    }
+    return 0;
+}
+
+#ifdef LOCAL_MODE
+static void stop_children(void) {
+    for (uint16_t i = 0; i < SS_PROCESS_MAX; i++) {
+        SSProcessSnapshot process;
+        if (ss_process_snapshot_at(i, &process) != SS_OK || process.pid == 1)
+            continue;
+        if (process.state == SS_PROCESS_READY)
+            (void)ss_process_kill(process.pid);
+        uint16_t exit_status;
+        int16_t status;
+        while ((status = ss_process_wait(1, process.pid, &exit_status)) ==
+               SS_ERR_STATE)
+            (void)ss_task_sleep(1);
+    }
+}
+#endif
+
 int16_t ss_init(void) {
 #ifdef LOCAL_MODE
     ss_task_stack_base = local_task_stacks;
 #else
     ss_task_stack_base = &__ssosstack_start;
 #endif
+    if (ss_memory_init() != SS_OK)
+        return SS_ERR_STATE;
+    ss_module_registry_init();
+    if (ss_builtin_modules_init() != SS_OK)
+        return SS_ERR_STATE;
     ss_sched_init();
-    return ss_main_task_register(&main_tcb, 8);
+    int16_t status = ss_main_task_register(&main_tcb, 8);
+    if (status != SS_OK)
+        return status;
+    status = ss_process_init(&main_tcb);
+    if (status != SS_OK)
+        return status;
+    status = ss_idle_task_start();
+    if (status != SS_OK)
+        return status;
+    return ss_reaper_task_start();
 }
 
 static void show_help(void) {
-    print("Commands: help, uptime, debug, trace, clear, version, exit\r\n");
+    print("Commands: help, uptime, ps, run counter &, kill PID, wait PID, ");
+    print("debug, trace, clear, version, exit\r\n");
 }
 
 static int run_command(char* line) {
+    char process_line[64];
+    size_t length = 0;
+    while (line[length] != '\0' && length + 1 < sizeof(process_line)) {
+        process_line[length] = line[length];
+        length++;
+    }
+    process_line[length] = '\0';
+    int process_result = run_process_command(process_line);
+    if (process_result >= 0)
+        return 0;
     if (strcmp(line, "help") == 0) {
         show_help();
     } else if (strcmp(line, "uptime") == 0) {
@@ -186,6 +359,7 @@ static int run_command(char* line) {
         print("SSOS-9 CLI preemptive minimum\r\n");
     } else if (strcmp(line, "exit") == 0) {
 #ifdef LOCAL_MODE
+        stop_children();
         return 1;
 #else
         print("Cannot exit the initial SSOS-9 process (PID 1).\r\n");

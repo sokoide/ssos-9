@@ -2,6 +2,8 @@ ifeq ($(shell which m68k-xelf-gcc),)
 $(error Cross-compilation toolchain not found. Please run: . ~/.elf2x68k)
 endif
 
+include ../config.mk
+
 TARGET=SSOS.X
 include ../common-sources.mk
 SRCS = $(SS_CORE_SRCS) $(SS_TARGET_SRCS) kernel/premain.c
@@ -26,8 +28,12 @@ INCLUDE=-I$(XELF_BASE)/m68k-elf/include -I../include -I./kernel -I./kernel/preem
 LIB=-L$(XELF_BASE)/m68k-elf/lib -L$(shell dirname $(shell m68k-xelf-gcc -print-libgcc-file-name))
 
 CCFLAGS=$(INCLUDE) -g -O2 -MMD -MP
-CCFLAGS += $(EXTRA_CFLAGS)
-LDFLAGS=$(LIB) -lx68kiocs -Tkernel/linker.ld -nostdlib -lc -lm -lgcc -lnosys
+CCFLAGS += -DSS_MAX_TASKS=$(SS_MAX_TASKS) -DSS_TASK_STACK=$(SS_TASK_STACK) \
+	-DSS_X_ARENA_BYTES=$(SS_X_ARENA_BYTES) $(EXTRA_CFLAGS)
+LDFLAGS=$(LIB) -lx68kiocs -Tkernel/linker.ld -nostdlib \
+	--defsym=SS_MAX_TASKS=$(SS_MAX_TASKS) --defsym=SS_TASK_STACK=$(SS_TASK_STACK) \
+	--defsym=SS_RAM_END=$(SS_RAM_END) \
+	-lc -lm -lgcc -lnosys
 ASFLAGS=-m68000 --register-prefix-optional --traditional-format -I../include -I./kernel
 
 .PHONY: all clean dump readelf

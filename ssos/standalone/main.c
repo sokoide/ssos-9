@@ -5,17 +5,16 @@
 
 int main(void) {
     int old_ssp = _iocs_b_super(0);
-    ss_set_interrupts();
+    uint16_t saved_sr = ss_irq_save();
     if (ss_init() != SS_OK) {
-        uint16_t saved_sr = ss_irq_save();
-        ss_restore_interrupts();
         ss_irq_restore(saved_sr);
         (void)_iocs_b_super(old_ssp);
         _exit(1);
     }
+    ss_set_interrupts();
 
     int status = ss_run();
-    uint16_t saved_sr = ss_irq_save();
+    saved_sr = ss_irq_save();
     ss_restore_interrupts();
     ss_irq_restore(saved_sr);
     (void)_iocs_b_super(old_ssp);

@@ -7,9 +7,40 @@ SSReadyQueue ready_queue;
 SSTask* ss_curr_task;
 SSTask* ss_scheduled_task;
 static SSTask* sleeping_tasks;
+static void (*reaper_hook)(uint16_t task_id);
 static SSTraceEvent trace_events[SS_TRACE_CAPACITY];
 static uint8_t trace_next;
 static uint8_t trace_count;
+
+static void* idle_task(void* arg) {
+    (void)arg;
+    for (;;) {
+#ifdef SS_QEMU_TEST
+        /* QEMU's virt machine has no MFP Timer D; trap #0 drives its test ISR.
+         */
+        __asm__ volatile("trap #0" ::: "memory");
+#elif defined(__m68k__)
+        /* Wake on the next enabled interrupt, normally Timer D. */
+        __asm__ volatile("stop #0x2000" ::: "memory");
+#else
+        ss_task_yield();
+#endif
+    }
+    return NULL;
+}
+
+static void* reaper_task(void* arg) {
+    (void)arg;
+    for (;;) {
+        for (uint16_t id = 1; id <= SS_MAX_TASKS; id++) {
+            if (reaper_hook != NULL)
+                reaper_hook(id);
+            (void)ss_task_release_terminated(id);
+        }
+        (void)ss_task_sleep(1);
+    }
+    return NULL;
+}
 
 static uint8_t task_id(const SSTask* task) {
     uintptr_t address = (uintptr_t)task;
@@ -97,8 +128,45 @@ void ss_sched_init(void) {
     ss_curr_task = NULL;
     ss_scheduled_task = NULL;
     sleeping_tasks = NULL;
+    reaper_hook = NULL;
     trace_next = 0;
     trace_count = 0;
+}
+
+int16_t ss_idle_task_start(void) {
+    SSTaskInfo info = {
+        .entry = idle_task,
+        .pri = SS_IDLE_PRIORITY,
+        .ctx_level = SS_CTX_NORMAL,
+        .stack_size = SS_TASK_STACK,
+        .stack = NULL,
+        .arg = NULL,
+    };
+    uint16_t id = ss_task_create(&info);
+    if (id == 0 || id > SS_MAX_TASKS)
+        return (int16_t)id;
+    return (int16_t)ss_task_start(id);
+}
+
+int16_t ss_reaper_task_start(void) {
+    SSTaskInfo info = {
+        .entry = reaper_task,
+        .pri = 8,
+        .ctx_level = SS_CTX_NORMAL,
+        .stack_size = SS_TASK_STACK,
+        .stack = NULL,
+        .arg = NULL,
+    };
+    uint16_t id = ss_task_create(&info);
+    if (id == 0 || id > SS_MAX_TASKS)
+        return (int16_t)id;
+    return (int16_t)ss_task_start(id);
+}
+
+void ss_reaper_set_hook(void (*hook)(uint16_t task_id)) {
+    uint16_t saved_sr = ss_irq_save();
+    reaper_hook = hook;
+    ss_irq_restore(saved_sr);
 }
 
 void ss_sched_enqueue(SSTask* tcb) {
@@ -224,6 +292,42 @@ uint16_t ss_task_create(SSTaskInfo* info) {
     return i + 1; /* 1-based ID */
 }
 
+uint16_t ss_task_create_interrupted(void* stack, uint16_t stack_size,
+                                    const uint32_t regs[SS_FRAME_REG_WORDS],
+                                    void* entry, uint16_t sr) {
+    if (stack == NULL || entry == NULL || stack_size < SS_MIN_TASK_STACK ||
+        (uintptr_t)stack % 4 != 0 || (stack_size & 3u) != 0 || sr != 0x2000u)
+        return SS_ERR_PARAM;
+
+    SSTaskInfo info = {
+        .entry = (void* (*)(void*))entry,
+        .pri = 8,
+        .ctx_level = SS_CTX_FULL,
+        .stack_size = stack_size,
+        .stack = (uint8_t*)stack + stack_size - 4u,
+    };
+    uint16_t id = ss_task_create(&info);
+    if (id == 0 || id > SS_MAX_TASKS)
+        return id;
+
+    uint16_t saved_sr = ss_irq_save();
+    SSTask* tcb = &tcb_table[id - 1];
+    SSInterruptedFrame* frame =
+        (SSInterruptedFrame*)((uintptr_t)tcb->stack_base -
+                              sizeof(SSInterruptedFrame));
+    for (uint32_t i = 0; i < SS_FRAME_REG_WORDS; i++)
+        frame->regs[i] = regs == NULL ? 0 : regs[i];
+    frame->sr = sr;
+    frame->pc = (uint32_t)(uintptr_t)entry;
+    *(uint32_t*)tcb->stack_base = (uint32_t)(uintptr_t)ss_task_exit;
+    tcb->entry = NULL;
+    tcb->arg = NULL;
+    tcb->context = frame;
+    tcb->resume_type = 0;
+    ss_irq_restore(saved_sr);
+    return id;
+}
+
 uint16_t ss_task_start(uint16_t id) {
     if (id == 0 || id > SS_MAX_TASKS)
         return SS_ERR_ID;
@@ -244,6 +348,56 @@ uint16_t ss_task_start(uint16_t id) {
         ss_curr_task = tcb;
     }
 
+    ss_irq_restore(saved_sr);
+    return SS_OK;
+}
+
+uint16_t ss_task_cancel(uint16_t id) {
+    if (id == 0 || id > SS_MAX_TASKS)
+        return SS_ERR_ID;
+
+    uint16_t saved_sr = ss_irq_save();
+    SSTask* tcb = &tcb_table[id - 1];
+    if (tcb == ss_curr_task) {
+        ss_irq_restore(saved_sr);
+        return SS_ERR_STATE;
+    }
+
+    if (tcb->state == SS_TS_READY) {
+        ss_sched_dequeue(tcb);
+    } else if (tcb->state == SS_TS_WAIT) {
+        SSTask** link = &sleeping_tasks;
+        while (*link != NULL && *link != tcb) link = &(*link)->sleep_next;
+        if (*link == NULL) {
+            ss_irq_restore(saved_sr);
+            return SS_ERR_STATE;
+        }
+        *link = tcb->sleep_next;
+        tcb->sleep_next = NULL;
+    } else if (tcb->state != SS_TS_DORMANT) {
+        ss_irq_restore(saved_sr);
+        return SS_ERR_STATE;
+    }
+
+    tcb->wait_until = 0;
+    tcb->state = SS_TS_TERMINATED;
+    trace(SS_TRACE_EXIT, tcb, NULL, 0);
+    ss_irq_restore(saved_sr);
+    return SS_OK;
+}
+
+uint16_t ss_task_release_terminated(uint16_t id) {
+    if (id == 0 || id > SS_MAX_TASKS)
+        return SS_ERR_ID;
+
+    uint16_t saved_sr = ss_irq_save();
+    SSTask* tcb = &tcb_table[id - 1];
+    if (tcb == ss_curr_task || tcb->state != SS_TS_TERMINATED) {
+        ss_irq_restore(saved_sr);
+        return SS_ERR_STATE;
+    }
+
+    memset(tcb, 0, sizeof(*tcb));
     ss_irq_restore(saved_sr);
     return SS_OK;
 }

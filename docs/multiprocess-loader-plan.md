@@ -1,8 +1,9 @@
 # SSOS-9: OS-9型マルチプロセス・ローダー実装計画
 
-状態: 設計案。ここに記載する API、コマンド、モジュール形式は未実装。
+状態: 実装中。S9M1 validator/registry、private data fixup、合成 SR/PC frame、Process Table、built-in PIC counter の spawn/kill/wait と CLI コマンドを実装。
+外部 module loader/packer、GCC C runtime、syscall ABI、VFS/redirect、FAT は未実装。
 
-対象: MC68000 の X68000、CLI 専用、Timer D による preemptive scheduling。
+対象: 16MHz 以上の MC68000 と 12MiB RAM を必須とする X68000、CLI 専用、Timer D による preemptive scheduling。
 `.x`と`.xdf`の両方で同じ process/module/syscall コードを使う。
 
 ## 1. 到達点と設計上の決定
@@ -45,7 +46,7 @@ process ごとの USP/SSP、kernel stack、trap/interrupt entry の作り直し�
 | `ssos/os/kernel/preemptive/interrupts.s` | 新規taskはCの`entry(arg)`から開始 | PIC process用の初期レジスタフレームを復元する経路を追加 |
 | `ssos/os/kernel/context_frame.h` | yield用frameはPC→SRの順 | Timer D/trap用のSR→PC順のframeも定義 |
 | `ssos/os/app/cli.c` | 入力行と組み込みコマンドだけを処理 | tokenize、spawn、wait、fd設定、process観察を追加 |
-| `ssos/os/kernel/linker.ld` | SSOSRAMの上限を12MiB相当まで固定 | 実際に利用可能なRAMからarena上限を決める |
+| `ssos/os/kernel/linker.ld` | arenaを使わずSSOSRAMを予約 | 12MiB必須条件に合わせてarena終端を`$C00000`へ固定 |
 | `ssos/standalone/main.c` | `.x`終了時にMFPとmodeを復元 | 全childの終了・回収後に既存の復元経路へ戻る |
 
 初期 shell を PID 1 として登録し、kernel heartbeat/idle/reaper は PID を持たない
@@ -310,14 +311,12 @@ code と data を異なる仮想配置・実 load 位置で検査し、PC 相対
 | 起動形式 | allocatorが管理するRAM |
 | --- | --- |
 | `.x` | Human68Kから与えられたprogram領域内の専用256KiB arena（BSSとして確保） |
-| `.xdf` | `__ssosram_start`からplatformが保証したRAM上限までのfree interval |
+| `.xdf` | `__ssosram_start`から`__ssosram_end = $C00000`まで。kernel task stack poolの後ろ |
 
-`.x`から Human68K 管理外の空き RAM を独断で使わない。`.xdf`では現在の linker の
-`__ssosram_end`を実 RAM 上限と見なさず、kernel/IOCS work/boot 読込範囲/全 stack と
-arena の重なりを検証する。最初は設定値`SS_RAM_BYTES=2MiB`以上の対応機で動かし、
-設定以上の RAM が実際に搭載されていることを起動条件にする。4MiB 機への拡張も
-設定値で行う。自動 RAM 検出は原典で確認した platform 実装へ後から置き換える。
-VRAM、I/O、ROM、拡張 device の領域は arena に含めない。
+動作条件として 12MiB の連続した main RAM（`$000000–$BFFFFF`）を要求し、RAM 検出は行わない。
+`.xdf`の arena 上限は linker/config で`$C00000`へ固定するため、実 RAM が条件に満たない機種では
+起動しない。`.x`は Human68K が割り当てた program 領域内の BSS だけを使う。VRAM、I/O、ROM、
+拡張 device の領域は arena に含めない。
 
 process ごとに次の連続 block を割り当てる。
 
@@ -660,7 +659,11 @@ saved PC/SP は最後の退避時点の値であり、実行中 process の瞬�
 
 ## 9. 実装フェーズと完了条件
 
-順序は上から。FAT を待たず、RAM filesystem までで process と redirect を学べる状態にする。
+順序は上から。idle/reaper 起動、cancel/release、stack pool 設定共有、first-fit arena、
+arena platform 初期化、S9M1 validator/固定長 Module Table、private data/fixup、合成 SR/PC frame、
+PID 1 と built-in PIC counter の spawn/kill/wait、`ps`/`run`/`kill`/`wait`コマンドまで実装済み。
+外部 module loader/packer、GCC C runtime、syscall ABI 以降は未完了。
+FAT を待たず、RAM filesystem までで process と redirect を学べる状態にする。
 
 | phase | 実装 | 完了条件 |
 | --- | --- | --- |

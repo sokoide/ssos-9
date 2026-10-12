@@ -1,6 +1,7 @@
 # SSOS-9
 
 X68000 向けの最小 CLI 専用 OS です。`ssos-68k`の起動経路と Timer D 割り込みによるプリエンプティブ・スケジューラを基にしています。対応するスケジューラは preemptive のみです。
+動作条件は 16MHz 以上の MC68000 と 12MiB の連続 main RAM です。
 
 ## ビルドとインストール
 
@@ -19,6 +20,10 @@ make install
 
 - `help`: コマンド一覧
 - `uptime`: カーネル worker の起床回数
+- `run counter &`: 内蔵 PIC counter をバックグラウンド起動
+- `ps`: PID、親 PID、状態、共有 module、private data/GOT のアドレスを表示
+- `kill PID`: 子 process を停止
+- `wait PID`: 子 process の回収と終了状態を待つ
 - `debug`: tick、task stack 残量、MFP Timer D 設定を表示
 - `trace`: 直近 16 件の task create/start/sleep/wake/switch/exit を表示
 - `clear`: IOCS テキスト画面を消去
@@ -61,9 +66,7 @@ Human68K の他の MFP source の enable/mask 状態を変更しません。MFP 
 
 ## 現在の実装範囲
 
-実装済みなのは単一 CLI プロセスとカーネル worker task です。`.xdf` で親プロセスまたは最小 PID へ戻る動作には、プロセス表・プロセス生成・切替が必要で、未実装です。
-
-将来の OS-9 型ローダーに必要な Module Table、物理メモリアロケータ、Process Table、PIC/A5 GOT ABI、`load_module()` / `link_module()` / `spawn_process()` はまだありません。worker task は独立プロセスではありません。
+現在は CLI と heartbeat/idle/reaper の kernel task、S9M1 validator/Module Table、private data/fixup、Process Table、spawn/kill/wait、内蔵 PIC counter を実装しています。`run counter &`で同一コードを複数 process として起動し、各 process の A5/GOT、data、stack を`ps`で観察できます。任意の`.s9m`ファイルを読む loader、GCC C module runtime、syscall ABI、file I/O/redirect は未実装です。kernel worker task は独立 process ではありません。
 
 [マルチプロセス・ローダー実装計画](docs/multiprocess-loader-plan.md)に、共有 PIC、process lifecycle、background 起動、syscall、将来の FAT と stdout の`>`/`>>` redirect の設計と実装順序をまとめています。
 

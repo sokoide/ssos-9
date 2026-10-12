@@ -3,6 +3,8 @@ ifeq ($(shell which m68k-xelf-gcc),)
 $(error Cross-compilation toolchain not found. Please run: . ~/.elf2x68k)
 endif
 
+include ../config.mk
+
 TARGET=ssos9.x
 CDEFINES=-DSS_BUILD_PREEMPTIVE
 
@@ -30,7 +32,9 @@ READELF=m68k-elf-readelf
 INCLUDE=-I$(XELF_BASE)/m68k-elf/include -I../include -I../os/kernel -I../os/kernel/preemptive
 LIB=-L$(XELF_BASE)/m68k-elf/lib
 
-CCFLAGS=$(INCLUDE) -O2 -g -MMD -MP -DLOCAL_MODE $(CDEFINES)
+CCFLAGS=$(INCLUDE) -O2 -g -MMD -MP -DLOCAL_MODE $(CDEFINES) \
+	-DSS_MAX_TASKS=$(SS_MAX_TASKS) -DSS_TASK_STACK=$(SS_TASK_STACK) \
+	-DSS_X_ARENA_BYTES=$(SS_X_ARENA_BYTES)
 CCFLAGS += $(EXTRA_CFLAGS)
 LDFLAGS=$(LIB) -lx68kiocs -nostdlib -lc -lm -lgcc
 
@@ -62,7 +66,7 @@ $(OBJDIR):
 
 # VPATH lets the generic %.o: %.c / %.s rules find sources across the
 # variant kernel dir and the shared subsystem dirs.
-VPATH=../os/kernel/preemptive:../os/app:../os/kernel
+VPATH=../os/kernel/preemptive:../os/app:../os/kernel:../os/mem:../os/module:../os/process
 
 $(OBJDIR)/%.o: %.c | $(OBJDIR)
 	$(CC) -c $< -o $@ $(CCFLAGS)

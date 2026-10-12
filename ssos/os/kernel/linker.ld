@@ -1,6 +1,6 @@
 ENTRY(entry)
 
-__ssosstack_size = 8 * 4096;
+__ssosstack_size = SS_MAX_TASKS * SS_TASK_STACK;
 
 MEMORY
 {
@@ -46,9 +46,11 @@ SECTIONS
 		__ssosstack_start = .;
 		. = . + __ssosstack_size;
 		__ssosstack_end = .;
-		__ssosram_start = .;
-		. = ORIGIN(SSOSRAM) + LENGTH(SSOSRAM);
-		__ssosram_end = .;
 	} > SSOSRAM
+	__ssosram_start = __ssosstack_end;
+	__ssosram_end = SS_RAM_END;
 	__ssosram_size = __ssosram_end - __ssosram_start;
+	ASSERT(__ssosram_start < __ssosram_end, "SSOS RAM arena is empty")
+	ASSERT(__ssosram_end <= ORIGIN(SSOSRAM) + LENGTH(SSOSRAM),
+	       "SSOS RAM end exceeds supported 12 MiB address range")
 }
