@@ -71,7 +71,7 @@ ss_set_interrupts:
 	ori.b  #0x10, d0
 	move.b d0, 0xe88015
 
-	|      Enable interrupts - level 2
+	|      Supervisor mode, IPL mask 0: allow interrupt levels 1-7.
 	move.w #0x2000, %sr
 
 	movem.l (sp)+, d2-d7/a2-a6

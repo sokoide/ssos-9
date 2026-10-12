@@ -67,11 +67,20 @@ save_interrupts:
 ss_restore_interrupts:
 	move.w #0x2700, %sr
 
-	|      Reset pending
-	move.b #0x00, 0xe8800b
-	move.b #0x00, 0xe8800d
-	move.b #0x00, 0xe8800f
-	move.b #0x00, 0xe88011
+	|      Quiesce only Timer D before restoring Human68k's MFP state.
+	|      MFP status bits are cleared by writing 0; writing 1 leaves them
+	|      unchanged, so preserve every non-Timer-D pending/service flag.
+	move.b 0xe88015, d0
+	andi.b #0xef, d0
+	move.b d0, 0xe88015
+	move.b 0xe88009, d0
+	andi.b #0xef, d0
+	move.b d0, 0xe88009
+	move.b 0xe8801d, d0
+	andi.b #0xf0, d0
+	move.b d0, 0xe8801d
+	move.b #0xef, 0xe8800d
+	move.b #0xef, 0xe88011
 
 	lea ss_save_data_base, a0
 

@@ -65,7 +65,7 @@ done:
 	|      Ch.B 受信ハンドラを登録するため、SCC のマウス受信が有効化される。
 	lea.l  .message_msinit, a1
 	IOCS   _B_PRINT
-	move.w #0x2000, %sr  | IPL マスク 1 (レベル2-7許可)
+	move.w #0x2000, %sr  | Supervisor、IPLマスク0（レベル1-7を許可）
 	moveq  #0x70, d0
 	trap   #15   | IOCS _MS_INIT
 	moveq  #0x71, d0
