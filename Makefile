@@ -5,7 +5,7 @@ SUBDIRS := tools/makedisk
 ASM_FORMATTER ?= asmfmt
 CLANG_FORMAT ?= clang-format
 
-.PHONY: $(TOPTARGETS) $(SUBDIRS) all format ssos-preemptive test test-asm test-qemu verify verify-check
+.PHONY: $(TOPTARGETS) all debug format test test-asm test-qemu verify verify-check
 
 usage:
 	@echo "SSOS-9 build targets (preemptive only):"
@@ -16,25 +16,24 @@ usage:
 	@echo "  make test-qemu        Run scheduler tests under QEMU"
 	@echo "  make verify           Run automated verification and report hardware checks"
 	@echo "  make clean            Remove build outputs"
-	@echo "  make format           Format Markdown and assembly sources"
+	@echo "  make format           Format Markdown, C, and assembly sources"
+	@echo "  make debug            Build .x and create ELF disassembly/symbol/map files"
 
 .PHONY: usage
 
-# This repository ships only the preemptive OS.
-all: tools/makedisk ssos-preemptive
+all: tools/makedisk
+	$(MAKE) -C ssos all
 
-ssos-preemptive: tools/makedisk
-	$(MAKE) -C ssos all SCHED=preemptive
+debug: all
+	$(MAKE) -C ssos debug
 
 install: tools/makedisk
-	$(MAKE) -C ssos install SCHED=preemptive
-
-$(SUBDIRS):
-	$(MAKE) -C $@ all
+	$(MAKE) -C ssos install
 
 clean:
 	$(MAKE) -C tools/makedisk clean
-	$(MAKE) -C ssos clean SCHED=preemptive
+	$(MAKE) -C ssos clean
+	$(MAKE) -C tests clean
 
 format:
 	@echo "Formatting Markdown files..."
@@ -63,12 +62,5 @@ verify-check:
 	@tools/verify-check.sh $(REF)
 
 # Run the preemptive verification suites and report the target hardware boundary.
-verify: all
+verify: all test test-asm test-qemu
 	$(MAKE) verify-check
-
-test-tools:
-	python3 -m unittest discover -s tests/tools -v
-
-.PHONY: test-tools bench-native
-bench-native:
-	$(MAKE) -C tests -f Makefile.native bench SCHED=preemptive

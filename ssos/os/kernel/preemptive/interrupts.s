@@ -1,14 +1,10 @@
-.include "iocscall.mac"
-
 #include "scheduler_abi.h"
 
 .section .text
 .align   2
 .globl   ss_set_interrupts, ss_restore_interrupts
 .globl   ss_irq_save, ss_irq_restore
-.globl   ss_tick_counter, ss_vsync_counter
-.globl   ss_vsync_flag
-.globl   ss_vdisp_fire_count, ss_timerd_fire_count
+.globl   ss_tick_counter
 .globl   ss_save_data_base
 .globl   ss_task_yield
 .globl   ss_context_switch_count
@@ -37,63 +33,43 @@ ss_set_interrupts:
 	|   Save original interrupt state
 	jsr save_interrupts
 
-	|      Set MFP vector base.  Bit 3 (S) = 1 selects software EOI mode:
-	|      our handlers clear their ISRA/ISRB bits explicitly, and sources
-	|      served by the NOP stubs stay latched after the first hit
-	|      (auto-EOI would re-enter the H-SYNC stub at the scanline rate).
-	move.b #0x41, 0xe88017
+	|      MFP registers: VR=$E88017, IERB=$E88009, ISRB=$E88011
+	|      IMRB=$E88015, TCDCR=$E8801D, TDDR=$E88025.
+	|      Vector = VR base + channel: GPIP7 is $40+$0F=$4F. Keep the
+	|      current EOI mode and all Human68k source enable/masks except
+	|      Timer D (IERB/IMRB bit 4), so unrelated sources cannot reach us.
+	move.b 0xe88017, d0
+	andi.b #0x08, d0
+	ori.b  #0x40, d0
+	move.b d0, 0xe88017
+	move.b 0xe88009, d0
+	andi.b #0xef, d0
+	move.b d0, 0xe88009
+	move.b #0xef, 0xe88011
 
-	|      IERAB: enable all sources.  Deliberate superset of Human68K's
-	|      own masks (fig.13 lists IERA=$18/IERB=$3E; Human68K v3.02
-	|      measures IERA=$18 and IERB=$26, which grows to $2E with
-	|      drivers loaded): every IOCS source (keyboard USART, timers)
-	|      stays live even where IMR decides.
-	move.b #0xff, 0xe88007
-	move.b #0x7f, 0xe88009
-
-	|      IMRAB: keep all sources unmasked so Human68K's handlers
-	|      (keyboard, mouse, CRTC, etc.) continue to work.
-	|      Our code overrides only specific vectors (0x134 V-DISP
-	|      0x110 Timer D); all others still point to Human68K ISRs.
-	|      IMRB bit 7 = GPIP5 (unused, tied H) — keep it masked (0x7F).
-	move.b #0xff, 0xe88013
-	move.b #0x7f, 0xe88015
-
-	|      Reset IPRAB, ISRAB
-	move.b #0x00, 0xe8800b
-	move.b #0x00, 0xe8800d
-	move.b #0x00, 0xe8800f
-	move.b #0x00, 0xe88011
-
-	|      Set interrupt handlers
-	|      Timer D handler
+	|      Install the Timer D handler.
 	lea    ss_timerd_handler, a0
 	move.l a0, 0x110
 
-	|      V-DISP / Timer A handler
-	lea    ss_vdisp_handler, a0
-	move.l a0, 0x134
+	|      Stop and configure Timer D only; preserve Timer C's mode in
+	|      TCDCR's upper nibble. Low bits select Timer D prescaling.
+	move.b 0xe8801d, d0
+	andi.b #0xf0, d0
+	move.b d0, 0xe8801d
 
-	|      NOP handlers for unused vectors
-	lea    ss_nop_handler, a0
-	move.l a0, 0x138
-	move.l a0, 0x13c
-
-	|      TACR - event count mode (V-DISP)
-	|      $08 = event count mode (Human68k compatible)
-	move.b #0x08, 0xe88019
-
-	|      TCDCR - Timer C/D prescaler /200 each (delay mode)
-	|      $77 = 0111 0111 → C:/200, D:/200
-	|      Use move.b (not read-modify-write) to avoid setting
-	|      reserved bit 7 which ORing 0xF7 would do.
-	move.b #0x77, 0xe8801d
-
-	|      TADR - Timer A data
-	move.b #1, 0xe8801f
-
-	|      TDDR - Timer D: 4MHz / 200 / 100 = 200Hz (5ms)
+	|      TDDR=$E88025. Timer D: 4MHz / 200 / 100 = 200Hz (5ms).
 	move.b #100, 0xe88025
+	ori.b  #0x07, d0
+	move.b d0, 0xe8801d
+
+	|      Enable Timer D in IERB and unmask it in IMRB. Preserve every
+	|      other channel; IMRB bit 4 is the Timer D mask bit.
+	move.b 0xe88009, d0
+	ori.b  #0x10, d0
+	move.b d0, 0xe88009
+	move.b 0xe88015, d0
+	ori.b  #0x10, d0
+	move.b d0, 0xe88015
 
 	|      Enable interrupts - level 2
 	move.w #0x2000, %sr
@@ -104,31 +80,7 @@ ss_set_interrupts:
 	|      ============================================================
 	|      Interrupt handlers
 	|      ============================================================
-	.globl ss_nop_handler
-	.globl ss_vdisp_handler
 	.globl ss_timerd_handler
-
-ss_nop_handler:
-	rte
-
-	| V-DISP handler: increment vsync counter and set flag
-
-ss_vdisp_handler:
-	move.w  #0x2700, %sr  | Disable interrupts to prevent nesting
-	movem.l d0/a0, -(sp)
-
-	|      Reset ISRA Timer A bit (clear bit 5)
-	move.l #0xe8800f, a0
-	move.b (a0), d0
-	and.b  #0xdf, d0
-	move.b d0, (a0)
-
-	addq.l #1, ss_vsync_counter
-	addq.l #1, ss_vdisp_fire_count
-	move.b #1, ss_vsync_flag
-
-	movem.l (sp)+, d0/a0
-	rte
 
 	|       ============================================================
 	|       TimerD handler - 5ms tick; switch every 10 ticks
@@ -148,7 +100,6 @@ ss_timerd_handler:
 	|       Minimal save: only d0/a0 needed for non-switch path
 	movem.l d0/a0, -(sp)
 	addq.l  #1, ss_tick_counter
-	addq.l  #1, ss_timerd_fire_count
 
 	lea    ss_switch_tick, a0
 	addq.b #1, (a0)
@@ -290,26 +241,12 @@ ss_task_yield:
 ss_tick_counter:
 	dc.l 0
 
-ss_vsync_counter:
-	dc.l 0
-
-ss_vsync_flag:
-	dc.b 0
-	.even
-
 ss_switch_tick:
 	dc.b 0
 	.even
 
 ss_context_switch_count:
 	dc.l 0
-
-ss_vdisp_fire_count:
-	dc.l 0
-
-ss_timerd_fire_count:
-	dc.l 0
-	.even
 
 	.section .bss
 	.even

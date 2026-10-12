@@ -3,19 +3,17 @@ ifeq ($(shell which m68k-xelf-gcc),)
 $(error Cross-compilation toolchain not found. Please run: . ~/.elf2x68k)
 endif
 
-# This repository supports the preemptive scheduler only.
-override SCHED := preemptive
 DISK := ssos9.xdf
 PROGRAM := ssos9.x
 
-TOPTARGETS := dump readelf
+TOPTARGETS := dump readelf debug
 SUBDIRS := boot os
 MAKEDISK := ../tools/makedisk/makedisk
 BOOT_BIN := boot/build/BOOT.X.bin
-OS_BIN := os/build/$(SCHED)/SSOS.X.bin
-OS_INPUTS := $(wildcard os/*/*.c os/*/*.s os/*/*.h os/*/*/*.c \
-	os/*/*/*.s os/*/*/*.h os/kernel/linker.ld os/Makefile)
-DISK_DIR := build/disk/$(SCHED)
+OS_BIN := os/build/SSOS.X.bin
+OS_INPUTS := $(wildcard os/app/cli.c os/kernel/*.c os/kernel/*.h \
+	os/kernel/preemptive/*.c os/kernel/preemptive/*.s os/kernel/linker.ld os/Makefile)
+DISK_DIR := build/disk
 DISK_FILE := $(DISK_DIR)/$(DISK)
 
 .PHONY: $(TOPTARGETS) $(SUBDIRS) clean all standalone install
@@ -27,13 +25,16 @@ install: all
 	cp $(SS_EXPORT_DIR)/$(PROGRAM) $(SS_EXPORT_DIR)/$(DISK) $(HOME)/tmp/
 
 standalone:
-	$(MAKE) -C standalone standalone SCHED=$(SCHED) SS_EXPORT_DIR=$(SS_EXPORT_DIR)
+	$(MAKE) -C standalone standalone SS_EXPORT_DIR=$(SS_EXPORT_DIR)
 
 dump readelf: $(SUBDIRS) standalone
 
-# boot is independent of SCHED (unified boot loader); os needs SCHED.
+debug: all
+	$(MAKE) -C standalone debug
+
+# Build the boot loader, CLI kernel, and standalone CLI binary.
 $(SUBDIRS):
-	$(MAKE) -C $@ $(MAKECMDGOALS) SCHED=$(SCHED)
+	$(MAKE) -C $@ $(MAKECMDGOALS)
 
 $(DISK_FILE): $(BOOT_BIN) $(OS_BIN) $(MAKEDISK)
 	@mkdir -p $(DISK_DIR)
@@ -42,16 +43,16 @@ $(DISK_FILE): $(BOOT_BIN) $(OS_BIN) $(MAKEDISK)
 	cp $@ $(SS_EXPORT_DIR)/$(DISK)
 
 $(BOOT_BIN): FORCE boot/main.s boot/linker.ld boot/Makefile
-	$(MAKE) -C boot all SCHED=$(SCHED)
+	$(MAKE) -C boot all
 
 $(OS_BIN): FORCE $(OS_INPUTS) common-sources.mk $(wildcard include/*.mac)
-	$(MAKE) -C os all SCHED=$(SCHED)
+	$(MAKE) -C os all
 
 $(MAKEDISK): ../tools/makedisk/main.c ../tools/makedisk/Makefile
 	$(MAKE) -C ../tools/makedisk all
 
 clean:
-	for dir in $(SUBDIRS) standalone; do $(MAKE) -C $$dir clean SCHED=$(SCHED); done
+	for dir in $(SUBDIRS) standalone; do $(MAKE) -C $$dir clean; done
 	rm -rf build
 	rm -f $(DISK)
 

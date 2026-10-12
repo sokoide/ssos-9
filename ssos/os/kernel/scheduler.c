@@ -1,5 +1,4 @@
 #include "scheduler.h"
-#include "sched_profile.h"
 #include <stdint.h>
 #include <string.h>
 
@@ -8,6 +7,48 @@ SSReadyQueue ready_queue;
 SSTask* ss_curr_task;
 SSTask* ss_scheduled_task;
 static SSTask* sleeping_tasks;
+static SSTraceEvent trace_events[SS_TRACE_CAPACITY];
+static uint8_t trace_next;
+static uint8_t trace_count;
+
+static uint8_t task_id(const SSTask* task) {
+    uintptr_t address = (uintptr_t)task;
+    uintptr_t first = (uintptr_t)&tcb_table[0];
+    uintptr_t end = (uintptr_t)&tcb_table[SS_MAX_TASKS];
+    if (address >= first && address < end &&
+        (address - first) % sizeof(tcb_table[0]) == 0) {
+        return (uint8_t)((address - first) / sizeof(tcb_table[0]) + 1);
+    }
+    return task == NULL ? 0xff : 0;
+}
+
+static void trace(SSTraceKind kind, const SSTask* task, const SSTask* other,
+                  uint32_t value) {
+    SSTraceEvent* event = &trace_events[trace_next];
+    event->tick = ss_tick_counter;
+    event->value = value;
+    event->context = task == NULL ? 0 : (uint32_t)(uintptr_t)task->context;
+    event->kind = (uint8_t)kind;
+    event->task_id = task_id(task);
+    event->other_id = task_id(other);
+    event->reserved = 0;
+    trace_next = (uint8_t)((trace_next + 1) % SS_TRACE_CAPACITY);
+    if (trace_count < SS_TRACE_CAPACITY)
+        trace_count++;
+}
+
+uint16_t ss_trace_read(SSTraceEvent* events, uint16_t capacity) {
+    if (events == NULL || capacity == 0)
+        return 0;
+    uint16_t saved_sr = ss_irq_save();
+    uint16_t count = trace_count < capacity ? trace_count : capacity;
+    uint8_t start =
+        (uint8_t)((trace_next + SS_TRACE_CAPACITY - count) % SS_TRACE_CAPACITY);
+    for (uint16_t i = 0; i < count; i++)
+        events[i] = trace_events[(start + i) % SS_TRACE_CAPACITY];
+    ss_irq_restore(saved_sr);
+    return count;
+}
 
 /* Stack canary magic number */
 #define STACK_CANARY 0xDEADCAFE
@@ -51,12 +92,13 @@ void ss_stack_canary_init(uint16_t id) {
 }
 
 void ss_sched_init(void) {
-    ss_sched_profile_reset();
     memset(tcb_table, 0, sizeof(tcb_table));
     memset(&ready_queue, 0, sizeof(ready_queue));
     ss_curr_task = NULL;
     ss_scheduled_task = NULL;
     sleeping_tasks = NULL;
+    trace_next = 0;
+    trace_count = 0;
 }
 
 void ss_sched_enqueue(SSTask* tcb) {
@@ -75,7 +117,6 @@ void ss_sched_enqueue(SSTask* tcb) {
         ready_queue.tails[pri] = tcb;
     }
     ready_queue.pri_bitmap |= (1 << (15 - pri));
-    ss_sched_profile_ready(tcb);
 }
 
 void ss_sched_dequeue(SSTask* tcb) {
@@ -166,7 +207,7 @@ uint16_t ss_task_create(SSTaskInfo* info) {
 
     ss_irq_restore(saved_sr);
 
-    /* Fill the 16 KiB canary pattern with interrupts re-enabled: the slot is
+    /* Fill the stack canary with interrupts enabled: the slot is
      * reserved as INITIALIZING and rejected by ss_task_start,
      * so keeping this multi-millisecond write inside the masked window would
      * only stretch Timer D / V-DISP latency. */
@@ -177,6 +218,7 @@ uint16_t ss_task_create(SSTaskInfo* info) {
     ss_stack_canary_init(i + 1);
     saved_sr = ss_irq_save();
     tcb->state = SS_TS_DORMANT;
+    trace(SS_TRACE_CREATE, tcb, NULL, tcb->stack_size);
     ss_irq_restore(saved_sr);
 
     return i + 1; /* 1-based ID */
@@ -196,6 +238,7 @@ uint16_t ss_task_start(uint16_t id) {
 
     tcb->state = SS_TS_READY;
     ss_sched_enqueue(tcb);
+    trace(SS_TRACE_START, tcb, NULL, 0);
 
     if (ss_curr_task == NULL) {
         ss_curr_task = tcb;
@@ -237,7 +280,8 @@ void ss_do_context_switch(void) {
 
     ss_scheduled_task = next;
     ss_curr_task = next;
-    ss_sched_profile_run(next);
+    trace(SS_TRACE_SWITCH, curr, next,
+          ((uint32_t)curr->resume_type << 8) | curr->state);
 }
 
 uint16_t ss_task_sleep(uint32_t ticks) {
@@ -261,6 +305,7 @@ uint16_t ss_task_sleep(uint32_t ticks) {
     }
     curr->sleep_next = sleeping_tasks;
     sleeping_tasks = curr;
+    trace(SS_TRACE_SLEEP, curr, NULL, ticks);
     /* Yield saves the masked SR; resume restores it before returning here. */
     ss_task_yield();
     ss_irq_restore(saved_sr);
@@ -277,12 +322,12 @@ void ss_do_wakeups(void) {
     while (*link != NULL) {
         SSTask* tcb = *link;
         if (deadline_reached(now, tcb->wait_until)) {
-            ss_sched_profile_wake(now - tcb->wait_until);
             *link = tcb->sleep_next;
             tcb->sleep_next = NULL;
             tcb->state = SS_TS_READY;
             tcb->wait_until = 0;
             ss_sched_enqueue(tcb);
+            trace(SS_TRACE_WAKE, tcb, NULL, now);
         } else {
             link = &tcb->sleep_next;
         }
@@ -296,6 +341,7 @@ void ss_task_exit(void) {
     if (curr != NULL && curr->state == SS_TS_READY) {
         ss_sched_dequeue(curr);
         curr->state = SS_TS_TERMINATED;
+        trace(SS_TRACE_EXIT, curr, NULL, 0);
     }
     ss_irq_restore(saved_sr);
     for (;;) ss_task_yield();

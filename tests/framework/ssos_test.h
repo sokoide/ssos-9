@@ -137,7 +137,7 @@ int test_framework_exit_code(void);
 // Mock/stub support
 void reset_mocks(void);  /* deprecated alias of reset_test_state() */
 
-// String assertion helper (used by numfmt tests, etc.)
+// String assertion helper.
 #define ASSERT_STR_EQ(actual, expected) \
     do { \
         if (strcmp((actual), (expected)) != 0) { \

@@ -21,9 +21,10 @@ Set up the cross compiler in each shell, then build/install from the repository 
 source ~/.elf2x68k
 make
 make install
+make debug
 ```
 
-`make install` creates `ssos9.x` and `ssos9.xdf` and copies both to `~/tmp`. Build outputs and intermediates are ignored by Git. There is no scheduler selection variable; builds are preemptive-only.
+`make install` creates `ssos9.x` and `ssos9.xdf` and copies both to `~/tmp`. `make debug` writes the standalone ELF disassembly, symbol table, and link map under `ssos/standalone/build/`. The CLI `debug` command prints tick, task/stack, and MFP status; `trace` prints the last 16 scheduler events. Build outputs and intermediates are ignored by Git. There is no scheduler selection variable; builds are preemptive-only.
 
 ## Implementation conventions
 

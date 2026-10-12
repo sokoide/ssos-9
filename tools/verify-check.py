@@ -17,15 +17,10 @@ def classify(path):
         return (), (), '本体外: テスト/文書/検証tool'
     scheds = ('pre',)
     modes = ('x',) if '/standalone/' in path else ('xdf',) if (
-        '/boot/' in path or path.endswith(('premain.c', 'entry.s', 'linker.ld', 'app/main.c')) or
-        '/ipc/' in path or '/work_queue.' in path) else ('x', 'xdf')
-    pure = ('os/util/numfmt.c', 'os/util/numfmt.h')
-    if path[5:] in pure:
-        return (), (), 'Nativeで純粋ロジックを検証可能'
+        '/boot/' in path or path.endswith(('premain.c', 'entry.s', 'linker.ld'))
+    ) else ('x', 'xdf')
     if path.endswith('interrupts.s') or path.endswith('scheduler.c') or path.endswith('wakeups.c'):
         reason = 'C/QEMU移植版は自動検証あり。production/非同期MFPは未検証'
-    elif '/mem/' in path or '/win/' in path:
-        reason = 'Nativeロジック/画素は自動検証あり。target時間/所有権は別確認'
     else:
         reason = 'target初期化/MMIO/ABI/構成は手動確認が必要'
     return scheds, modes, reason

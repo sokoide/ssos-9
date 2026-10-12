@@ -7,11 +7,9 @@
  * swap register state — ss_task_yield just drives the queue rotation — so we
  * test state transitions, not true concurrency.
  *
- * Native coverage for the supported preemptive scheduler implementation
- * because their queue/task/wakeup logic is identical. */
+ * Native coverage for the supported preemptive scheduler. */
 
 #include "kernel.h"
-#include "sched_profile.h"
 #include "scheduler.h"
 #include "ssos_test.h"
 
@@ -283,25 +281,7 @@ TEST(task_initializing_cannot_start) {
     ASSERT_EQ(ss_task_start(id), SS_OK);
 }
 
-TEST(scheduler_latency_separates_ready_from_execution) {
-    reset_test_state();
-    ss_sched_init();
-    uint16_t a = make_task(1), b = make_task(8);
-    ss_task_start(a);
-    ss_task_start(b);
-    ASSERT_EQ(ss_task_sleep(5), SS_OK);
-    ss_tick_counter = 8;
-    ss_do_wakeups();
-    ss_tick_counter = 10;
-    ss_do_context_switch();
-    SSSchedProfile p;
-    ss_sched_profile_snapshot(&p);
-    ASSERT_EQ(p.max_deadline_to_ready_ticks, 3u);
-    ASSERT_EQ(p.max_ready_to_run_ticks, 2u);
-    ASSERT_EQ(p.wakeups, 1u);
-}
 void run_scheduler_tests(void) {
-    RUN_TEST(scheduler_latency_separates_ready_from_execution);
     RUN_TEST(task_initializing_cannot_start);
     RUN_TEST(sched_init_clears_state);
     RUN_TEST(pick_empty_returns_null);

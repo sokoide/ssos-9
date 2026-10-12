@@ -5,6 +5,26 @@
 #include "scheduler_abi.h"
 
 #define SS_MAX_SLEEP_TICKS 0x7FFFFFFFUL
+#define SS_TRACE_CAPACITY 16
+
+typedef enum {
+    SS_TRACE_CREATE = 1,
+    SS_TRACE_START,
+    SS_TRACE_SLEEP,
+    SS_TRACE_WAKE,
+    SS_TRACE_SWITCH,
+    SS_TRACE_EXIT
+} SSTraceKind;
+
+typedef struct {
+    uint32_t tick;
+    uint32_t value;
+    uint32_t context;
+    uint8_t kind;
+    uint8_t task_id;
+    uint8_t other_id;
+    uint8_t reserved;
+} SSTraceEvent;
 
 typedef struct SSTask SSTask;
 struct SSTask {
@@ -20,7 +40,6 @@ struct SSTask {
     uint8_t  ctx_level;    /* SS_CTX_MINIMAL/NORMAL/FULL */
     uint8_t  resume_type;  /* 0 = interrupted, 1 = yielded */
     SSTask*  sleep_next;
-    uint8_t  ipc_waiting;
     void*    arg;
 };
 
@@ -80,6 +99,7 @@ uint16_t ss_task_sleep(uint32_t ticks);
 void     ss_task_yield(void);
 void     ss_process_wakeups(void);
 void     ss_task_exit(void) __attribute__((noreturn));
+uint16_t ss_trace_read(SSTraceEvent* events, uint16_t capacity);
 
 /* Custom stack is a descending region [stack - stack_size + 4, stack + 4).
  * It remains caller-owned until system shutdown; it is not reclaimed.

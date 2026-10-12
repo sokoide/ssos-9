@@ -1,18 +1,13 @@
-# Task・UI要求APIの契約
+# Task APIの契約
 
-| API | 成功 | 制限と失敗 |
+| API | 動作 | 制限 |
 | --- | --- | --- |
-| ss_task_create | uint16_tのID 1〜32 | 負のSS_ERR_*はuint16_tへ符号化される。INITIALIZING中はstart不可、完了後DORMANT。custom stackは終了後もcaller所有 |
-| ss_task_start | SS_OK | DORMANTだけを一度READYへ。INITIALIZING/TERMINATEDはSS_ERR_STATE |
-| ss_task_sleep | SS_OK | 実行可能peerがない場合SS_ERR_STATE。最大delayは0x7fffffff tick。復帰後はcaller SRを復元 |
-| ss_recv | 値コピーのmessage | table外mainはSS_ERR_STATE。唯一の実行可能taskが空queueで待つ場合もSS_ERR_STATE |
-| ss_send | 値コピー、待機receiverをREADYへ | 未開始slotへの事前送信可。TERMINATED宛はSS_ERR_STATE、満杯はSS_ERR_LIMIT |
-| task entry return | TERMINATEDへ | 戻り値は破棄。join/cancel/slot再利用なし。現在のstackを解放しない |
-| ss_work_enqueue | handler/argポインタをqueueへ保持 | argはcallback完了までproducerが保持。満杯ならSS_ERR_LIMITで所有権を移さない。NULL queue/handlerはSS_ERR_PARAM |
-| ss_work_drain_budget | 開始時件数のうちbudget件を処理 | UI単一consumer専用。callbackは短時間でreturnし、再帰drainしない。新規投入分は次batchへ |
+| `ss_task_create` | taskとstackを準備しIDを返す | IDは1〜`SS_MAX_TASKS`。失敗値は`uint16_t`に符号化された`SS_ERR_*`。 |
+| `ss_task_start` | DORMANT taskをREADYにする | taskを一度だけ開始できる。 |
+| `ss_task_sleep` | 指定tick数だけtaskをsleepさせる | 最大値は`SS_MAX_SLEEP_TICKS`。 |
+| `ss_task_yield` | 次のready taskへ切り替える | ready taskがなければ同じtaskを続ける。 |
+| task entry return | taskをTERMINATEDにする | IDとstackは予約されたまま。join・cancel・再利用なし。 |
 
-ss_work_enqueue は短い IRQ 保存復元区間を持ち、Supervisor の ISR からは永続 payload でのみ使える。allocator/slab、描画/window、blocking IPC/sleep/yield は ISR から呼ばない。scheduler の ISR 入口は caller-held IPL7、work callback は task context で mask 解除後に動く。
+custom stack は呼び出し側が shutdown まで保持します。`SSTaskInfo.stack`は領域の先頭ではなく、4 byte 境界に揃えた最終 word を指します。stack は少なくとも`SS_MIN_TASK_STACK` bytes 必要です。
 
-UI 以外の task は描画/window を直接呼ばず、永続 payload と短い callback を queue へ送る。callback 完了後に payload を再利用/解放できる。複数 producer の共有 payload は別途排他する。callback を解放済みの stack 変数へ向けない。`.x`は work/IPC をリンクせず、この transport は`.xdf`用。
-
-work queue の high_water、rejected、max_delay_ticks は init からの集計。delay は Timer D tick 差であり、IRQ 停止中の wall-clock ではない。長期間/2^32tick を超える保留は対象外。件数 budget は handler 自身の無限実行を防げない。
+この API は同一物理アドレス空間内の kernel task 向けです。process descriptor、module loading/linking、process ごとの data 領域はまだありません。

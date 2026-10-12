@@ -1,23 +1,16 @@
-# Context switchの契約とQEMUとの差分
+# コンテキスト切替の契約
 
-正本: `ssos/os/kernel/scheduler_abi.h`（TCB）、`context_frame.h`（frame）、`scheduler.c`（queue/lifecycle）。
+正本は `ssos/os/kernel/scheduler_abi.h`（TCB 配置）、`context_frame.h`（例外 frame）、`scheduler.c`（queue と task 状態）です。preemptive 版だけをビルドします。
 
-保存 register は両方式とも d0–d7/a0–a6 の 15 long＝60 bytes。以下の offset は保存 SP からの値。C の packed/aligned(2)構造と静的 assert、`tools/check-context.py`の instruction 列比較で維持する。
+Timer D 割り込みでは MC68000 が SR と PC を stack へ積み、`interrupts.s`が d0–d7/a0–a6 を保存して scheduler を呼びます。scheduler は選択した task の保存 SP を復元し、`rte`で再開します。task が明示 yield した場合も同じ割り込み経路を使います。QEMU 用 port はこの経路を模擬しますが、実 MFP 割り込みの代替ではありません。
 
-| frame | SR | PC | 復帰 |
+`SSTask`と assembly の offset は C の static assert で照合します。通常の割り込み frame は SR・PC を含む 6 bytes です。bus/address error の特殊 frame を復帰できる設計ではありません。
+
+| 境界 | production | QEMUで確認する範囲 | 実機・Human68Kで別途確認 |
 | --- | --- | --- | --- |
-| cooperative手動yield | +60 | +62 | register→SR→PC、jmp→yield呼出し元へrts |
-| preemptive手動yield | +64 | +60 | register→PC→SR、jmp→yield呼出し元へrts |
-| MC68000通常割り込み | +60 | +62 | register→rte |
+| task作成・開始・終了 | scheduler.c | ready queueとtask状態遷移 | 実RAM上のstack配置 |
+| preemption/resume | MFP Timer D、`rte` | scheduler Cと同期port | 非同期割り込み、Timer D周期 |
+| 起動 | boot loader、entry、premain | QEMU kernel/静的stack pool | X68000起動とHuman68K環境 |
+| CLI入出力 | IOCS | 対象外 | キー入力と画面出力 |
 
-手動 frame と通常例外 frame はいずれも 66 bytes。これは bus/address error の特殊 frame を scheduler で復帰できるという意味ではない。entry は arg を stack へ渡して呼び、return は ss_task_exit へ進む。ID/stack を再利用しない。canary 初期化中は INITIALIZING で、start できない。
-
-| 境界 | production | QEMU | 自動確認の範囲 |
-| --- | --- | --- | --- |
-| yield/resume/start | 方式別interrupts.s | 方式別port | 共通instruction列、TCB/frame assert、引数/return/SR、1/2/8/32task |
-| preemption | 実MFP Timer D | taskの同期trap #0 | rteと10tick cadence。任意命令の非同期競合は手動確認 |
-| MFP/EOI | setup/save/restore、割り込みsource | TTY/virt vector、MFPなし | 未検証 |
-| 起動とstack | IPL/Human68Kと実linker pool | QEMU linker＋静的pool | slot/entry/canaryの機構。実RAM配置は手動確認 |
-| TRAP復元 | standalone/trap14.s | 同じproduction objectのrestore関数のみ | IPL0〜7＋ネストを実CPU命令で確認。IOCS初期化/abortは手動確認 |
-
-`check-context.py`はリンク後アドレス、relocation、opcode を比較するものではない。object/ELF の逆アセンブルは検証 run へ保存し、実機 trace と照合する。QEMU との共通 instruction 列の一致だけで非同期安全性を宣言しない。
+`tools/check-context.py`は production と QEMU port の命令列を確認します。これは実行時の割り込み安全性や MMIO 挙動を証明しません。

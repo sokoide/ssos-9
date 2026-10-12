@@ -21,6 +21,119 @@ static void clear_screen(void) {
     _iocs_b_locate(0, 0);
 }
 
+static void print_hex32(uint32_t value) {
+    static const char digits[] = "0123456789ABCDEF";
+    char text[9];
+    for (int i = 7; i >= 0; i--) {
+        text[i] = digits[value & 0xf];
+        value >>= 4;
+    }
+    text[8] = '\0';
+    print(text);
+}
+
+static void print_u32(uint32_t value) {
+    char digits[10];
+    char text[11];
+    unsigned count = 0;
+    do {
+        digits[count++] = (char)('0' + value % 10);
+        value /= 10;
+    } while (value != 0 && count < sizeof(digits));
+    unsigned i = 0;
+    while (count != 0) text[i++] = digits[--count];
+    text[i] = '\0';
+    print(text);
+}
+
+static const char* trace_name(uint8_t kind) {
+    switch (kind) {
+    case SS_TRACE_CREATE: return "create";
+    case SS_TRACE_START: return "start";
+    case SS_TRACE_SLEEP: return "sleep";
+    case SS_TRACE_WAKE: return "wake";
+    case SS_TRACE_SWITCH: return "switch";
+    case SS_TRACE_EXIT: return "exit";
+    default: return "?";
+    }
+}
+
+static void show_debug(void) {
+    uint16_t saved_sr = ss_irq_save();
+    uint32_t ticks = ss_tick_counter;
+    uint32_t beat = heartbeat;
+    SSTask* current = ss_curr_task;
+    SSTask* scheduled = ss_scheduled_task;
+    ss_irq_restore(saved_sr);
+
+    print("ticks=");
+    print_hex32(ticks);
+    print(" heartbeat=");
+    print_hex32(beat);
+    print(" current=");
+    print_hex32((uint32_t)(uintptr_t)current);
+    print(" scheduled=");
+    print_hex32((uint32_t)(uintptr_t)scheduled);
+    print("\r\nMFP IERB/IMRB/TCDCR/TDDR=");
+    print_hex32(((uint32_t)*(volatile uint8_t*)0xe88009 << 24) |
+                ((uint32_t)*(volatile uint8_t*)0xe88015 << 16) |
+                ((uint32_t)*(volatile uint8_t*)0xe8801d << 8) |
+                *(volatile uint8_t*)0xe88025);
+    print("\r\n");
+    print("MFP IPRA/IPRB/ISRA/ISRB=");
+    print_hex32(((uint32_t)*(volatile uint8_t*)0xe8800b << 24) |
+                ((uint32_t)*(volatile uint8_t*)0xe8800d << 16) |
+                ((uint32_t)*(volatile uint8_t*)0xe8800f << 8) |
+                *(volatile uint8_t*)0xe88011);
+    print("\r\n");
+
+    for (uint16_t id = 1; id <= SS_MAX_TASKS; id++) {
+        SSTask* task = &tcb_table[id - 1];
+        if (task->state == SS_TS_NONE)
+            continue;
+        print("task ");
+        print_u32(id);
+        print(" state=");
+        print_u32(task->state);
+        print(" pri=");
+        print_u32(task->pri);
+        print(" sp=");
+        print_hex32((uint32_t)(uintptr_t)task->context);
+        uint16_t irq_state = ss_irq_save();
+        uint32_t stack_free = ss_stack_check(id);
+        ss_irq_restore(irq_state);
+        print(" stack_free=");
+        print_u32(stack_free);
+        print("/");
+        print_u32(task->stack_size);
+        print("\r\n");
+    }
+}
+
+static void show_trace(void) {
+    SSTraceEvent events[SS_TRACE_CAPACITY];
+    uint16_t count = ss_trace_read(events, SS_TRACE_CAPACITY);
+    print("scheduler events: ");
+    print_u32(count);
+    print(" (oldest first)\r\n");
+    for (uint16_t i = 0; i < count; i++) {
+        SSTraceEvent* event = &events[i];
+        print("t=");
+        print_hex32(event->tick);
+        print(" ");
+        print(trace_name(event->kind));
+        print(" task=");
+        print_u32(event->task_id);
+        print(" other=");
+        print_u32(event->other_id);
+        print(" value=");
+        print_hex32(event->value);
+        print(" ctx=");
+        print_hex32(event->context);
+        print("\r\n");
+    }
+}
+
 static void* heartbeat_task(void* arg) {
     (void)arg;
     for (;;) {
@@ -41,7 +154,7 @@ int16_t ss_init(void) {
 }
 
 static void show_help(void) {
-    print("Commands: help, uptime, clear, version, exit\r\n");
+    print("Commands: help, uptime, debug, trace, clear, version, exit\r\n");
 }
 
 static int run_command(char* line) {
@@ -63,6 +176,10 @@ static int run_command(char* line) {
         }
         strcat(out, "\r\n");
         print(out);
+    } else if (strcmp(line, "debug") == 0) {
+        show_debug();
+    } else if (strcmp(line, "trace") == 0) {
+        show_trace();
     } else if (strcmp(line, "clear") == 0) {
         clear_screen();
     } else if (strcmp(line, "version") == 0) {

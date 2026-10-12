@@ -33,7 +33,7 @@
 	.globl  _start
 	.globl  ss_timerd_handler, ss_context_switch
 	.globl  ss_curr_task, ss_scheduled_task
-	.globl  ss_tick_counter, ss_timerd_fire_count
+	.globl  ss_tick_counter
 	.globl  ss_switch_tick, ss_context_switch_count
 	.extern ss_do_context_switch
 	.extern ss_do_wakeups
@@ -99,7 +99,6 @@ ss_timerd_handler:
 	move.w  #0x2700, %sr            | mask interrupts (no nesting)
 	movem.l d0/a0, -(sp)            | minimal save for the non-switch path
 	addq.l  #1, ss_tick_counter
-	addq.l  #1, ss_timerd_fire_count
 
 	lea    ss_switch_tick, a0
 	addq.b #1, (a0)
