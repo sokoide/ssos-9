@@ -74,12 +74,13 @@ void* ss_arena_alloc(SSArena* arena, uint32_t size) {
 }
 
 int16_t ss_arena_free(SSArena* arena, void* memory) {
-    if (arena == NULL || memory == NULL || arena->free_list == NULL)
+    if (arena == NULL || memory == NULL)
         return -1;
 
     uint32_t header_size = block_header_size();
     uintptr_t payload = (uintptr_t)memory;
-    if (payload < arena->start + header_size || payload >= arena->end)
+    if ((payload & (SS_ARENA_ALIGNMENT - 1u)) != 0 ||
+        payload < arena->start + header_size || payload >= arena->end)
         return -1;
     SSArenaBlock* block = (SSArenaBlock*)(payload - header_size);
     uintptr_t block_start = (uintptr_t)block;

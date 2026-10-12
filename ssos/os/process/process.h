@@ -45,5 +45,8 @@ SSProcessId ss_process_current_id(void);
 SSProcessId ss_process_current_parent_id(void);
 void ss_process_exit_current(uint16_t exit_status);
 void ss_process_reap_task(uint16_t task_id);
+void ss_process_syscall_enter(void);
+int16_t ss_process_syscall_leave(void);
+int16_t ss_process_kill_pending(void);
 
 #endif

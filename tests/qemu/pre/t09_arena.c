@@ -51,6 +51,13 @@ int main(void) {
         ss_arena_largest_free(&arena) != initial)
         fail("coalescing");
 
+    void* full = ss_arena_alloc(&arena, initial);
+    if (full == NULL || ss_arena_free_bytes(&arena) != 0 ||
+        ss_arena_free(&arena, (uint8_t*)full + 1) == 0 ||
+        ss_arena_free(&arena, full) != 0 ||
+        ss_arena_free_bytes(&arena) != initial)
+        fail("free after consuming final free block");
+
     tty_puts("OK arena split/coalesce\n");
     for (;;) {
     }

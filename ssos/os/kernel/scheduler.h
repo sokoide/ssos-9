@@ -100,6 +100,7 @@ uint16_t ss_task_create_interrupted(void* stack, uint16_t stack_size,
                                    void* entry, uint16_t sr);
 uint16_t ss_task_start(uint16_t id);
 uint16_t ss_task_cancel(uint16_t id);
+uint16_t ss_task_wake(uint16_t id);
 void     ss_do_context_switch(void);
 void     ss_do_wakeups(void);
 uint16_t ss_task_sleep(uint32_t ticks);
@@ -110,9 +111,9 @@ uint16_t ss_task_release_terminated(uint16_t id);
 uint16_t ss_trace_read(SSTraceEvent* events, uint16_t capacity);
 
 /* Custom stack is a descending region [stack - stack_size + 4, stack + 4).
- * It remains caller-owned until system shutdown; it is not reclaimed.
- * Returning from entry calls ss_task_exit. The task becomes TERMINATED and
- * its slot/stack remain reserved; there is no join or stack reclamation yet.
+ * It remains caller-owned; scheduler never reclaims it. Returning from entry
+ * calls ss_task_exit. The reaper releases the TCB slot; process-owned stack
+ * memory is released by the process reaper hook after the task has stopped.
  * ss_task_create returns IDs 1..SS_MAX_TASKS or a uint16_t-encoded SS_ERR_*.
  * ctx_level is accepted but all registers are currently saved at every switch.
  */

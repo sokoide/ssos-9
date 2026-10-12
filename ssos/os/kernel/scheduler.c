@@ -386,6 +386,31 @@ uint16_t ss_task_cancel(uint16_t id) {
     return SS_OK;
 }
 
+uint16_t ss_task_wake(uint16_t id) {
+    if (id == 0 || id > SS_MAX_TASKS)
+        return SS_ERR_ID;
+    uint16_t saved_sr = ss_irq_save();
+    SSTask* tcb = &tcb_table[id - 1];
+    if (tcb->state != SS_TS_WAIT) {
+        ss_irq_restore(saved_sr);
+        return SS_ERR_STATE;
+    }
+    SSTask** link = &sleeping_tasks;
+    while (*link != NULL && *link != tcb) link = &(*link)->sleep_next;
+    if (*link == NULL) {
+        ss_irq_restore(saved_sr);
+        return SS_ERR_STATE;
+    }
+    *link = tcb->sleep_next;
+    tcb->sleep_next = NULL;
+    tcb->wait_until = 0;
+    tcb->state = SS_TS_READY;
+    ss_sched_enqueue(tcb);
+    trace(SS_TRACE_WAKE, tcb, NULL, 0);
+    ss_irq_restore(saved_sr);
+    return SS_OK;
+}
+
 uint16_t ss_task_release_terminated(uint16_t id) {
     if (id == 0 || id > SS_MAX_TASKS)
         return SS_ERR_ID;

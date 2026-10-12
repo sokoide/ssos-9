@@ -10,6 +10,8 @@
 static SSProcessSnapshot process_table[SS_PROCESS_MAX];
 static SSTask* process_tasks[SS_PROCESS_MAX];
 static void* process_blocks[SS_PROCESS_MAX];
+static uint8_t process_in_syscall[SS_PROCESS_MAX];
+static uint8_t process_kill_pending[SS_PROCESS_MAX];
 static uint32_t next_pid;
 
 static void write_be32(uint8_t* destination, uint32_t value) {
@@ -74,6 +76,8 @@ static void clear_slot(uint16_t slot) {
     for (uint32_t i = 0; i < sizeof(process_table[slot]); i++) bytes[i] = 0;
     process_tasks[slot] = NULL;
     process_blocks[slot] = NULL;
+    process_in_syscall[slot] = 0;
+    process_kill_pending[slot] = 0;
     ss_irq_restore(saved_sr);
 }
 
@@ -86,6 +90,8 @@ int16_t ss_process_init(SSTask* root_task) {
         for (uint32_t j = 0; j < sizeof(process_table[i]); j++) bytes[j] = 0;
         process_tasks[i] = NULL;
         process_blocks[i] = NULL;
+        process_in_syscall[i] = 0;
+        process_kill_pending[i] = 0;
     }
     process_table[0].pid = SS_PROCESS_ROOT_PID;
     process_table[0].ppid = SS_PROCESS_IDLE_PID;
@@ -200,6 +206,8 @@ int16_t ss_process_spawn(SSProcessId parent, SSModuleId module_id,
     process->stack_high = (uint8_t*)stack_base + module.image.stack_size;
     copy_name(process->name, module.name);
     process_blocks[slot] = block;
+    process_in_syscall[slot] = 0;
+    process_kill_pending[slot] = 0;
     status = ss_task_start(task_id);
     if (status == SS_OK)
         process->state = SS_PROCESS_READY;
@@ -249,8 +257,16 @@ int16_t ss_process_kill(SSProcessId pid) {
         return SS_ERR_ID;
     }
     uint16_t task_id = process_table[slot].task_id;
+    if (process_in_syscall[slot]) {
+        process_kill_pending[slot] = 1;
+        if (tcb_table[task_id - 1].state == SS_TS_WAIT)
+            (void)ss_task_wake(task_id);
+        ss_irq_restore(saved_sr);
+        return SS_OK;
+    }
+    int16_t status = (int16_t)ss_task_cancel(task_id);
     ss_irq_restore(saved_sr);
-    return (int16_t)ss_task_cancel(task_id);
+    return status;
 }
 
 int16_t ss_process_wait(SSProcessId parent, SSProcessId child,
@@ -304,6 +320,50 @@ SSProcessId ss_process_current_parent_id(void) {
     return parent;
 }
 
+void ss_process_syscall_enter(void) {
+    uint16_t saved_sr = ss_irq_save();
+    SSTask* current = ss_curr_task;
+    for (uint16_t i = 1; i < SS_PROCESS_MAX; i++) {
+        if (process_table[i].state == SS_PROCESS_READY &&
+            process_tasks[i] == current) {
+            process_in_syscall[i] = 1;
+            break;
+        }
+    }
+    ss_irq_restore(saved_sr);
+}
+
+int16_t ss_process_syscall_leave(void) {
+    uint16_t saved_sr = ss_irq_save();
+    SSTask* current = ss_curr_task;
+    int16_t pending = 0;
+    for (uint16_t i = 1; i < SS_PROCESS_MAX; i++) {
+        if (process_table[i].state == SS_PROCESS_READY &&
+            process_tasks[i] == current) {
+            process_in_syscall[i] = 0;
+            pending = process_kill_pending[i];
+            break;
+        }
+    }
+    ss_irq_restore(saved_sr);
+    return pending;
+}
+
+int16_t ss_process_kill_pending(void) {
+    uint16_t saved_sr = ss_irq_save();
+    SSTask* current = ss_curr_task;
+    int16_t pending = 0;
+    for (uint16_t i = 1; i < SS_PROCESS_MAX; i++) {
+        if (process_table[i].state == SS_PROCESS_READY &&
+            process_tasks[i] == current) {
+            pending = process_kill_pending[i];
+            break;
+        }
+    }
+    ss_irq_restore(saved_sr);
+    return pending;
+}
+
 void ss_process_exit_current(uint16_t exit_status) {
     SSProcessId pid = ss_process_current_id();
     uint16_t saved_sr = ss_irq_save();
@@ -328,6 +388,7 @@ void ss_process_reap_task(uint16_t task_id) {
             continue;
         void* block = process_blocks[i];
         SSModuleId module_id = process_table[i].module_id;
+        SSProcessId exiting_pid = process_table[i].pid;
         process_table[i].state = SS_PROCESS_REAPING;
         ss_irq_restore(saved_sr);
         if (module_id != 0)
@@ -335,6 +396,11 @@ void ss_process_reap_task(uint16_t task_id) {
         if (block != NULL)
             ss_memory_free(block);
         saved_sr = ss_irq_save();
+        for (uint16_t child = 1; child < SS_PROCESS_MAX; child++) {
+            if (process_table[child].state != SS_PROCESS_FREE &&
+                process_table[child].ppid == exiting_pid)
+                process_table[child].ppid = SS_PROCESS_ROOT_PID;
+        }
         process_table[i].state = SS_PROCESS_ZOMBIE;
         process_table[i].data_base = NULL;
         process_table[i].got_base = NULL;

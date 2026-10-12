@@ -11,6 +11,7 @@
 static SSTask main_tcb;
 static uint8_t image[124];
 extern void ss_test_install_syscall_vector(void);
+extern int32_t ss_test_syscall_roundtrip(void);
 
 static int32_t call_sys(uint32_t number, uint32_t request) {
     register uint32_t d0 __asm__("d0") = number;
@@ -86,6 +87,28 @@ static void make_image(void) {
     put32(&image[0x34], crc32());
 }
 
+static void make_sleep_image(void) {
+    make_image();
+    image[104] = 'q';
+    image[105] = 's';
+    image[106] = 'l';
+    image[107] = 'e';
+    image[108] = 'e';
+    image[109] = 'p';
+    image[110] = '0';
+    image[111] = '0';
+    /* SYS_SLEEP(127), TRAP #0, then retry after wakeup. */
+    image[80] = 0x70;
+    image[81] = SS9_SYS_SLEEP;
+    image[82] = 0x72;
+    image[83] = 127;
+    image[84] = 0x4e;
+    image[85] = 0x40;
+    image[86] = 0x60;
+    image[87] = 0xf8;
+    put32(&image[0x34], crc32());
+}
+
 static void fail(const char* reason) {
     tty_puts("FAIL ");
     tty_puts(reason);
@@ -106,6 +129,8 @@ static void run_ticks(unsigned count) {
 int main(void) {
     tty_puts("START process-spawn\n");
     ss_test_install_syscall_vector();
+    if (ss_test_syscall_roundtrip() != 0)
+        fail("syscall register preservation");
     if (ss_memory_init() != SS_OK)
         fail("memory init");
     ss_module_registry_init();
@@ -118,6 +143,8 @@ int main(void) {
         fail("kernel tables init");
     if (call_sys(SS9_SYS_VERSION, 0) != SS9_ABI_VERSION ||
         call_sys(SS9_SYS_GETPID, 0) != 1 || call_sys(SS9_SYS_GETPPID, 0) != 0 ||
+        call_sys(SS9_SYS_SLEEP, SS_MAX_SLEEP_TICKS + 1u) != SS_ERR_PARAM ||
+        call_sys(SS9_SYS_EXIT, 0) != SS9_ERR_PARAM ||
         call_sys(0xffffffffu, 0) != SS9_ERR_NOSYS)
         fail("syscall ABI basics");
 
@@ -165,6 +192,8 @@ int main(void) {
                                           (uint32_t)(uintptr_t)entries};
     if (call_sys(SS9_SYS_PROC_INFO, (uint32_t)(uintptr_t)&info_request) !=
             SS_OK ||
+        call_sys(SS9_SYS_PROC_INFO, (uint32_t)(uintptr_t)&info_request + 1u) !=
+            SS9_ERR_PARAM ||
         info.pid != first_pid || info.ppid != 1 ||
         call_sys(SS9_SYS_PROC_LIST, (uint32_t)(uintptr_t)&list_request) != 3 ||
         list_request.count != 3)
@@ -203,6 +232,44 @@ int main(void) {
             spawned_pid ||
         syscall_wait.exit_status != 0 || ss_memory_free_bytes() != free_before)
         fail("syscall spawn/kill/wait reclaim");
+
+    SSProcessId parent_pid;
+    SSProcessId orphan_pid;
+    if (ss_process_spawn(1, module_id, 1, argv, &parent_pid) != SS_OK ||
+        ss_process_spawn(parent_pid, module_id, 1, argv, &orphan_pid) !=
+            SS_OK ||
+        ss_process_kill(orphan_pid) != SS_OK)
+        fail("orphan setup");
+    run_ticks(24);
+    if (ss_process_kill(parent_pid) != SS_OK)
+        fail("orphan parent kill");
+    run_ticks(24);
+    if (ss_process_snapshot(orphan_pid, &second) != SS_OK || second.ppid != 1 ||
+        ss_process_wait(1, orphan_pid, &status) != SS_OK ||
+        ss_process_wait(1, parent_pid, &status) != SS_OK)
+        fail("orphan adoption/reap");
+
+    make_sleep_image();
+    SSModuleId sleep_module;
+    if (ss_module_register_image(image, sizeof(image),
+                                 SS_MODULE_STORAGE_BUILTIN,
+                                 &sleep_module) != SS_OK)
+        fail("sleep module register");
+    const char* sleep_argv[] = {"qsleep00"};
+    SSProcessId sleeper_pid;
+    if (ss_process_spawn(1, sleep_module, 1, sleep_argv, &sleeper_pid) != SS_OK)
+        fail("sleep process spawn");
+    run_ticks(8);
+    if (ss_process_snapshot(sleeper_pid, &second) != SS_OK ||
+        second.task_id == 0 ||
+        tcb_table[second.task_id - 1].state != SS_TS_WAIT ||
+        call_sys(SS9_SYS_KILL, sleeper_pid) != SS_OK)
+        fail("deferred kill sleeping syscall");
+    SS9WaitRequest sleep_wait = {sleeper_pid, 0, 0};
+    if (call_sys(SS9_SYS_WAIT, (uint32_t)(uintptr_t)&sleep_wait) !=
+            (int32_t)sleeper_pid ||
+        sleep_wait.exit_status != 0)
+        fail("deferred kill reap");
 
     tty_puts("OK shared code/private A5 data\n");
     for (;;) tick();

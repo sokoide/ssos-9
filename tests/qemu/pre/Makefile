@@ -55,6 +55,8 @@ t12_interrupted_start_entry.o: t12_interrupted_start.s
 	$(CC) $(ASFLAGS) -c $< -o $@
 t13_test_vectors.o: t13_test_vectors.s
 	$(CC) $(ASFLAGS) -c $< -o $@
+t02_register_save_entry.o: t02_register_save.s
+	$(CC) $(ASFLAGS) -c $< -o $@
 
 -include *.d
 
@@ -63,6 +65,9 @@ all: $(addsuffix .elf,$(TESTS))
 
 %.elf: %.o $(COMMON_OBJS) ../common/linker.ld
 	$(CC) $(CFLAGS) $< $(COMMON_OBJS) $(LDFLAGS) -o $@
+
+t02_register_save.elf: t02_register_save.o t02_register_save_entry.o $(COMMON_OBJS) ../common/linker.ld
+	$(CC) $(CFLAGS) $< t02_register_save_entry.o $(COMMON_OBJS) $(LDFLAGS) -o $@
 
 t05_timerd_cadence.elf: t05_timerd_cadence.o stub.o sched.o wakeups.o main_task.o preempt_ctx_switch_10.o ../common/linker.ld
 	$(CC) $(CFLAGS) $< stub.o sched.o wakeups.o main_task.o preempt_ctx_switch_10.o $(LDFLAGS) -o $@
@@ -89,5 +94,5 @@ clean:
 FORCE:
 build/config: FORCE
 	@python3 ../../../tools/build-config.py $@ $(CC) $(CFLAGS) $(ASFLAGS) $(LDFLAGS)
-$(COMMON_OBJS) preempt_ctx_switch_10.o t12_interrupted_start_entry.o t13_test_vectors.o \
+$(COMMON_OBJS) preempt_ctx_switch_10.o t02_register_save_entry.o t12_interrupted_start_entry.o t13_test_vectors.o \
 	$(addsuffix .o,$(TESTS)): build/config

@@ -1,6 +1,6 @@
 # SSOS-9: OS-9型マルチプロセス・ローダー実装計画
 
-状態: 実装中。S9M1 validator/registry、private data fixup、合成 SR/PC frame、Process Table、built-in PIC counter の spawn/kill/wait、CLI、初期`trap #0` process-control/info syscall を実装。
+状態: 初期 CLI multi-process を実装済み。S9M1 validator/registry、private data fixup、合成 SR/PC frame、Process Table、built-in PIC counter、spawn/kill/wait、CLI、初期`trap #0` process-control/info syscall、syscall 境界での遅延 kill、孤児の PID 1 への再親化を実装。
 外部 module loader/packer、GCC C runtime/wrapper、VFS/redirect、FAT は未実装。
 
 対象: 16MHz 以上の MC68000 と 12MiB RAM を必須とする X68000、CLI 専用、Timer D による preemptive scheduling。
@@ -683,15 +683,15 @@ saved PC/SP は最後の退避時点の値であり、実行中 process の瞬�
 順序は上から。idle/reaper 起動、cancel/release、stack pool 設定共有、first-fit arena、
 arena platform 初期化、S9M1 validator/固定長 Module Table、private data/fixup、合成 SR/PC frame、
 PID 1 と built-in PIC counter の spawn/kill/wait、`ps`/`run`/`kill`/`wait`コマンド、
-version/PID/parent、spawn/exit/wait/kill/sleep/proc_info/proc_list syscall entry/dispatch まで実装済み。
+version/PID/parent、spawn/exit/wait/kill/sleep/proc_info/proc_list syscall entry/dispatch、syscall 中 kill の安全境界、孤児 process 再親化まで実装済み。
 外部 module loader/packer、GCC C runtime/wrapper 以降は未完了。
 FAT を待たず、RAM filesystem までで process と redirect を学べる状態にする。
 
 | phase | 実装 | 完了条件 |
 | --- | --- | --- |
-| 0 | RAM arena境界、idle、task取消/待ち解除/別stack回収、bootstrap PID対応 | 最後の非idle taskがsleep/exitしても停止しない。slotを再利用できる |
-| 1 | module header/packer、GOT/fixup、Table、allocator、組み込みcounter image | 壊れたimageを拒否し、load/unloadでRAMが元に戻る |
-| 2 | trap ABI、process frame、spawn、exit/wait/kill、guard | 同一counterを2 processで実行し、A5/GOT/stack分離と安全なreapを確認 |
+| 0 | RAM arena境界、idle、task取消/待ち解除/別stack回収、bootstrap PID対応 | 実装済み。最後の非idle taskがsleep/exitしても停止せず、slotを再利用する |
+| 1 | module header/packer、GOT/fixup、Table、allocator、組み込みcounter image | validator/Table/allocator/image試験を実装済み。外部packerと`.s9m` load/unloadは未実装 |
+| 2 | trap ABI、process frame、spawn、exit/wait/kill、guard | syscall・遅延kill・孤児再親化を実装済み。同一PICのA5/GOT/stack分離と回収をQEMUで確認 |
 | 2C | C module用build、start stub、最小runtime、C counter | GCCで作ったglobal/BSS/pointer初期値が2 processで独立する |
 | 3 | shell parser、background/foreground、ps/proc/modules/mem/trace | background起動中にshellを操作でき、任意childをkill/waitできる |
 | 4 | fd/open-file/node、TTY/null/romfs、継承/dup2、RAM filesystem | stdoutをconsole/fileへ同じwrite syscallで出力できる |
