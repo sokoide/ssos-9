@@ -1,8 +1,7 @@
 #include "cli_wait.h"
+#include "cli_console.h"
 
 #include "../kernel/scheduler.h"
-
-#include <x68k/iocs.h>
 
 #define SS_CLI_KEY_QUEUE_CAPACITY 64u
 #define SS_CLI_CTRL_C 0x03
@@ -37,9 +36,7 @@ int ss_cli_next_key(void) {
     int key = pop_pending_key();
     if (key >= 0)
         return key;
-    if (_iocs_b_keysns() <= 0)
-        return -1;
-    return _iocs_b_keyinp() & 0xff;
+    return ss_cli_console_read_key();
 }
 
 int ss_cli_poll_ctrl_c(void) {
@@ -47,8 +44,9 @@ int ss_cli_poll_ctrl_c(void) {
     int interrupted = ss_ctrl_c_pending != 0;
     ss_ctrl_c_pending = 0;
     ss_irq_restore(saved_sr);
-    while (_iocs_b_keysns() > 0) {
-        uint8_t key = (uint8_t)(_iocs_b_keyinp() & 0xff);
+    int next_key;
+    while ((next_key = ss_cli_console_read_key()) >= 0) {
+        uint8_t key = (uint8_t)next_key;
         if (key == SS_CLI_CTRL_C) {
             interrupted = 1;
             continue;

@@ -163,6 +163,16 @@ static void run_ticks(unsigned count) {
     for (unsigned i = 0; i < count; i++) tick();
 }
 
+static volatile uint32_t kernel_child_value;
+static volatile SSProcessId kernel_child_pid;
+
+static void* kernel_child_entry(void* argument) {
+    kernel_child_value = *(const uint32_t*)argument;
+    kernel_child_pid = ss_process_current_id();
+    ss_process_exit_current(23);
+    return NULL;
+}
+
 int main(void) {
     tty_puts("START process-spawn\n");
     ss_test_install_syscall_vector();
@@ -350,6 +360,20 @@ int main(void) {
     if (ss_process_kill(background_pid) != SS_OK ||
         ss_cli_wait_pid(background_pid, &status, NULL) != SS_OK)
         fail("background cleanup after cancelled wait");
+
+    uint32_t copied_argument = 42;
+    uint32_t kernel_free_before = ss_memory_free_bytes();
+    SSProcessId kernel_pid;
+    if (ss_process_spawn_kernel(1, "builtin", kernel_child_entry,
+                                &copied_argument, sizeof(copied_argument),
+                                &kernel_pid) != SS_OK)
+        fail("kernel child spawn");
+    copied_argument = 99;
+    run_ticks(32);
+    if (kernel_child_value != 42 || kernel_child_pid != kernel_pid ||
+        ss_process_wait(1, kernel_pid, &status) != SS_OK || status != 23 ||
+        ss_memory_free_bytes() != kernel_free_before)
+        fail("kernel child copied argument/return/reap");
 
     tty_puts("OK shared code/private A5 data\n");
     for (;;) tick();

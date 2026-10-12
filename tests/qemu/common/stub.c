@@ -45,3 +45,11 @@ void tty_putu(unsigned value) {
     }
     tty_puts(&buf[i]);
 }
+
+/* Console output is not exercised by the process/keyboard integration port. */
+void _iocs_b_print(const char* text) { (void)text; }
+void _iocs_b_clr_st(void) {}
+void _iocs_b_locate(int x, int y) {
+    (void)x;
+    (void)y;
+}

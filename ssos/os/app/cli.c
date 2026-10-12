@@ -1,3 +1,4 @@
+#include "cli.h"
 #include "../kernel/kernel.h"
 #include "../kernel/main_task.h"
 #include "../kernel/scheduler.h"
@@ -5,13 +6,16 @@
 #include "../module/builtin.h"
 #include "../module/module.h"
 #include "../process/process.h"
+#include "cli_console.h"
+#include "cli_parse.h"
 #include "cli_wait.h"
 
 #include <stdint.h>
 #include <string.h>
-#include <x68k/iocs.h>
 
+#ifndef SS_HOST_TEST
 uint8_t* ss_task_stack_base;
+#endif
 static SSTask main_tcb;
 static volatile uint32_t heartbeat;
 #ifdef LOCAL_MODE
@@ -19,12 +23,9 @@ static uint8_t local_task_stacks[SS_MAX_TASKS * SS_TASK_STACK]
     __attribute__((aligned(4)));
 #endif
 
-static void print(const char* text) { _iocs_b_print(text); }
+static void print(const char* text) { ss_cli_console_print(text); }
 
-static void clear_screen(void) {
-    _iocs_b_clr_st();
-    _iocs_b_locate(0, 0);
-}
+static void clear_screen(void) { ss_cli_console_clear(); }
 
 static void print_hex32(uint32_t value) {
     static const char digits[] = "0123456789ABCDEF";
@@ -183,6 +184,44 @@ static void show_processes(void) {
     }
 }
 
+static void show_modules(void) {
+    print("ID NAME STORAGE IMAGE CODE ENTRY BYTES REFS\r\n");
+    for (uint16_t i = 0; i < SS_MODULE_MAX_MODULES; i++) {
+        SSModuleSnapshot module;
+        if (ss_module_snapshot_at(i, &module) != SS_OK)
+            continue;
+        print_hex32(module.id);
+        print(" ");
+        print(module.name);
+        print(module.storage == SS_MODULE_STORAGE_BUILTIN ? " builtin "
+                                                          : " dynamic ");
+        uint32_t base = (uint32_t)(uintptr_t)module.image.image;
+        print_hex32(base);
+        print(" ");
+        print_hex32(base + module.image.code_offset);
+        print(" ");
+        print_hex32(base + module.image.entry_offset);
+        print(" ");
+        print_u32(module.image.image_size);
+        print(" ");
+        print_u32(module.ref_count);
+        print("\r\n");
+    }
+}
+
+static void show_memory(void) {
+    /* Capture both values before printing; reaping can change the free list. */
+    uint16_t saved_sr = ss_irq_save();
+    uint32_t free_bytes = ss_memory_free_bytes();
+    uint32_t largest_free = ss_memory_largest_free();
+    ss_irq_restore(saved_sr);
+    print("arena free_bytes=");
+    print_u32(free_bytes);
+    print(" largest_free=");
+    print_u32(largest_free);
+    print("\r\n");
+}
+
 static int parse_pid(const char* text, SSProcessId* pid) {
     if (text == NULL || *text == '\0')
         return 0;
@@ -201,46 +240,24 @@ static int parse_pid(const char* text, SSProcessId* pid) {
     return 1;
 }
 
-static uint16_t tokenize(char* line, char* tokens[], uint16_t capacity) {
-    uint16_t count = 0;
-    char* cursor = line;
-    while (*cursor != '\0') {
-        while (*cursor == ' ' || *cursor == '\t') cursor++;
-        if (*cursor == '\0')
-            break;
-        if (count == capacity)
-            return (uint16_t)(capacity + 1u);
-        tokens[count++] = cursor;
-        while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t') cursor++;
-        if (*cursor != '\0')
-            *cursor++ = '\0';
-    }
-    return count;
-}
-
-static int run_process_command(char* line) {
-    char* tokens[4];
-    uint16_t count = tokenize(line, tokens, 4);
-    if (count == 0)
-        return 0;
-    if (count > 4) {
-        print("Too many arguments.\r\n");
-        return 0;
-    }
-
+static int run_process_command(char* tokens[], uint16_t count, int background) {
     if (strcmp(tokens[0], "ps") == 0 && count == 1) {
         show_processes();
-    } else if (strcmp(tokens[0], "run") == 0 &&
-               (count == 2 || (count == 3 && strcmp(tokens[2], "&") == 0)) &&
+    } else if (strcmp(tokens[0], "modules") == 0 && count == 1) {
+        show_modules();
+    } else if (strcmp(tokens[0], "mem") == 0 && count == 1) {
+        show_memory();
+    } else if (strcmp(tokens[0], "run") == 0 && count == 2 &&
                strcmp(tokens[1], "counter") == 0) {
         SSModuleId module_id;
         SSProcessId pid;
         const char* argv[] = {"counter"};
         if (ss_module_find("counter", &module_id) != SS_OK ||
-            ss_process_spawn(1, module_id, 1, argv, &pid) != SS_OK) {
+            ss_process_spawn(ss_process_current_id(), module_id, 1, argv,
+                             &pid) != SS_OK) {
             print("Unable to start counter.\r\n");
         } else {
-            if (count == 3) {
+            if (background) {
                 print("Started counter as PID ");
                 print_u32(pid);
                 print("\r\n");
@@ -269,18 +286,30 @@ static int run_process_command(char* line) {
         }
     } else if (strcmp(tokens[0], "kill") == 0 && count == 2) {
         SSProcessId pid;
-        if (!parse_pid(tokens[1], &pid) || ss_process_kill(pid) != SS_OK)
+        if (!parse_pid(tokens[1], &pid) || ss_process_kill(pid) != SS_OK) {
             print("Cannot kill that PID.\r\n");
-        else
+            ss_process_exit_current(1);
+        } else
             print("Kill requested. Use wait PID to collect it.\r\n");
     } else if (strcmp(tokens[0], "wait") == 0 && count == 2) {
         SSProcessId pid;
         uint16_t exit_status;
         if (!parse_pid(tokens[1], &pid)) {
             print("Invalid PID.\r\n");
+            ss_process_exit_current(2);
             return 0;
         }
-        int16_t status = ss_cli_wait_pid(pid, &exit_status, NULL);
+        int16_t status;
+        if (ss_process_current_id() == 1) {
+            status = ss_cli_wait_pid(pid, &exit_status, NULL);
+        } else {
+            /* A subshell cannot wait for the parent shell's children, and
+             * must never poll or consume the parent's keyboard input. */
+            while ((status = ss_process_wait(ss_process_current_id(), pid,
+                                             &exit_status)) == SS_ERR_STATE &&
+                   !ss_process_kill_pending())
+                (void)ss_task_sleep(1);
+        }
         if (status == SS_CLI_WAIT_CANCELLED) {
             print("^C\r\n");
             return 0;
@@ -293,6 +322,7 @@ static int run_process_command(char* line) {
             print("\r\n");
         } else {
             print("No child with that PID.\r\n");
+            ss_process_exit_current(127);
         }
     } else {
         return -1;
@@ -342,24 +372,66 @@ int16_t ss_init(void) {
 }
 
 static void show_help(void) {
-    print("Commands: help, uptime, ps, run counter [&], kill PID, wait PID, ");
+    print("Commands: help, uptime, ps, modules, mem, run counter [&], kill "
+          "PID, wait PID, ");
     print("debug, trace, clear, version, exit\r\n");
 }
 
-static int run_command(char* line) {
-    char process_line[64];
-    size_t length = 0;
-    while (line[length] != '\0' && length + 1 < sizeof(process_line)) {
-        process_line[length] = line[length];
-        length++;
+static void* background_builtin(void* argument) {
+    ss_process_syscall_enter();
+    (void)ss_cli_execute_line(argument);
+    if (ss_process_syscall_leave())
+        ss_process_exit_current(130);
+    return NULL;
+}
+
+int ss_cli_execute_line(char* line) {
+    char command_copy[64];
+    size_t length = strlen(line);
+    if (length >= sizeof(command_copy)) {
+        print("Command too long.\r\n");
+        return 0;
     }
-    process_line[length] = '\0';
-    int process_result = run_process_command(process_line);
+    memcpy(command_copy, line, length + 1u);
+    char* tokens[4];
+    int background;
+    int16_t count = ss_cli_parse_line(line, tokens, 4, &background);
+    if (count < 0) {
+        print(count == SS_CLI_PARSE_LIMIT ? "Too many arguments.\r\n"
+                                          : "Syntax error.\r\n");
+        return 0;
+    }
+    if (count == 0)
+        return 0;
+    if (background && strcmp(tokens[0], "run") != 0) {
+        /* The parser already verified that this is the sole trailing '&'. */
+        while (length != 0 && command_copy[length - 1] != '&') length--;
+        command_copy[length - 1] = '\0';
+        SSProcessId pid;
+        if (ss_process_spawn_kernel(ss_process_current_id(), tokens[0],
+                                    background_builtin, command_copy,
+                                    (uint16_t)length, &pid) != SS_OK) {
+            print("Unable to start background command.\r\n");
+        } else {
+            print("Started command as PID ");
+            print_u32(pid);
+            print("\r\n");
+        }
+        return 0;
+    }
+    int process_result =
+        run_process_command(tokens, (uint16_t)count, background);
     if (process_result >= 0)
         return 0;
-    if (strcmp(line, "help") == 0) {
+    if (count != 1) {
+        print("Unknown command or invalid arguments.\r\n");
+        ss_process_exit_current(2);
+        return 0;
+    }
+    const char* command = tokens[0];
+    if (strcmp(command, "help") == 0) {
         show_help();
-    } else if (strcmp(line, "uptime") == 0) {
+    } else if (strcmp(command, "uptime") == 0) {
         char out[48] = "worker wakes: ";
         uint32_t value = heartbeat;
         char digits[11];
@@ -375,23 +447,26 @@ static int run_command(char* line) {
         }
         strcat(out, "\r\n");
         print(out);
-    } else if (strcmp(line, "debug") == 0) {
+    } else if (strcmp(command, "debug") == 0) {
         show_debug();
-    } else if (strcmp(line, "trace") == 0) {
+    } else if (strcmp(command, "trace") == 0) {
         show_trace();
-    } else if (strcmp(line, "clear") == 0) {
+    } else if (strcmp(command, "clear") == 0) {
         clear_screen();
-    } else if (strcmp(line, "version") == 0) {
+    } else if (strcmp(command, "version") == 0) {
         print("SSOS-9 CLI preemptive minimum\r\n");
-    } else if (strcmp(line, "exit") == 0) {
+    } else if (strcmp(command, "exit") == 0) {
+        if (ss_process_current_id() != 1)
+            return 1;
 #ifdef LOCAL_MODE
         stop_children();
         return 1;
 #else
         print("Cannot exit the initial SSOS-9 process (PID 1).\r\n");
 #endif
-    } else if (line[0] != '\0') {
+    } else {
         print("Unknown command. Type 'help'.\r\n");
+        ss_process_exit_current(127);
     }
     return 0;
 }
@@ -425,7 +500,7 @@ int ss_run(void) {
         if (key == '\r' || key == '\n') {
             line[used] = '\0';
             print("\r\n");
-            if (run_command(line)) {
+            if (ss_cli_execute_line(line)) {
                 print("SSOS-9 terminated.\r\n");
                 return 0;
             }

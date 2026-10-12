@@ -20,12 +20,12 @@ Set up the cross compiler in each shell, then build/install from the repository 
 
 ```sh
 source ~/.elf2x68k
-make
+make all
 make install
 make debug
 ```
 
-`make install` creates `ssos9.x` and `ssos9.xdf` and copies both to `~/tmp`. `make debug` writes the standalone ELF disassembly, symbol table, and link map under `ssos/standalone/build/`. The CLI `debug` command prints tick, task/stack, and MFP status; `trace` prints the last 16 scheduler events. `ssos/config.mk` is the source for scheduler slot/stack counts, the XDF RAM end, and the standalone arena size. Build outputs and intermediates are ignored by Git. There is no scheduler selection variable; builds are preemptive-only.
+`make install` creates `ssos9.x` and `ssos9.xdf` and copies both to `~/tmp`. `make debug` writes the standalone ELF disassembly, symbol table, and link map under `ssos/standalone/build/`. Trailing `&` is parsed independently of whitespace for all commands; background `run` launches a module process, while background builtins run in isolated kernel-entry child processes. IOCS access is serialized by `app/cli_console.c`. The CLI `modules` and `mem` commands expose shared image/reference and arena free/largest-block snapshots. The CLI `debug` command prints tick, task/stack, and MFP status; `trace` prints the last 16 scheduler events. `ssos/config.mk` is the source for scheduler slot/stack counts, the XDF RAM end, and the standalone arena size. Build outputs and intermediates are ignored by Git. There is no scheduler selection variable; builds are preemptive-only.
 
 ## Implementation conventions
 

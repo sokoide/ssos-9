@@ -89,6 +89,11 @@ int main(void) {
         fail("memory init");
     uint32_t free_before = ss_memory_free_bytes();
     ss_module_registry_init();
+    SSModuleSnapshot listed;
+    if (ss_module_snapshot_at(0, &listed) != SS_ERR_ID ||
+        ss_module_snapshot_at(SS_MODULE_MAX_MODULES, &listed) != SS_ERR_ID ||
+        ss_module_snapshot_at(0, NULL) != SS_ERR_PARAM)
+        fail("enumeration bounds or empty registry");
 
     make_image("counter");
     SSModuleId builtin_id = 0;
@@ -107,6 +112,9 @@ int main(void) {
         snapshot.ref_count != 1 ||
         snapshot.storage != SS_MODULE_STORAGE_BUILTIN)
         fail("builtin snapshot");
+    if (ss_module_snapshot_at(0, &listed) != SS_OK || listed.id != builtin_id ||
+        listed.ref_count != 1 || listed.image.image != image)
+        fail("enumerate builtin");
     if (ss_module_unlink(builtin_id) != SS_OK ||
         ss_module_unload(builtin_id) == SS_OK)
         fail("builtin lifetime");
@@ -154,6 +162,9 @@ int main(void) {
         snapshot.storage != SS_MODULE_STORAGE_DYNAMIC ||
         snapshot.image.image[80] != original)
         fail("dynamic image copy");
+    if (ss_module_snapshot_at(1, &listed) != SS_OK || listed.id != dynamic_id ||
+        listed.ref_count != 1 || listed.image.image != snapshot.image.image)
+        fail("enumerate dynamic");
     if (ss_module_link(dynamic_id) != SS_OK ||
         ss_module_unload(dynamic_id) == SS_OK)
         fail("referenced unload accepted");
@@ -162,6 +173,10 @@ int main(void) {
         ss_module_unload(dynamic_id) != SS_OK ||
         ss_memory_free_bytes() != free_before)
         fail("dynamic unload");
+    if (ss_module_snapshot_at(1, &listed) != SS_ERR_ID ||
+        ss_module_snapshot_at(0, &listed) != SS_OK || listed.id != builtin_id ||
+        listed.ref_count != 0)
+        fail("enumeration retained a ref or unloaded entry");
 
     make_image("dynamic");
     SSModuleId reloaded_id = 0;
@@ -170,6 +185,8 @@ int main(void) {
                                  &reloaded_id) != SS_OK ||
         reloaded_id == dynamic_id)
         fail("generation not advanced");
+    if (ss_module_snapshot_at(1, &listed) != SS_OK || listed.id != reloaded_id)
+        fail("enumeration returned stale generation");
     if (ss_module_unload(reloaded_id) != SS_OK)
         fail("unload reloaded module");
 

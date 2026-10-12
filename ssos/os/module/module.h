@@ -27,6 +27,10 @@ int16_t ss_module_register_image(const uint8_t* bytes, uint32_t size,
                                  SSModuleStorage storage, SSModuleId* id);
 int16_t ss_module_find(const char* name, SSModuleId* id);
 int16_t ss_module_snapshot(SSModuleId id, SSModuleSnapshot* snapshot);
+/* Copies a READY entry without acquiring a reference. Image pointers are
+ * diagnostic addresses only; callers must acquire a ref before dereferencing.
+ */
+int16_t ss_module_snapshot_at(uint16_t index, SSModuleSnapshot* snapshot);
 int16_t ss_module_acquire(SSModuleId id, SSModuleSnapshot* snapshot);
 int16_t ss_module_release(SSModuleId id);
 /* Initializes private data and retains a module reference for the process. */

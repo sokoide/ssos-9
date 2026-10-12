@@ -57,6 +57,8 @@ t13_test_vectors.o: t13_test_vectors.s
 	$(CC) $(ASFLAGS) -c $< -o $@
 t13_ctrl_c.o: ../../../ssos/os/kernel/ctrl_c.s
 	$(CC) $(ASFLAGS) -c $< -o $@
+t13_cli_console.o: $(SSOS)/app/cli_console.c $(SSOS)/app/cli_console.h
+	$(CC) $(CFLAGS) -I$(SSOS)/app -c $< -o $@
 t13_cli_wait.o: $(SSOS)/app/cli_wait.c $(SSOS)/app/cli_wait.h
 	$(CC) $(CFLAGS) -I$(SSOS)/app -c $< -o $@
 t02_register_save_entry.o: t02_register_save.s
@@ -79,8 +81,8 @@ t05_timerd_cadence.elf: t05_timerd_cadence.o stub.o sched.o wakeups.o main_task.
 t12_interrupted_start.elf: t12_interrupted_start.o t12_interrupted_start_entry.o $(COMMON_OBJS) ../common/linker.ld
 	$(CC) $(CFLAGS) t12_interrupted_start.o t12_interrupted_start_entry.o $(COMMON_OBJS) $(LDFLAGS) -o $@
 
-t13_process_spawn.elf: t13_process_spawn.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o $(COMMON_OBJS) ../common/linker.ld
-	$(CC) $(CFLAGS) t13_process_spawn.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o $(COMMON_OBJS) $(LDFLAGS) -o $@
+t13_process_spawn.elf: t13_process_spawn.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o $(COMMON_OBJS) ../common/linker.ld
+	$(CC) $(CFLAGS) t13_process_spawn.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o $(COMMON_OBJS) $(LDFLAGS) -o $@
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -98,5 +100,5 @@ clean:
 FORCE:
 build/config: FORCE
 	@python3 ../../../tools/build-config.py $@ $(CC) $(CFLAGS) $(ASFLAGS) $(LDFLAGS)
-$(COMMON_OBJS) preempt_ctx_switch_10.o t02_register_save_entry.o t12_interrupted_start_entry.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o \
+$(COMMON_OBJS) preempt_ctx_switch_10.o t02_register_save_entry.o t12_interrupted_start_entry.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o \
 	$(addsuffix .o,$(TESTS)): build/config

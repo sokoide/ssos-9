@@ -4,7 +4,10 @@
 
 #define SS_ARENA_FREE_MAGIC 0x46524545u
 #define SS_ARENA_USED_MAGIC 0x55534544u
-#define SS_ARENA_ALIGNMENT 4u
+/* MC68000 uses 4-byte blocks; host pointers may require wider metadata
+ * alignment when the production allocator is exercised by native tests. */
+#define SS_ARENA_ALIGNMENT                                                     \
+    (_Alignof(SSArenaBlock) > 4u ? (uint32_t)_Alignof(SSArenaBlock) : 4u)
 
 static uint32_t block_header_size(void) {
     return (uint32_t)((sizeof(SSArenaBlock) + SS_ARENA_ALIGNMENT - 1u) &
@@ -25,8 +28,9 @@ int16_t ss_arena_init(SSArena* arena, void* memory, uint32_t size) {
     if (raw_start > UINTPTR_MAX - (SS_ARENA_ALIGNMENT - 1u) ||
         raw_start > UINTPTR_MAX - size)
         return -1;
-    uintptr_t start = (raw_start + SS_ARENA_ALIGNMENT - 1u) & ~(uintptr_t)3u;
-    uintptr_t end = (raw_start + size) & ~(uintptr_t)3u;
+    uintptr_t start = (raw_start + SS_ARENA_ALIGNMENT - 1u) &
+                      ~(uintptr_t)(SS_ARENA_ALIGNMENT - 1u);
+    uintptr_t end = (raw_start + size) & ~(uintptr_t)(SS_ARENA_ALIGNMENT - 1u);
     uint32_t header_size = block_header_size();
     if (end < start || end - start < header_size + SS_ARENA_ALIGNMENT)
         return -1;

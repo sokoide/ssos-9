@@ -1,13 +1,13 @@
 # SSOS-9
 
-X68000 向けの最小 CLI 専用 OS です。`ssos-68k`の起動経路と Timer D 割り込みによるプリエンプティブ・スケジューラを基にしています。対応するスケジューラは preemptive のみです。
+共有 PIC コードとプロセス専用データ、割り込み、syscall、資源回収を CLI で観察する、X68000 向けの教育用 OS です。OS-9 型の module/process 分離を参考にしています。既存 OS-9 バイナリや syscall との互換性はありません。`ssos-68k`の起動経路と Timer D 割り込みによるプリエンプティブ・スケジューラを基にしています。対応するスケジューラは preemptive のみです。
 動作条件は 16MHz 以上の MC68000 と 12MiB の連続 main RAM です。
 
 ## ビルドとインストール
 
 ```sh
 source ~/.elf2x68k
-make
+make all
 make install
 ```
 
@@ -21,8 +21,10 @@ make install
 - `help`: コマンド一覧
 - `uptime`: カーネル worker の起床回数
 - `run counter`: 内蔵 PIC counter を foreground 起動。Ctrl-C/Break で終了要求を出し、回収後に prompt へ戻る
-- `run counter &`: 内蔵 PIC counter をバックグラウンド起動
+- `run counter &` / `run counter&`: 内蔵 PIC counter をバックグラウンド起動
 - `ps`: PID、親 PID、状態、共有 module、private data/GOT のアドレスを表示
+- `modules`: module ID、名前、共有 image/code/entry アドレス、image サイズ、参照数を表示
+- `mem`: arena の空き byte 数と最大の連続空き block を表示
 - `kill PID`: 子 process を停止
 - `wait PID`: 子 process の回収と終了状態を待つ。Ctrl-C/Break は待機だけを取り消し、子は実行を続ける
 - prompt での Ctrl-C/Break: 入力中の行を破棄して prompt を再表示
@@ -31,6 +33,50 @@ make install
 - `clear`: IOCS テキスト画面を消去
 - `version`: OS 名を表示
 - `exit`: `.x` は Human68K へ戻る。`.xdf` は初期プロセスの終了を拒否する
+
+末尾の `&` は全コマンドで共通に解析し、直前の空白は不要です。
+`run counter&` は module process を起動し、`help&`、`ps&`、`modules&` などの
+組み込みコマンドは独立した子 process で実行します。親 CLI は PID を表示して戻ります。
+`exit&` はその子だけを終了します。`wait PID&` は親 CLI の子を引き継がないため、
+親が起動した PID を回収できず終了値 127 を返します。背景の子も `wait PID` で回収します。
+IOCS は短い software lock で直列化しますが、背景出力後の入力行再描画は未対応です。
+行途中の `&`、`&&`、`&` だけの入力は構文エラーです。
+
+## 学習の進め方
+
+まず [全体設計](docs/design.md)で task/process/module の違いを確認します。
+現行 module は supervisor mode の同一物理アドレス空間で動き、private data の分離は
+メモリ保護を意味しません。
+
+```text
+modules
+mem
+run counter &
+run counter &
+ps
+modules
+mem
+```
+
+同じ MODULE ID を持つ 2 process の DATA/GOT/STACK が異なることと、`modules` の
+共有 CODE/ENTRY が一組で REFS が 2 になることを観察します。`ps` が返す READY は
+process の生存状態であり、scheduler の実行中/sleep の区別ではありません。
+表示された各 PID について `kill PID`、`wait PID` を実行し、REFS が 0、`mem` の値が
+起動前の値へ戻ることを確認します。kill の受付、reaper の資源回収、wait の PID slot 回収は
+別の段階です。終了した子を wait しないと process table の slot が残ります。
+内蔵 counter は値をコンソールへ出力しません。まずアドレスと参照数を観察する教材です。
+
+| 学ぶ概念 | 読む実装 | 自動検証 |
+| --- | --- | --- |
+| queue、sleep、idle、task 回収 | `ssos/os/kernel/scheduler.c` | native と QEMU T01〜T08 |
+| first-fit、分割/結合 | `ssos/os/mem/arena.c` | QEMU T09 |
+| image の検証、共有 ref、private fixup | `ssos/os/module/` | QEMU T10〜T11 |
+| SR/PC frame、A3/A5、共有 code と private data | `ssos/os/kernel/context_frame.h`, `ssos/os/process/` | QEMU T12〜T13 |
+| trap、kill/wait、孤児、Ctrl-C | `ssos/os/kernel/syscall*`, `ssos/os/app/cli_wait.c` | QEMU T13 |
+
+`modules` は各行の snapshot、`mem` は一組の snapshot です。出力中にも process は進行します。
+外部 module、C runtime、fd/redirect、FAT の学習は [ローダー計画](docs/multiprocess-loader-plan.md)の
+各フェーズで追加します。計画のコマンド例には未実装機能が含まれます。
 
 ## デバッグ
 
@@ -70,7 +116,7 @@ Human68K の他の MFP source の enable/mask 状態を変更しません。MFP 
 
 現在は CLI と heartbeat/idle/reaper の kernel task、S9M1 validator/Module Table、private data/fixup、Process Table、spawn/kill/wait、内蔵 PIC counter を実装しています。`run counter &`で同一コードを複数 process として起動し、各 process の A5/GOT、data、stack を`ps`で観察できます。`ssos/include/ssos9/syscall.h`に初期`trap #0` ABI を定義し、QEMU で trap 入口、version、PID/親 PID、process 情報/list、child kill/wait を確認します。任意の`.s9m`ファイルを読む loader、GCC C module runtime、user 向け wrapper、file I/O/redirect は未実装です。kernel worker task は独立 process ではありません。
 
-[マルチプロセス・ローダー実装計画](docs/multiprocess-loader-plan.md)に、共有 PIC、process lifecycle、background 起動、syscall、将来の FAT と stdout の`>`/`>>` redirect の設計と実装順序をまとめています。
+[全体設計](docs/design.md)は責務境界と ABI 変更方針を定めます。[マルチプロセス・ローダー実装計画](docs/multiprocess-loader-plan.md)に、共有 PIC、process lifecycle、background 起動、syscall、将来の FAT と stdout の`>`/`>>` redirect の設計と実装順序をまとめています。
 
 ## 検証の範囲
 

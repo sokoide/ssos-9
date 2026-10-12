@@ -1,9 +1,9 @@
-# Host tests for the scheduler's queue and task-state logic.
+# Host tests for scheduler state and shell parsing.
 CC = cc
 include ../ssos/config.mk
-CFLAGS = -O2 -g -Wall -Wextra -Werror -std=c11 -DSS_HOST_TEST -DSS_TASK_CREATE_PROBE \
+CFLAGS = -O2 -g -Wall -Wextra -Werror -std=c11 -DLOCAL_MODE -DSS_HOST_TEST -DSS_TASK_CREATE_PROBE \
 	-DSS_MAX_TASKS=$(SS_MAX_TASKS) -DSS_TASK_STACK=$(SS_TASK_STACK) \
-	-Iframework -I../ssos/os/kernel
+	-idirafter qemu/common/include -Iframework -I../ssos/os/kernel
 
 ifeq ($(SANITIZE),1)
 CFLAGS += -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
@@ -13,9 +13,12 @@ TARGET = test_runner_native
 endif
 
 SSOS = ../ssos/os
-SOURCES = framework/test_runner.c framework/test_mocks.c unit/test_scheduler.c \
-	$(SSOS)/kernel/scheduler.c $(SSOS)/kernel/preemptive/wakeups.c
-HEADERS = $(wildcard framework/*.h unit/*.h $(SSOS)/kernel/*.h)
+SOURCES = framework/test_runner.c framework/test_mocks.c unit/test_scheduler.c unit/test_cli_parse.c unit/test_cli_background.c \
+	$(SSOS)/kernel/scheduler.c $(SSOS)/kernel/preemptive/wakeups.c $(SSOS)/app/cli_parse.c $(SSOS)/app/cli.c $(SSOS)/app/cli_wait.c \
+	$(SSOS)/app/cli_console.c $(SSOS)/kernel/main_task.c $(SSOS)/process/process.c \
+	$(SSOS)/module/module.c $(SSOS)/module/image.c $(SSOS)/module/builtin.c \
+	$(SSOS)/mem/arena.c $(SSOS)/mem/system_arena.c
+HEADERS = qemu/common/include/x68k/iocs.h $(wildcard framework/*.h unit/*.h $(SSOS)/kernel/*.h $(SSOS)/app/*.h $(SSOS)/process/*.h $(SSOS)/module/*.h $(SSOS)/mem/*.h)
 
 .PHONY: all test clean
 all: $(TARGET)

@@ -2,4 +2,4 @@
 SS_CORE_SRCS := kernel/scheduler.c kernel/syscall.c kernel/preemptive/wakeups.c \
 	mem/arena.c mem/system_arena.c
 SS_CORE_SRCS += module/image.c module/module.c module/builtin.c process/process.c
-SS_TARGET_SRCS := kernel/main_task.c app/cli.c app/cli_wait.c
+SS_TARGET_SRCS := kernel/main_task.c app/cli.c app/cli_wait.c app/cli_parse.c app/cli_console.c

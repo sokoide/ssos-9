@@ -6,6 +6,10 @@
 対象: 16MHz 以上の MC68000 と 12MiB RAM を必須とする X68000、CLI 専用、Timer D による preemptive scheduling。
 `.x`と`.xdf`の両方で同じ process/module/syscall コードを使う。
 
+この文書の現行機能は以下の実装状況と section 6.1 の subset に限定する。
+その他の表・API・コマンド例は将来仕様である。責務境界と変更方針は
+[全体設計](design.md)、実行可能な学習手順は [README](../README.md)を参照する。
+
 ## 1. 到達点と設計上の決定
 
 初版で、同じ PIC モジュールを複数プロセスとして起動し、コードを共有しながら
@@ -37,39 +41,37 @@ process ごとの USP/SSP、kernel stack、trap/interrupt entry の作り直し�
 初版の分離は所有権と ABI 上の約束であり、誤ったポインタや直接 I/O を防止できない。
 ユーザモード移行は syscall 契約を維持したまま別フェーズで行う。
 
-## 2. 現行コードとの差分
+## 2. 実装状況と次の変更
 
-| 現行の場所 | 現在の制約 | 必要な変更 |
+| 境界 | 実装済み | 次に追加するもの |
 | --- | --- | --- |
-| `ssos/os/kernel/scheduler.c` | TERMINATED taskのslot/stackを再利用しない | cancel、wait解除、別stackからの回収を追加 |
-| `ssos/os/kernel/main_task.c` | 初期shellのTCBは`tcb_table`の外 | PID 1のprocess descriptorと明示的に対応付ける |
-| `ssos/os/kernel/preemptive/interrupts.s` | 新規taskはCの`entry(arg)`から開始 | PIC process用の初期レジスタフレームを復元する経路を追加 |
-| `ssos/os/kernel/context_frame.h` | yield用frameはPC→SRの順 | Timer D/trap用のSR→PC順のframeも定義 |
-| `ssos/os/app/cli.c` | 入力行と組み込みコマンドだけを処理 | tokenize、spawn、wait、fd設定、process観察を追加 |
-| `ssos/os/kernel/linker.ld` | arenaを使わずSSOSRAMを予約 | 12MiB必須条件に合わせてarena終端を`$C00000`へ固定 |
-| `ssos/standalone/main.c` | `.x`終了時にMFPとmodeを復元 | 全childの終了・回収後に既存の復元経路へ戻る |
+| scheduler/context | idle/reaper、cancel/wake、slot 再利用、PIC 初期 SR/PC frame | I/O 待ちと取消の契約。別 scheduler は追加しない |
+| bootstrap/build | PID 1 と bootstrap TCB の対応、共通 source/config、`.x`/`.xdf` arena | platform の手動検証記録を各変更と対応させる |
+| module | S9M1 validator、registry、参照数、private data/fixup、内蔵 PIC | packer、bounded reader、外部 image の load/unload |
+| process | spawn/exit/kill/wait、syscall 境界の遅延 kill、孤児の PID 1 への再親化 | fd 所有権、wait queue、終了通知/cache |
+| syscall | version/PID/parent と process control/info | 旧 layout を保持する ABI 拡張、C wrapper、I/O |
+| CLI | foreground/background counter、ps、modules、mem、kill/wait、Ctrl-C | 引数/quote parser、proc、load/unload、redirect |
 
-初期 shell を PID 1 として登録し、kernel heartbeat/idle/reaper は PID を持たない
-kernel task として表示上も区別する。PID と既存 task ID を同じ番号と仮定しない。
-PID 1 は常駐する kernel shell を包む system process で、初版では PIC image ではない。
-`module_id=0`とし、`proc 1`では loader 由来の data/GOT を`n/a`と表示する。
-bootstrap TCB の`stack_base == 1`という sentinel を実 stack 境界として表示しない。
-実際の root stack 範囲は platform/bootstrap から descriptor へ記録する。
-初版は最大 8 process（shell を含む）、scheduler slot は child と kernel task の分を
-別途見積もり、少なくとも 10 slot を確保する。kernel task の既存 pool stack と
-allocator が確保する process stack を二重に解放しない。
-この変更では C の`SS_MAX_TASKS/SS_TASK_STACK`と linker の pool 予約量を同じ build 定義から
-生成し、現在の linker にある`8 * 4096`のまま slot 数だけを増やさない。
+現行の上限と定義元を次に示す。将来案の数値を現行の上限と混同しない。
 
-root と通常 child の priority は既定 8、idle は最低 priority、reaper は既定 8 とする。
-reaper を idle と同じ低 priority にして、常に READY な shell に回収を妨げられないようにする。
+| 上限 | 現行値 | 正本 |
+| --- | --- | --- |
+| process slot | 8、PID 1 を含む | `process/process.h` |
+| module slot / 名前 | 8 / 31 byte + NUL | `module/module.h` |
+| scheduler slot / kernel stack | 10 / 4096 byte | `ssos/config.mk` |
+| process 引数 | 16 個、文字列合計 512 byte | `process/process.h` |
+| CLI 入力 / token | 63 byte + NUL / 4 | `app/cli.c` |
+| standalone arena | 256KiB | `ssos/config.mk` |
 
-現行の「ready task がなくなる場合は sleep を拒否する」制限も解消する。
-idle task を常設し、全 process が sleep/wait 中でも Timer D を受け付ける。
-bootstrap は BSS 初期化、arena、scheduler/process table、PID 1 と idle/reaper、
-module registry と syscall vector の準備後に Timer D を有効化する。
-現行`ss_set_interrupts()`の設定と CPU 割り込み許可を分離し、未初期化 queue を
-ISR へ公開しない。`.x`では最初に supervisor へ移行し、旧 vector/MFP 状態を保存する。
+PID と task ID は別である。PID 1 は kernel shell を包む system process で、
+`module_id=0`、data/GOT/stack snapshot は null。bootstrap TCB の sentinel を
+実 stack アドレスとして表示しない。実 stack 範囲の公開は platform 側の後続課題とする。
+kernel task の固定 pool stack と process allocator の専用 stack は所有者を分ける。
+
+現行 bootstrap は arena、registry/内蔵 image、scheduler、PID 1、idle/reaper を準備する。
+vector と CPU 割り込み許可の順序は起動コードで確認し、初期化途中の queue を ISR に公開しない。
+`.x` の root exit は child の終了と回収を待ってから環境を復元する。
+`.xdf` は root exit を拒否する。これらの platform 動作は QEMU の process 試験だけでは確認できない。
 
 ## 3. Module Tableとモジュール形式
 
@@ -412,8 +414,9 @@ ISR は状態変更と deferred cleanup 通知までを行う。`kill`の戻り�
 回収完了は`wait PID`で確認する。kernel 内で停止した process を安全に強制回収する
 保証はないため、kernel syscall には無期限 busy loop を作らない。
 
-exit では子を PID 1 へ reparent する。PID 1 は自身の background child と孤児の exit status を
-通知後に回収する。明示的な`wait PID`用に shell が小さな終了 status cache を保持する。
+exit では子を PID 1 へ reparent する。現行 shell では親の `wait` まで ZOMBIE が slot を保持する。
+以下の自動回収と cache は未実装の将来案であり、通知/cache 導入前に終了値を捨てない。
+PID 1 は自身の background child と孤児の exit status を通知後に回収する。明示的な`wait PID`用に shell が小さな終了 status cache を保持する。
 cache を越えた古い PID の wait は`ECHILD`を返す。foreground child の status は wait 完了まで保持。
 
 ### 5.4 `.x` / `.xdf`のexit
@@ -428,13 +431,13 @@ cache を越えた古い PID の wait は`ECHILD`を返す。foreground child �
 - 将来の子 shell も foreground ownership と parent PID を使う。親への復帰は任意の PC へ
   jump する操作ではなく、親の wait 解除と scheduler への再登録として実装する。
 
-## 6. Syscall ABI v1
+## 6. 現行 syscall ABI v1 と拡張案
 
-### 6.1 trap、引数、結果
+### 6.1 trap、引数、結果と互換性
 
 `trap #0`（vector table address `$80`）を SSOS-9 の入口として予約する。
-起動時に旧 vector を保存し、`.x`の終了時に復元する。既存 QEMU port が同じ trap を
-Timer D の代役として使っているため、process test では Timer D 代役を別 trap へ移す。
+起動時に旧 vector を保存し、`.x`の終了時に復元する。現行 QEMU port は `trap #1` を
+Timer D の代役に使い、`trap #0` を production syscall entry に割り当てる。
 IOCS `trap #15`や Human68K の既存 call 機構は横取りしない。
 
 ```text
@@ -466,10 +469,24 @@ process 操作の一部に限定しており、以下の将来 ABI 全体はま�
 | `$20`/`$21`/`$22`/`$23` | open/close/read/writeの番号予約。すべて`ENOSYS` |
 
 `spawn`/`wait`/`proc_info`/`proc_list`の request layout は`ssos/include/ssos9/syscall.h`を参照。
-EXIT/KILL/SLEEP は D1 に scalar 値を渡す。共有物理アドレス空間のため、null と一部の
-layout field 以外の user pointer 範囲検証は未実装であり、MMU 保護もない。
+EXIT/KILL/SLEEP は D1 に scalar 値を渡す。現行の request と pointer 配列は null と
+4 byte 整列、予約 field 等を検査する。user pointer の所有領域の範囲検証は未実装であり、
+MMU 保護もない。
 
-kernel は request/文字列/argv を検証して必要な情報をコピーする。read/write buffer は
+### 6.2 将来 ABI の候補
+
+以下は未実装の候補であり、現行 ABI v1 の置換仕様ではない。
+現行 `SS9SpawnRequest` は 12 byte、`SS9WaitRequest` は 8 byte、
+process 引数文字列の上限は 512 byte。現行 error は `SS9_ERR` / `SS9_ERR_PARAM` /
+`SS9_ERR_NOSYS` と kernel の `SS_ERR_*` を返し、POSIX errno 一式には対応していない。
+process info の state は現行 `SSProcessState` の値である。
+
+40 byte spawn、wait flags、拡張 process info、error の再定義を同じ番号/version に
+そのまま導入してはならない。別番号で旧 call を保持するか、新 ABI version と module 側の
+要求 version 検査を導入する。実装前に一方を選び、旧 request が新 layout として読まれない
+試験を追加する。S9M1 header の image ABI version を syscall version の代用にしない。
+
+将来の kernel は request/文字列/argv を検証して必要な情報をコピーする。read/write buffer は
 process の private block（read/write 可能）または module image（write の source だけ）に
 範囲制限する。raw pointer がこの範囲にあることは確認できるが、MMU による保護ではない。
 request の入れ子 pointer、size 上限、文字列終端、整数 overflow も検証する。
@@ -508,8 +525,8 @@ syscall の成功値が負にならない範囲に制限する。
 error は`EINVAL/ENOENT/ENOEXEC/ENOMEM/EAGAIN/ESRCH/ECHILD/EBADF/EACCES/EBUSY/
 EIO/ENOSPC/ESPIPE/ENOSYS`等を SSOS-9 用の固定値として定義する。
 
-`SSUserSpawn`の v1 request は 40 byte とする。
-offset 0/4 は size=40 と version=1、8 は flags、12 は module 名または path の pointer、
+将来の `SSUserSpawn` request 候補は 40 byte とする。
+offset 0/4 は size=40 と request version（互換性方式とともに確定）、8 は flags、12 は module 名または path の pointer、
 16/20 は argc/argv、24/28/32 は stdin/stdout/stderr source fd、36 は reserved=0。
 source fd=-1 は既定継承を意味し、background の stdin だけは null へ対応付ける。
 明示的な TTY stdin 指定は foreground ownership の検証を通す。
@@ -519,9 +536,11 @@ open flags は READ=`$01`、WRITE=`$02`、CREATE=`$04`、TRUNC=`$08`、APPEND=`$
 READ/WRITE の少なくとも一方が必須で、TRUNC/APPEND には WRITE が必要。
 seek の whence は SET=0、CUR=1、END=2。64bit file size は将来の ABI version で扱う。
 
-### 6.2 syscall中のpreemptionと待ち
+### 6.3 syscall中のpreemptionと待ち（拡張方針）
 
-最初は kernel を single CPU の非再入構造にする。syscall 実行中は Timer D の tick 更新と
+現行は process ごとの syscall guard と、sleep/wait の明示的な切替を使う。
+この guard だけで新しい VFS/IOCS 処理を安全に再入できるとは扱わない。
+I/O 導入時には、single CPU 上で共有 backend を直列化する範囲を決める。syscall 実行中は Timer D の tick 更新と
 wakeup 通知は続けるが、実行中 kernel 処理を別 process の kernel 処理で再入させない。
 `in_kernel`を scheduler と共有し、Timer D による switch を module 実行時に限定する。
 kernel 内の queue 更新は短い IRQ 禁止区間で行う。
@@ -627,6 +646,17 @@ disk full/read-only device/I/O error を処理する。close/exit 時の flush e
 
 ## 8. 教育用shellとデモmodule
 
+以下は完成形のコマンド契約。現行は `run counter [&]`、`ps`、`modules`、`mem`、
+`kill PID`、`wait PID`、scheduler の `trace` と `debug` を提供する。
+可変 counter 引数、module 名だけの起動、`proc`、file/load コマンドは未実装。
+現行 `modules` は image/code/entry、サイズ、ref を表示し、`mem` は free/largest free のみ。
+process ごとの所有量や PID 付き trace は後続で追加する。
+現行は全コマンドで末尾 `&` を空白の有無に依存せず解析する。
+`run counter&` / `run counter &` は module を背景起動する。組み込みコマンドも
+独立した kernel-entry 子 process で背景実行する。引数/stack と PID は独立し、module/GOT は持たない。
+`exit&` は親 CLI を終了しない。`wait PID&` は親の child を回収できず終了値 127 となる。
+一般 quote/escape parser、fork による任意 memory/environment の複製、job control は未実装。
+
 | コマンド | 最小の機能 |
 | --- | --- |
 | `counter --start 0 --step 1 --ticks 20 &` | 共有PIC counterをbackground起動しPIDを表示 |
@@ -642,7 +672,7 @@ disk full/read-only device/I/O error を処理する。close/exit 時の flush e
 | `cat path` | RAM filesystem以降でfileをstdoutへ読み出す |
 | `exit` | 現在のshellの終了規則に従う |
 
-parser の初版は最大 16 token、入力行 128 byte、末尾`&`、単一の stdout `>`または`>>`、
+parser の初版は最大 16 token、入力行 128 byte、末尾`&`（直前の空白は不要）、単一の stdout `>`または`>>`、
 単純な single/double quote をサポートする。`>>`を`>`より先に認識し、quote 内の記号は
 文字列として扱う。空の quote は空引数になる。未閉 quote、複数 redirect、未対応の
 `|`/`<`/`2>`/`;`等は構文 error にし、一部だけ解釈して実行しない。
@@ -692,20 +722,37 @@ FAT を待たず、RAM filesystem までで process と redirect を学べる状
 | phase | 実装 | 完了条件 |
 | --- | --- | --- |
 | 0 | RAM arena境界、idle、task取消/待ち解除/別stack回収、bootstrap PID対応 | 実装済み。最後の非idle taskがsleep/exitしても停止せず、slotを再利用する |
-| 1 | module header/packer、GOT/fixup、Table、allocator、組み込みcounter image | validator/Table/allocator/image試験を実装済み。外部packerと`.s9m` load/unloadは未実装 |
+| 1 | module header/packer、GOT/fixup、Table、allocator、組み込みcounter image | validator/Table/allocator/image 試験は実装済み。次は file I/O に依存せず ASM ELF→S9M1→組み込みで packer を確認する。外部 file load は phase 4 以降 |
 | 2 | trap ABI、process frame、spawn、exit/wait/kill、guard | syscall・遅延kill・孤児再親化を実装済み。同一PICのA5/GOT/stack分離と回収をQEMUで確認 |
-| 2C | C module用build、start stub、最小runtime、C counter | GCCで作ったglobal/BSS/pointer初期値が2 processで独立する |
-| 3 | shell parser、background/foreground、ps/proc/modules/mem/trace | 最小foreground/background counter、kill/wait、Ctrl-C経路を実装済み。一般argv parser、module/file load、process groupは未実装 |
-| 4 | fd/open-file/node、TTY/null/romfs、継承/dup2、RAM filesystem | stdoutをconsole/fileへ同じwrite syscallで出力できる |
+| 2C | C module build、start stub、process-control wrapper、出力なしの C counter | GCC global/BSS/pointer 初期値が 2 process で独立し、exit/sleep/PID を実 syscall で確認する。write/整数出力は phase 4 で追加 |
+| 3 | shell parser、background/foreground、ps/proc/modules/mem/trace | 最小 foreground/background counter、組み込みの背景実行、ps/modules/mem、kill/wait、Ctrl-C 経路を実装済み。quote/一般 argv parser、module/file load、process group は未実装 |
+| 4 | fd/open-file/node、TTY/null/romfs、継承/dup2、RAM filesystem、外部 module read | stdout を console/file へ同じ write syscall で出力し、ROM reader から bounded load できる |
 | 5 | `>`/`>>`/cat、node lock、partial write/error handling | 同じfileに2 processが追記しても既存内容を上書きしない |
 | 6 | FAT12 read-only、別disk mount、fileからmodule load | FAT fileからmoduleを読み、同じloaderで共有実行できる |
 | 7 | FAT create/truncate/write/append、flush/fsync | 再mount後もredirect内容とfile size/cluster chainが一致 |
 | 後続 | C runtime拡張、子shell、user mode、pipe/shared subroutine module | 前段のABIと所有権を維持して個別に設計・検証 |
 
-phase 0〜3 を最初の multi process release、phase 4〜5 を redirect release とする。
+phase 0〜3 を C module まで学べる multi process release、phase 4〜5 を redirect release とする。
+現在は内蔵 ASM multi-process subset が完成し、phase 1 の packer と phase 2C は未完了。
+section 3.4 の `ss_write` を使う C 例は phase 4 の TTY/write 導入後に実行する。
+それ以前は private data を snapshot/test で観察する出力なし C module を使う。
+外部 loader は phase 4 の bounded read-only ROM reader から開始し、phase 6 で FAT reader を接続する。
 PID 1 での`.xdf` exit 拒否と`.x`終了復元は両 release の必須条件。
 
-### 9.1 追加予定のファイル
+### 9.1 次の実装単位
+
+一つの変更で一つの境界を完成させる。次は以下の順で進める。
+
+1. ASM module の ELF を packer で S9M1 に変換し、生成 blob を組み込む。既存 validator を再利用し、未知 relocation と範囲超過を拒否する。
+2. 出力なし C module と start/process-control wrapper を同じ pipeline に載せる。異なる load 位置、2 process、GOT/BSS/pointer 初期値、終了回収を検証する。
+3. `proc` と一般 argv parser を追加する。解析 error では process や file に副作用を起こさない。
+4. fd/TTY/null/read-only ROM reader を追加する。外部 image の読取りは size 上限と short read を処理し、検証完了まで registry の READY として公開しない。
+5. RAM filesystem と redirect を追加し、取消・partial write・append 競合・全資源の baseline 復帰を確認する。
+
+各変更で現行機能表、所有権契約、公開 ABI と対応テストを揃える。
+予定の file 名は次の表に含む。既存 file を二重に追加しない。
+
+### 9.2 ファイル配置
 
 ```text
 ssos/include/ssos9/   syscall.h, module_format.h, user.h
@@ -713,7 +760,7 @@ ssos/os/process/     process.c/.h
 ssos/os/module/      module.c/.h, image.c
 ssos/os/mem/         arena.c/.h
 ssos/os/io/          fd.c, vfs.c, tty.c, null.c, romfs.c, ramfs.c
-ssos/os/kernel/      syscall.c, syscall_entry.s, process_frame.h
+ssos/os/kernel/      syscall.c, syscall_entry.s, context_frame.h
 ssos/modules/        counter.s, counter.c, spin.s, module.ld, Makefile
 ssos/userlib/        start.s, syscall.s, memory/string/整数出力関数
 tools/               mkmodule.py
@@ -727,7 +774,7 @@ header の offset assertion を production と QEMU で共有する。`source ~/
 cross toolchain を使い、`make install`は従来どおり`ssos9.x/ssos9.xdf`を`~/tmp`へコピーする。
 初期 module blob の組み込みでは boot の読込 sector 数と kernel image 容量制限も確認する。
 
-### 9.2 検証項目
+### 9.3 検証項目
 
 | 層 | 対象 |
 | --- | --- |

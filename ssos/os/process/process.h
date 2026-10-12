@@ -36,6 +36,11 @@ int16_t ss_process_init(SSTask* root_task);
 int16_t ss_process_spawn(SSProcessId parent, SSModuleId module_id,
                          uint16_t argc, const char* const argv[],
                          SSProcessId* pid);
+/* Trusted kernel-code child, with a copied argument and private stack.
+ * Entry returns through the scheduler's normal task-exit/reaper path. */
+int16_t ss_process_spawn_kernel(SSProcessId parent, const char* name,
+                                void* (*entry)(void*), const void* argument,
+                                uint16_t argument_size, SSProcessId* pid);
 int16_t ss_process_snapshot(SSProcessId pid, SSProcessSnapshot* snapshot);
 int16_t ss_process_snapshot_at(uint16_t index, SSProcessSnapshot* snapshot);
 int16_t ss_process_kill(SSProcessId pid);

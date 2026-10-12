@@ -2,7 +2,7 @@
 
 正本は `ssos/os/kernel/scheduler_abi.h`（TCB 配置）、`context_frame.h`（例外 frame）、`scheduler.c`（queue と task 状態）です。preemptive 版だけをビルドします。
 
-Timer D 割り込みでは MC68000 が SR と PC を stack へ積み、`interrupts.s`が d0–d7/a0–a6 を保存して scheduler を呼びます。scheduler は選択した task の保存 SP を復元し、`rte`で再開します。task が明示 yield した場合も同じ割り込み経路を使います。QEMU 用 port はこの経路を模擬しますが、実 MFP 割り込みの代替ではありません。
+Timer D 割り込みでは MC68000 が SR と PC を stack へ積み、`interrupts.s`が d0–d7/a0–a6 を保存して scheduler を呼びます。scheduler は選択した task の保存 SP を復元し、`rte`で再開します。明示 yield は PC→SR と register を手動で積み、`resume_type` により SR/PC を手動復元して再開します。Timer D の SR→PC frame と混同しないでください。QEMU 用 port はこの経路を模擬しますが、実 MFP 割り込みの代替ではありません。
 
 `SSTask`と assembly の offset は C の static assert で照合します。通常の割り込み frame は SR・PC を含む 6 bytes です。bus/address error の特殊 frame を復帰できる設計ではありません。
 

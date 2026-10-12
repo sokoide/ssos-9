@@ -225,6 +225,67 @@ int16_t ss_process_spawn(SSProcessId parent, SSModuleId module_id,
     return SS_OK;
 }
 
+int16_t ss_process_spawn_kernel(SSProcessId parent, const char* name,
+                                void* (*entry)(void*), const void* argument,
+                                uint16_t argument_size, SSProcessId* pid) {
+    if (name == NULL || entry == NULL || argument == NULL || pid == NULL ||
+        argument_size == 0 || argument_size > SS_PROCESS_MAX_ARG_BYTES)
+        return SS_ERR_PARAM;
+    if (SS_TASK_STACK > UINT16_MAX)
+        return SS_ERR_LIMIT;
+    uint16_t slot;
+    SSProcessId new_pid;
+    int16_t status = reserve_slot(parent, &new_pid, &slot);
+    if (status != SS_OK)
+        return status;
+    uint32_t stack_offset = ((uint32_t)argument_size + 3u) & ~3u;
+    uint8_t* block = ss_memory_alloc(stack_offset + SS_TASK_STACK);
+    if (block == NULL) {
+        clear_slot(slot);
+        return SS_ERR_LIMIT;
+    }
+    for (uint16_t i = 0; i < argument_size; i++)
+        block[i] = ((const uint8_t*)argument)[i];
+    SSTaskInfo info = {entry,
+                       8,
+                       SS_CTX_NORMAL,
+                       SS_TASK_STACK,
+                       block + stack_offset + SS_TASK_STACK - 4u,
+                       block};
+    uint16_t task_id = ss_task_create(&info);
+    if (task_id == 0 || task_id > SS_MAX_TASKS) {
+        ss_memory_free(block);
+        clear_slot(slot);
+        return (int16_t)task_id;
+    }
+    uint16_t saved_sr = ss_irq_save();
+    SSProcessSnapshot* process = &process_table[slot];
+    process->task_id = task_id;
+    process->module_id = 0;
+    process->data_base = block;
+    process->got_base = NULL;
+    process->stack_low = block + stack_offset;
+    process->stack_high = block + stack_offset + SS_TASK_STACK;
+    copy_name(process->name, name);
+    process_tasks[slot] = &tcb_table[task_id - 1];
+    process_blocks[slot] = block;
+    process_in_syscall[slot] = 0;
+    process_kill_pending[slot] = 0;
+    status = ss_task_start(task_id);
+    if (status == SS_OK)
+        process->state = SS_PROCESS_READY;
+    ss_irq_restore(saved_sr);
+    if (status != SS_OK) {
+        ss_task_cancel(task_id);
+        ss_task_release_terminated(task_id);
+        ss_memory_free(block);
+        clear_slot(slot);
+        return status;
+    }
+    *pid = new_pid;
+    return SS_OK;
+}
+
 int16_t ss_process_snapshot(SSProcessId pid, SSProcessSnapshot* snapshot) {
     if (snapshot == NULL)
         return SS_ERR_PARAM;

@@ -227,6 +227,22 @@ int16_t ss_module_snapshot(SSModuleId id, SSModuleSnapshot* snapshot) {
     return SS_OK;
 }
 
+int16_t ss_module_snapshot_at(uint16_t index, SSModuleSnapshot* snapshot) {
+    if (snapshot == NULL)
+        return SS_ERR_PARAM;
+    if (index >= SS_MODULE_MAX_MODULES)
+        return SS_ERR_ID;
+    uint16_t saved_sr = ss_irq_save();
+    const SSModuleEntry* entry = &module_table[index];
+    if (entry->state != MODULE_READY) {
+        ss_irq_restore(saved_sr);
+        return SS_ERR_ID;
+    }
+    fill_snapshot(entry, snapshot);
+    ss_irq_restore(saved_sr);
+    return SS_OK;
+}
+
 int16_t ss_module_acquire(SSModuleId id, SSModuleSnapshot* snapshot) {
     if (snapshot == NULL)
         return SS_ERR_PARAM;
