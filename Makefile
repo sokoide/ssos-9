@@ -5,7 +5,7 @@ SUBDIRS := tools/makedisk
 ASM_FORMATTER ?= asmfmt
 CLANG_FORMAT ?= clang-format
 
-.PHONY: $(TOPTARGETS) all debug format test test-asm test-qemu verify verify-check
+.PHONY: $(TOPTARGETS) all debug format loc test test-asm test-qemu verify verify-check
 
 usage:
 	@echo "SSOS-9 build targets (preemptive only):"
@@ -18,6 +18,7 @@ usage:
 	@echo "  make clean            Remove build outputs"
 	@echo "  make format           Format Markdown, C, and assembly sources"
 	@echo "  make debug            Build .x and create ELF disassembly/symbol/map files"
+	@echo "  make loc              Count source lines, excluding node_modules and build outputs"
 
 .PHONY: usage
 
@@ -44,6 +45,9 @@ format:
 	@echo "Formatting assembly files using $(ASM_FORMATTER)..."
 	@find . -name '*.s' -not -path './.git/*' -print0 | xargs -0 $(ASM_FORMATTER) -w
 	@find . -name '*.s' -not -path './.git/*' -print0 | xargs -0 perl -pi -e 's/^(\s*)\/\/(.*)$$/$$1|$$2/'
+
+loc:
+	gocloc --not-match-d='node_modules|build|\.git' .
 
 # Native C tests and QEMU asm samples. See tests/README.md.
 test:
