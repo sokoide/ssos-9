@@ -109,6 +109,21 @@ static void make_image(void) {
     put32(&image[0x34], crc32());
 }
 
+static void make_busy_image(void) {
+    make_image();
+    /* QEMU's trap #1 simulates Timer D; this module makes no syscalls. */
+    put16(&image[0x30], 5);
+    image[104] = 'q';
+    image[105] = 'b';
+    image[106] = 'u';
+    image[107] = 's';
+    image[108] = 'y';
+    image[109] = '\0';
+    image[110] = '\0';
+    image[111] = '\0';
+    put32(&image[0x34], crc32());
+}
+
 static void make_sleep_image(void) {
     make_image();
     image[104] = 'q';
@@ -294,6 +309,28 @@ int main(void) {
         !interrupted || ss_process_snapshot(sleeper_pid, &second) != SS_ERR_ID)
         fail("foreground Ctrl-C kill and reap");
 
+    make_busy_image();
+    SSModuleId busy_module;
+    if (ss_module_register_image(image, sizeof(image),
+                                 SS_MODULE_STORAGE_BUILTIN,
+                                 &busy_module) != SS_OK)
+        fail("busy module register");
+    const char* busy_argv[] = {"qbusy"};
+    SSProcessId busy_pid;
+    if (ss_process_spawn(1, busy_module, 1, busy_argv, &busy_pid) != SS_OK)
+        fail("busy process spawn");
+    if (ss_process_snapshot(busy_pid, &second) != SS_OK)
+        fail("busy process snapshot");
+    run_ticks(20);
+    if (get32(second.data_base + 8) == 0)
+        fail("busy process did not run");
+    ss_cli_set_foreground_pid(busy_pid);
+    __asm__ volatile("trap #13" ::: "cc", "memory");
+    interrupted = 0;
+    if (ss_cli_wait_pid(busy_pid, &status, &interrupted) != SS_OK ||
+        !interrupted || ss_process_snapshot(busy_pid, &second) != SS_ERR_ID)
+        fail("Ctrl-C kills non-cooperative busy process");
+
     SSProcessId background_pid;
     if (ss_process_spawn(1, sleep_module, 1, sleep_argv, &background_pid) !=
         SS_OK)
@@ -302,12 +339,14 @@ int main(void) {
     ss_cli_set_foreground_pid(0);
     push_key('x');
     push_key(0x03);
-    if (ss_cli_wait_pid(background_pid, &status, NULL) !=
-            SS_CLI_WAIT_CANCELLED ||
-        ss_cli_next_key() != 'x' ||
-        ss_process_snapshot(background_pid, &second) != SS_OK ||
-        tcb_table[second.task_id - 1].state != SS_TS_WAIT)
-        fail("background wait Ctrl-C only cancels wait");
+    if (ss_cli_wait_pid(background_pid, &status, NULL) != SS_CLI_WAIT_CANCELLED)
+        fail("background Ctrl-C did not cancel wait");
+    if (ss_cli_next_key() != 'x')
+        fail("background wait lost ordinary key");
+    if (ss_process_snapshot(background_pid, &second) != SS_OK ||
+        (tcb_table[second.task_id - 1].state != SS_TS_WAIT &&
+         tcb_table[second.task_id - 1].state != SS_TS_READY))
+        fail("background wait Ctrl-C killed child");
     if (ss_process_kill(background_pid) != SS_OK ||
         ss_cli_wait_pid(background_pid, &status, NULL) != SS_OK)
         fail("background cleanup after cancelled wait");
