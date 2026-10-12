@@ -1,6 +1,6 @@
 # SSOS-9: OS-9型マルチプロセス・ローダー実装計画
 
-状態: 初期 CLI multi-process を実装済み。S9M1 validator/registry、private data fixup、合成 SR/PC frame、Process Table、built-in PIC counter、spawn/kill/wait、CLI、初期`trap #0` process-control/info syscall、syscall 境界での遅延 kill、孤児の PID 1 への再親化を実装。
+状態: 初期 CLI multi-process を実装済み。S9M1 validator/registry、private data fixup、合成 SR/PC frame、Process Table、built-in PIC counter、foreground/background spawn、wait/kill、Ctrl-C による foreground kill と wait 取消、初期`trap #0` process-control/info syscall、syscall 境界での遅延 kill、孤児の PID 1 への再親化を実装。
 外部 module loader/packer、GCC C runtime/wrapper、VFS/redirect、FAT は未実装。
 
 対象: 16MHz 以上の MC68000 と 12MiB RAM を必須とする X68000、CLI 専用、Timer D による preemptive scheduling。
@@ -564,10 +564,12 @@ FAT を待たずに fd 契約と shell parser を確立する。FAT 未実装時
 spawn で引き継ぐのは fd 0/1/2 だけとする。parent の指定した source fd を child の標準 fd へ
 対応付け、fd 3 以上は初版では継承しない。temporary redirect fd の不要な ref を残さない。
 
-TTY input は foreground owner だけが読める。background process の stdin は既定で
-`/dev/null`（read は EOF）、stdout/stderr は TTY を継承する。foreground spawn では
-TTY ownership を child へ移し、shell は wait する。`Ctrl-C`は foreground child への
-kill 要求として TTY backend が処理する。root shell 自体には送らない。
+TTY input は foreground owner だけが読める。現行 CLI は`run counter`を foreground、
+`run counter &`を background として扱う。Ctrl-C/BREAK は TRAP #13 で pending flag へ記録し、
+foreground child の kill 要求または`wait PID`の待機取消として shell task が処理する。
+root shell 自体には kill 要求を送らない。background process の stdin は既定で`/dev/null`
+（read は EOF）、stdout/stderr は TTY を継承する。foreground spawn では TTY ownership を child へ
+移し、shell は wait する。
 
 TTY write は上限付き buffer へコピーして直列化し、単一の drain task が IOCS へ出力する。
 buffer 満杯なら WAIT_IO へ入る。shell の入力行を保ち、background 出力後に prompt と
@@ -683,7 +685,7 @@ saved PC/SP は最後の退避時点の値であり、実行中 process の瞬�
 順序は上から。idle/reaper 起動、cancel/release、stack pool 設定共有、first-fit arena、
 arena platform 初期化、S9M1 validator/固定長 Module Table、private data/fixup、合成 SR/PC frame、
 PID 1 と built-in PIC counter の spawn/kill/wait、`ps`/`run`/`kill`/`wait`コマンド、
-version/PID/parent、spawn/exit/wait/kill/sleep/proc_info/proc_list syscall entry/dispatch、syscall 中 kill の安全境界、孤児 process 再親化まで実装済み。
+version/PID/parent、spawn/exit/wait/kill/sleep/proc_info/proc_list syscall entry/dispatch、syscall 中 kill の安全境界、孤児 process 再親化、foreground Ctrl-C 処理まで実装済み。
 外部 module loader/packer、GCC C runtime/wrapper 以降は未完了。
 FAT を待たず、RAM filesystem までで process と redirect を学べる状態にする。
 
@@ -693,7 +695,7 @@ FAT を待たず、RAM filesystem までで process と redirect を学べる状
 | 1 | module header/packer、GOT/fixup、Table、allocator、組み込みcounter image | validator/Table/allocator/image試験を実装済み。外部packerと`.s9m` load/unloadは未実装 |
 | 2 | trap ABI、process frame、spawn、exit/wait/kill、guard | syscall・遅延kill・孤児再親化を実装済み。同一PICのA5/GOT/stack分離と回収をQEMUで確認 |
 | 2C | C module用build、start stub、最小runtime、C counter | GCCで作ったglobal/BSS/pointer初期値が2 processで独立する |
-| 3 | shell parser、background/foreground、ps/proc/modules/mem/trace | background起動中にshellを操作でき、任意childをkill/waitできる |
+| 3 | shell parser、background/foreground、ps/proc/modules/mem/trace | 最小foreground/background counter、kill/wait、Ctrl-C経路を実装済み。一般argv parser、module/file load、process groupは未実装 |
 | 4 | fd/open-file/node、TTY/null/romfs、継承/dup2、RAM filesystem | stdoutをconsole/fileへ同じwrite syscallで出力できる |
 | 5 | `>`/`>>`/cat、node lock、partial write/error handling | 同じfileに2 processが追記しても既存内容を上書きしない |
 | 6 | FAT12 read-only、別disk mount、fileからmodule load | FAT fileからmoduleを読み、同じloaderで共有実行できる |

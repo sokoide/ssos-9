@@ -22,6 +22,9 @@ save_interrupts:
 	|      User trap #0 vector, owned temporarily by the syscall ABI.
 	move.l 0x080, d0
 	move.l d0, 32(a0)
+	|      TRAP #13 Ctrl-C/BREAK vector.
+	move.l 0x0b4, d0
+	move.l d0, 36(a0)
 
 	|      Save MFP registers
 	lea    0xe88007, a1
@@ -96,6 +99,8 @@ ss_restore_interrupts:
 	move.l d0, 0x130
 	move.l 32(a0), d0
 	move.l d0, 0x080
+	move.l 36(a0), d0
+	move.l d0, 0x0b4
 
 	|      Restore MFP registers
 	move.b 12(a0), d0

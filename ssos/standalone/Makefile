@@ -10,7 +10,7 @@ CDEFINES=-DSS_BUILD_PREEMPTIVE
 
 include ../common-sources.mk
 SRCS = main.c $(addprefix ../os/,$(SS_CORE_SRCS) $(SS_TARGET_SRCS))
-ASRCS=	../os/kernel/preemptive/interrupts.s ../os/kernel/mfp_state.s \
+ASRCS=	../os/kernel/preemptive/interrupts.s ../os/kernel/ctrl_c.s ../os/kernel/mfp_state.s \
 	../os/kernel/syscall_entry.s
 
 OBJDIR=build

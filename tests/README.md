@@ -3,9 +3,13 @@
 The OS build is preemptive-only and CLI-only. Automated checks exercise the
 scheduler, process/module primitives, and 68000 assembly samples. The root Makefile exposes:
 
+- For SSOS-9 feature changes, normally update and run `make test` and
+  `make test-qemu`; add cases to the suite that covers the changed behavior.
 - `make test`: native C tests.
 - `make test-qemu`: preemptive scheduler/context-switch tests under `qemu-system-m68k`.
-- `make test-asm`: standalone assembly samples under QEMU.
+- `make test-asm`: standalone assembly samples under QEMU, mainly for checking
+  the examples and test environment. Run it when changing those samples or
+  their execution environment; it is not normally part of an OS feature change.
 - `make verify-check`: reports target artifacts affected by the current changes.
 
 The native suite exercises scheduler queue and lifecycle logic with host mocks.
@@ -13,9 +17,11 @@ The QEMU suite drives production scheduler and arena C code and a QEMU port of
 the Timer D context-switch path. It covers round-robin/preemption, register
 preservation, sleeping with an idle task, task exit and slot reuse, cancellation
 of a waiting task, arena split/coalesce, S9M1 range/CRC validation, module
-reference/unload behavior, private data initialization/fixups, and restoring a
+reference/unload behavior, private data initialization/fixups, restoring a
 synthetic process SR/PC frame with A3/A5 values, and two processes running the
-same PIC counter code with independent data/GOT/stack allocations. QEMU does not run the
-production MFP interrupt handler on X68000 hardware.
+same PIC counter code with independent data/GOT/stack allocations. Process
+integration also tests Ctrl-C killing a foreground process, Ctrl-C cancelling
+only a background `wait`, and preserving ordinary keys typed during that wait.
+QEMU does not run the production MFP interrupt handler on X68000 hardware.
 
 Cross-build success verifies assembly, compilation, linking, and XDF creation. It does not establish correct MFP/Timer D timing, IOCS console behavior, Human68K return behavior, IPL startup, or real hardware/emulator operation. Record those checks separately with the exact environment and artifact hashes.

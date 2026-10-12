@@ -1,12 +1,19 @@
 .section .text
 .align   2
 .globl   ss_test_install_syscall_vector
+.globl   ss_test_install_ctrl_c_vector
 .globl   ss_test_syscall_roundtrip
 .extern  ss_syscall_entry
+.extern  ss_ctrl_c_trap_handler
 
 ss_test_install_syscall_vector:
 	lea    ss_syscall_entry, a0
 	move.l a0, 0x80
+	rts
+
+ss_test_install_ctrl_c_vector:
+	lea    ss_ctrl_c_trap_handler, a0
+	move.l a0, 0xb4
 	rts
 
 ss_test_syscall_roundtrip:

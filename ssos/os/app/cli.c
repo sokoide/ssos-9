@@ -5,6 +5,7 @@
 #include "../module/builtin.h"
 #include "../module/module.h"
 #include "../process/process.h"
+#include "cli_wait.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -229,9 +230,9 @@ static int run_process_command(char* line) {
 
     if (strcmp(tokens[0], "ps") == 0 && count == 1) {
         show_processes();
-    } else if (strcmp(tokens[0], "run") == 0 && count == 3 &&
-               strcmp(tokens[1], "counter") == 0 &&
-               strcmp(tokens[2], "&") == 0) {
+    } else if (strcmp(tokens[0], "run") == 0 &&
+               (count == 2 || (count == 3 && strcmp(tokens[2], "&") == 0)) &&
+               strcmp(tokens[1], "counter") == 0) {
         SSModuleId module_id;
         SSProcessId pid;
         const char* argv[] = {"counter"};
@@ -239,9 +240,32 @@ static int run_process_command(char* line) {
             ss_process_spawn(1, module_id, 1, argv, &pid) != SS_OK) {
             print("Unable to start counter.\r\n");
         } else {
-            print("Started counter as PID ");
-            print_u32(pid);
-            print("\r\n");
+            if (count == 3) {
+                print("Started counter as PID ");
+                print_u32(pid);
+                print("\r\n");
+            } else {
+                uint16_t exit_status;
+                int interrupted = 0;
+                ss_cli_set_foreground_pid(pid);
+                int16_t status =
+                    ss_cli_wait_pid(pid, &exit_status, &interrupted);
+                ss_cli_set_foreground_pid(0);
+                if (status == SS_OK) {
+                    if (interrupted)
+                        print("^C\r\n");
+                    print("PID ");
+                    print_u32(pid);
+                    print(interrupted ? " interrupted\r\n"
+                                      : " exited with status ");
+                    if (!interrupted) {
+                        print_u32(exit_status);
+                        print("\r\n");
+                    }
+                } else {
+                    print("Unable to wait for PID.\r\n");
+                }
+            }
         }
     } else if (strcmp(tokens[0], "kill") == 0 && count == 2) {
         SSProcessId pid;
@@ -256,9 +280,11 @@ static int run_process_command(char* line) {
             print("Invalid PID.\r\n");
             return 0;
         }
-        int16_t status;
-        while ((status = ss_process_wait(1, pid, &exit_status)) == SS_ERR_STATE)
-            (void)ss_task_sleep(1);
+        int16_t status = ss_cli_wait_pid(pid, &exit_status, NULL);
+        if (status == SS_CLI_WAIT_CANCELLED) {
+            print("^C\r\n");
+            return 0;
+        }
         if (status == SS_OK) {
             print("PID ");
             print_u32(pid);
@@ -316,7 +342,7 @@ int16_t ss_init(void) {
 }
 
 static void show_help(void) {
-    print("Commands: help, uptime, ps, run counter &, kill PID, wait PID, ");
+    print("Commands: help, uptime, ps, run counter [&], kill PID, wait PID, ");
     print("debug, trace, clear, version, exit\r\n");
 }
 
@@ -388,9 +414,14 @@ int ss_run(void) {
     char line[64];
     unsigned used = 0;
     for (;;) {
-        if (_iocs_b_keysns() <= 0)
+        if (ss_cli_poll_ctrl_c()) {
+            used = 0;
+            print("^C\r\n> ");
             continue;
-        int key = _iocs_b_keyinp() & 0xff;
+        }
+        int key = ss_cli_next_key();
+        if (key < 0)
+            continue;
         if (key == '\r' || key == '\n') {
             line[used] = '\0';
             print("\r\n");
@@ -400,6 +431,9 @@ int ss_run(void) {
             }
             used = 0;
             print("> ");
+        } else if (key == 0x03) {
+            used = 0;
+            print("^C\r\n> ");
         } else if (key == 0x08 || key == 0x7f) {
             if (used != 0) {
                 used--;

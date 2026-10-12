@@ -35,6 +35,9 @@ ss_set_interrupts:
 	|      trap #0 is reserved for the SSOS-9 syscall ABI.
 	lea    ss_syscall_entry, a0
 	move.l a0, 0x80
+	|      Route the keyboard's TRAP #13 Ctrl-C/BREAK notification to a flag setter.
+	lea    ss_ctrl_c_trap_handler, a0
+	move.l a0, 0xb4
 
 	|      MFP registers: VR=$E88017, IERB=$E88009, ISRB=$E88011
 	|      IMRB=$E88015, TCDCR=$E8801D, TDDR=$E88025.
@@ -85,6 +88,7 @@ ss_set_interrupts:
 	|       ============================================================
 	.globl  ss_timerd_handler
 	.extern ss_syscall_entry
+	.extern ss_ctrl_c_trap_handler
 
 	|       ============================================================
 	|       TimerD handler - 5ms tick; switch every 10 ticks

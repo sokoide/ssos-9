@@ -9,6 +9,7 @@ include ../common-sources.mk
 SRCS = $(SS_CORE_SRCS) $(SS_TARGET_SRCS) kernel/premain.c
 ASRCS= \
 	kernel/entry.s \
+	kernel/ctrl_c.s \
 	kernel/mfp_state.s \
 	kernel/syscall_entry.s \
 	kernel/preemptive/interrupts.s

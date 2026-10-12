@@ -1,5 +1,6 @@
 /* Run one shared S9M1 code image with independent A5/GOT state. */
 
+#include "../../../ssos/os/app/cli_wait.h"
 #include "builtin.h"
 #include "main_task.h"
 #include "process.h"
@@ -10,8 +11,29 @@
 
 static SSTask main_tcb;
 static uint8_t image[124];
+static uint8_t fake_keys[8];
+static uint8_t fake_key_head;
+static uint8_t fake_key_count;
 extern void ss_test_install_syscall_vector(void);
+extern void ss_test_install_ctrl_c_vector(void);
 extern int32_t ss_test_syscall_roundtrip(void);
+
+int _iocs_b_keysns(void) { return fake_key_count; }
+
+int _iocs_b_keyinp(void) {
+    if (fake_key_count == 0)
+        return 0;
+    uint8_t key = fake_keys[fake_key_head++ % sizeof(fake_keys)];
+    fake_key_count--;
+    return key;
+}
+
+static void push_key(uint8_t key) {
+    uint8_t tail =
+        (uint8_t)((fake_key_head + fake_key_count) % sizeof(fake_keys));
+    fake_keys[tail] = key;
+    fake_key_count++;
+}
 
 static int32_t call_sys(uint32_t number, uint32_t request) {
     register uint32_t d0 __asm__("d0") = number;
@@ -129,6 +151,7 @@ static void run_ticks(unsigned count) {
 int main(void) {
     tty_puts("START process-spawn\n");
     ss_test_install_syscall_vector();
+    ss_test_install_ctrl_c_vector();
     if (ss_test_syscall_roundtrip() != 0)
         fail("syscall register preservation");
     if (ss_memory_init() != SS_OK)
@@ -262,14 +285,32 @@ int main(void) {
     run_ticks(8);
     if (ss_process_snapshot(sleeper_pid, &second) != SS_OK ||
         second.task_id == 0 ||
-        tcb_table[second.task_id - 1].state != SS_TS_WAIT ||
-        call_sys(SS9_SYS_KILL, sleeper_pid) != SS_OK)
-        fail("deferred kill sleeping syscall");
-    SS9WaitRequest sleep_wait = {sleeper_pid, 0, 0};
-    if (call_sys(SS9_SYS_WAIT, (uint32_t)(uintptr_t)&sleep_wait) !=
-            (int32_t)sleeper_pid ||
-        sleep_wait.exit_status != 0)
-        fail("deferred kill reap");
+        tcb_table[second.task_id - 1].state != SS_TS_WAIT)
+        fail("sleep process did not block");
+    ss_cli_set_foreground_pid(sleeper_pid);
+    __asm__ volatile("trap #13" ::: "cc", "memory");
+    int interrupted = 0;
+    if (ss_cli_wait_pid(sleeper_pid, &status, &interrupted) != SS_OK ||
+        !interrupted || ss_process_snapshot(sleeper_pid, &second) != SS_ERR_ID)
+        fail("foreground Ctrl-C kill and reap");
+
+    SSProcessId background_pid;
+    if (ss_process_spawn(1, sleep_module, 1, sleep_argv, &background_pid) !=
+        SS_OK)
+        fail("background sleep process spawn");
+    run_ticks(8);
+    ss_cli_set_foreground_pid(0);
+    push_key('x');
+    push_key(0x03);
+    if (ss_cli_wait_pid(background_pid, &status, NULL) !=
+            SS_CLI_WAIT_CANCELLED ||
+        ss_cli_next_key() != 'x' ||
+        ss_process_snapshot(background_pid, &second) != SS_OK ||
+        tcb_table[second.task_id - 1].state != SS_TS_WAIT)
+        fail("background wait Ctrl-C only cancels wait");
+    if (ss_process_kill(background_pid) != SS_OK ||
+        ss_cli_wait_pid(background_pid, &status, NULL) != SS_OK)
+        fail("background cleanup after cancelled wait");
 
     tty_puts("OK shared code/private A5 data\n");
     for (;;) tick();

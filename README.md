@@ -20,10 +20,12 @@ make install
 
 - `help`: コマンド一覧
 - `uptime`: カーネル worker の起床回数
+- `run counter`: 内蔵 PIC counter を foreground 起動。Ctrl-C/Break で終了要求を出し、回収後に prompt へ戻る
 - `run counter &`: 内蔵 PIC counter をバックグラウンド起動
 - `ps`: PID、親 PID、状態、共有 module、private data/GOT のアドレスを表示
 - `kill PID`: 子 process を停止
-- `wait PID`: 子 process の回収と終了状態を待つ
+- `wait PID`: 子 process の回収と終了状態を待つ。Ctrl-C/Break は待機だけを取り消し、子は実行を続ける
+- prompt での Ctrl-C/Break: 入力中の行を破棄して prompt を再表示
 - `debug`: tick、task stack 残量、MFP Timer D 設定を表示
 - `trace`: 直近 16 件の task create/start/sleep/wake/switch/exit を表示
 - `clear`: IOCS テキスト画面を消去
@@ -71,5 +73,13 @@ Human68K の他の MFP source の enable/mask 状態を変更しません。MFP 
 [マルチプロセス・ローダー実装計画](docs/multiprocess-loader-plan.md)に、共有 PIC、process lifecycle、background 起動、syscall、将来の FAT と stdout の`>`/`>>` redirect の設計と実装順序をまとめています。
 
 ## 検証の範囲
+
+### テストコマンド
+
+- SSOS-9 の機能変更では、基本的に `make test` と `make test-qemu` を変更・実行します。変更箇所に合わせて native と統合テストへケースを追加してください。
+- `make test`: host 上の native C unit test。scheduler の純粋な状態遷移を速く検証し、68000 命令や割り込み経路は実行しません。
+- `make test-asm`: QEMU で独立した 68000 assembly の基本例を実行します。主に例題と実行環境の確認用で、通常の OS 機能変更では対象にしません。assembly 例題やその実行環境を変更した場合に実行します。OS の scheduler/process 統合は検証しません。
+- `make test-qemu`: QEMU `m68000` 上で実際の scheduler/process C code と context-switch assembly を検証します。Timer D の代替は同期 trap のため、実 MFP 非同期割り込みや Human68K/IOCS 実機動作は検証しません。
+- `make verify`: native、assembly、QEMU の全テストと `.x`/`.xdf` クロスビルドを実行します。
 
 クロスビルド成功は、コンパイル・リンク・XDF 生成の確認です。Timer D/MFP 割り込み、IOCS コンソール、Human68K 上での起動、実機・エミュレータ動作は別途確認が必要です。
