@@ -425,6 +425,39 @@ int16_t ss_process_kill_pending(void) {
     return pending;
 }
 
+static int memory_range_contains(uintptr_t low, uintptr_t high,
+                                 uintptr_t address, uint32_t size) {
+    return address >= low && address < high && size <= high - address;
+}
+
+int ss_process_memory_access(uintptr_t address, uint32_t size, int write) {
+    if (address == 0 || size == 0 || size > UINTPTR_MAX - address)
+        return 0;
+    SSProcessSnapshot process;
+    if (ss_process_snapshot(ss_process_current_id(), &process) != SS_OK ||
+        process.state != SS_PROCESS_READY)
+        return 0;
+    /* The supported machines provide 12 MiB contiguous main RAM. PID 1
+     * runs trusted kernel code, including requests on its bootstrap stack.
+     * Exclude vectors/IOCS work and all VRAM, I/O, and ROM addresses. */
+    if (process.pid == SS_PROCESS_ROOT_PID)
+        return memory_range_contains(0x1000u, 0x00c00000u, address, size);
+    if (memory_range_contains((uintptr_t)process.data_base,
+                              (uintptr_t)process.stack_high, address, size))
+        return 1;
+    if (!write && process.module_id != 0) {
+        SSModuleSnapshot module;
+        /* The running process retains a reference until its reaper runs. */
+        if (ss_module_snapshot(process.module_id, &module) == SS_OK) {
+            uintptr_t low = (uintptr_t)module.image.image;
+            if (module.image.image_size <= UINTPTR_MAX - low)
+                return memory_range_contains(low, low + module.image.image_size,
+                                             address, size);
+        }
+    }
+    return 0;
+}
+
 void ss_process_exit_current(uint16_t exit_status) {
     SSProcessId pid = ss_process_current_id();
     uint16_t saved_sr = ss_irq_save();
@@ -439,7 +472,8 @@ void ss_process_reap_task(uint16_t task_id) {
         return;
 
     uint16_t saved_sr = ss_irq_save();
-    if (tcb_table[task_id - 1].state != SS_TS_TERMINATED) {
+    if (tcb_table[task_id - 1].state != SS_TS_TERMINATED &&
+        tcb_table[task_id - 1].state != SS_TS_REAPING) {
         ss_irq_restore(saved_sr);
         return;
     }

@@ -259,6 +259,7 @@ data pointer だけを spawn 時の fixup 対象として記録する。
 
 fixup record は big endian の 12 byte、`target_offset / kind / value_offset`の 3 field とする。
 target は private initialized data 内の 4 byte 整列 slot に限定し、重複 target を拒否する。
+record の順序は任意。validator は 256 byte bitmap と最大 8 回の走査で重複を検査し、二乗時間の比較を避ける。
 `CODE32=1`は`image_base + value_offset`、`DATA32=2`は`data_base + value_offset`を
 その slot へ書く。CODE32 は共有 code/rodata、DATA32 は private data/BSS の範囲を指す。
 NULL は初期値 0 のままとする。元の仮想 pointer は template から取り除き、0 と fixup record に置く。
@@ -470,8 +471,10 @@ process 操作の一部に限定しており、以下の将来 ABI 全体はま�
 
 `spawn`/`wait`/`proc_info`/`proc_list`の request layout は`ssos/include/ssos9/syscall.h`を参照。
 EXIT/KILL/SLEEP は D1 に scalar 値を渡す。現行の request と pointer 配列は null と
-4 byte 整列、予約 field 等を検査する。user pointer の所有領域の範囲検証は未実装であり、
-MMU 保護もない。
+4 byte 整列、予約 field、buffer 全体の所有領域を検査する。module の入力は private block または
+参照保持中の image、出力は private block に限定する。文字列は NUL とサイズ上限を検査してコピーする。
+信頼済み PID 1 は `[0x1000, 0xc00000)` の main RAM を使用できる。
+MMU 保護と例外からの process 単位の復旧は未実装であり、Supervisor mode の直接アクセスは制限しない。
 
 ### 6.2 将来 ABI の候補
 

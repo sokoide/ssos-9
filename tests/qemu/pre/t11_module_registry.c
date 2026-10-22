@@ -9,6 +9,7 @@
 
 static uint8_t image[136];
 static uint8_t conflicting_image[136];
+static uint8_t odd_image[137] __attribute__((aligned(4)));
 
 static void put16(uint8_t* p, uint16_t value) {
     p[0] = (uint8_t)(value >> 8);
@@ -95,6 +96,32 @@ int main(void) {
         ss_module_snapshot_at(0, NULL) != SS_ERR_PARAM)
         fail("enumeration bounds or empty registry");
 
+    make_image("counter");
+    SSModuleId odd_id = 0;
+    for (uint32_t i = 0; i < sizeof(image); i++) odd_image[i + 1] = image[i];
+    if (ss_module_register_image(odd_image + 1, sizeof(image),
+                                 SS_MODULE_STORAGE_BUILTIN,
+                                 &odd_id) != SS_ERR_PARAM)
+        fail("odd builtin accepted");
+    if (ss_module_register_image(odd_image + 1, sizeof(image),
+                                 SS_MODULE_STORAGE_DYNAMIC, &odd_id) != SS_OK)
+        fail("odd dynamic source rejected");
+    if (ss_module_snapshot(odd_id, &listed) != SS_OK ||
+        ((uintptr_t)(listed.image.image + listed.image.entry_offset) & 1u) !=
+            0 ||
+        ss_module_unload(odd_id) != SS_OK ||
+        ss_memory_free_bytes() != free_before)
+        fail("dynamic source alignment or cleanup");
+    SSModuleImageInfo parsed;
+    put32(image + 112, 4);
+    put32(image + 124, 0);
+    set_crc();
+    if (ss_module_image_validate(image, sizeof(image), &parsed) != SS_OK)
+        fail("unordered fixups rejected");
+    put32(image + 124, 4);
+    set_crc();
+    if (ss_module_image_validate(image, sizeof(image), &parsed) == SS_OK)
+        fail("duplicate fixups accepted");
     make_image("counter");
     SSModuleId builtin_id = 0;
     if (ss_module_register_image(image, sizeof(image),

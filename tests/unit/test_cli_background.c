@@ -238,7 +238,75 @@ TEST(cli_background_builtin_error_status) {
     }
 }
 
+static unsigned reap_calls;
+static uint16_t nested_release;
+static uint8_t claimed_state;
+
+static void checked_reaper(uint16_t id) {
+    reap_calls++;
+    claimed_state = tcb_table[id - 1].state;
+    nested_release = ss_task_release_terminated(id);
+    ss_process_reap_task(id);
+}
+
+TEST(process_reaper_claims_before_hook_and_release) {
+    setup_shell();
+    uint32_t baseline = ss_memory_free_bytes();
+    char line[] = "help&";
+    ASSERT_EQ(ss_cli_execute_line(line), 0);
+    SSProcessSnapshot child;
+    ASSERT_EQ(ss_process_snapshot(2, &child), SS_OK);
+    reap_calls = 0;
+    ss_reaper_set_hook(checked_reaper);
+    /* Simulate the old race: the reaper visits a live task, then another
+     * task kills it before the next reaper operation. */
+    ASSERT_EQ((int16_t)ss_task_release_terminated(child.task_id), SS_ERR_STATE);
+    ASSERT_EQ(reap_calls, 0);
+    ASSERT_EQ(ss_process_kill(2), SS_OK);
+    ASSERT_EQ(ss_task_release_terminated(child.task_id), SS_OK);
+    ASSERT_EQ(reap_calls, 1);
+    ASSERT_EQ(claimed_state, SS_TS_REAPING);
+    ASSERT_EQ((int16_t)nested_release, SS_ERR_STATE);
+    ASSERT_EQ(tcb_table[child.task_id - 1].state, SS_TS_NONE);
+    uint16_t status;
+    ASSERT_EQ(ss_process_wait(1, 2, &status), SS_OK);
+    ASSERT_EQ(ss_memory_free_bytes(), baseline);
+    ss_reaper_set_hook(ss_process_reap_task);
+}
+
+TEST(process_syscall_memory_ownership) {
+    setup_shell();
+    SSModuleId module;
+    ASSERT_EQ(ss_module_find("counter", &module), SS_OK);
+    SSProcessId pid;
+    ASSERT_EQ(ss_process_spawn(1, module, 0, NULL, &pid), SS_OK);
+    SSProcessSnapshot child;
+    SSModuleSnapshot image;
+    ASSERT_EQ(ss_process_snapshot(pid, &child), SS_OK);
+    ASSERT_EQ(ss_module_snapshot(module, &image), SS_OK);
+    ss_curr_task = &tcb_table[child.task_id - 1];
+    ASSERT_TRUE(ss_process_memory_access((uintptr_t)child.data_base, 1, 1));
+    ASSERT_TRUE(
+        ss_process_memory_access((uintptr_t)child.stack_high - 4, 4, 1));
+    ASSERT_TRUE(
+        !ss_process_memory_access((uintptr_t)child.stack_high - 4, 8, 1));
+    ASSERT_TRUE(
+        !ss_process_memory_access((uintptr_t)child.data_base - 1, 1, 0));
+    ASSERT_TRUE(ss_process_memory_access((uintptr_t)image.image.image,
+                                         image.image.image_size, 0));
+    ASSERT_TRUE(!ss_process_memory_access((uintptr_t)image.image.image, 1, 1));
+    ASSERT_TRUE(!ss_process_memory_access((uintptr_t)&root_task, 4, 1));
+    ASSERT_TRUE(!ss_process_memory_access(UINTPTR_MAX - 3u, 8, 0));
+    ASSERT_TRUE(!ss_process_memory_access(0, 4, 0));
+    ss_curr_task = &root_task;
+    collect_child(pid);
+    uint16_t status;
+    ASSERT_EQ(ss_process_wait(1, pid, &status), SS_OK);
+}
+
 void run_cli_background_tests(void) {
+    RUN_TEST(process_reaper_claims_before_hook_and_release);
+    RUN_TEST(process_syscall_memory_ownership);
     RUN_TEST(cli_background_builtin_exit_isolated);
     RUN_TEST(cli_background_wait_cannot_reap_parent_child);
     RUN_TEST(cli_background_diagnostics_and_kill);

@@ -4,7 +4,12 @@
 #include <stdint.h>
 
 /* trap #0 ABI: D0 carries the number/result. D1 carries a request pointer or
- * the scalar argument for EXIT, KILL, and SLEEP. */
+ * the scalar argument for EXIT, KILL, and SLEEP.
+ * Module requests/inputs must reside in private memory or the retained image;
+ * outputs must reside in private memory. Structured buffers are 4-byte aligned.
+ * Strings must terminate within their allowed region and the ABI size limits.
+ * PID 1 is trusted and may pass main RAM buffers in [0x1000, 0xc00000).
+ * These checks do not provide memory isolation for Supervisor-mode code. */
 enum {
     SS9_SYS_VERSION = 0,
     SS9_SYS_GETPID = 1,

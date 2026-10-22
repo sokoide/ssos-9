@@ -6,6 +6,7 @@
 #include <stddef.h>
 
 static uint8_t image[124];
+static uint8_t large_image[65680];
 
 static void put16(uint8_t* p, uint16_t value) {
     p[0] = (uint8_t)(value >> 8);
@@ -113,6 +114,32 @@ int main(void) {
     set_crc();
     if (ss_module_image_validate(image, sizeof(image), &info) == 0)
         fail("overlapping code and data accepted");
+
+    /* Cover every bitmap pass and both sides of an 8192-byte boundary.
+     * Keep the last duplicate non-adjacent in this unordered table. */
+    make_valid_image();
+    for (uint32_t i = 0; i < sizeof(large_image); i++)
+        large_image[i] = i < sizeof(image) ? image[i] : 0;
+    put32(large_image + 0x0c, sizeof(large_image));
+    put32(large_image + 0x20, 65536);
+    put32(large_image + 0x24, 0);
+    put32(large_image + 0x2c, 65624);
+    put32(large_image + 0x40, 65632);
+    put32(large_image + 0x44, 4);
+    for (unsigned i = 0; i < 7; i++) large_image[65624 + i] = image[104 + i];
+    const uint32_t targets[] = {65532, 8192, 8188, 0};
+    for (unsigned i = 0; i < 4; i++) {
+        put32(large_image + 65632 + i * 12, targets[i]);
+        put32(large_image + 65636 + i * 12, SS_MODULE_FIXUP_DATA32);
+        put32(large_image + 65640 + i * 12, 0);
+    }
+    put32(large_image + 0x34, crc32(large_image, sizeof(large_image)));
+    if (ss_module_image_validate(large_image, sizeof(large_image), &info) != 0)
+        fail("large unordered fixups rejected");
+    put32(large_image + 65632 + 3 * 12, 65532);
+    put32(large_image + 0x34, crc32(large_image, sizeof(large_image)));
+    if (ss_module_image_validate(large_image, sizeof(large_image), &info) == 0)
+        fail("last bitmap pass duplicate accepted");
 
     tty_puts("OK S9M1 validation\n");
     for (;;) {

@@ -79,12 +79,22 @@ static int validate_fixups(const uint8_t* image, uint32_t fixup_offset,
         } else {
             return -1;
         }
-
-        for (uint32_t j = 0; j < i; j++) {
-            const uint8_t* previous =
-                image + fixup_offset + j * SS_MODULE_FIXUP_SIZE;
-            if (read_be32(previous) == target)
+    }
+    /* One bit per aligned target. Eight bounded passes cover 64 KiB of
+     * private data with only 256 bytes of stack and preserve unordered tables.
+     * The first pass above validated all offsets before this indexing. */
+    for (uint32_t base = 0; base < init_size; base += 8192u) {
+        uint8_t seen[256] = {0};
+        for (uint32_t i = 0; i < fixup_count; i++) {
+            uint32_t target =
+                read_be32(image + fixup_offset + i * SS_MODULE_FIXUP_SIZE);
+            if (target < base || target - base >= 8192u)
+                continue;
+            uint32_t word = (target - base) / 4u;
+            uint8_t bit = (uint8_t)(1u << (word & 7u));
+            if (seen[word / 8u] & bit)
                 return -1;
+            seen[word / 8u] |= bit;
         }
     }
     return 0;

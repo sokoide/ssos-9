@@ -96,6 +96,7 @@ void ss_module_registry_init(void) {
 int16_t ss_module_register_image(const uint8_t* bytes, uint32_t size,
                                  SSModuleStorage storage, SSModuleId* id) {
     if (bytes == NULL || id == NULL ||
+        (storage == SS_MODULE_STORAGE_BUILTIN && ((uintptr_t)bytes & 1u)) ||
         (storage != SS_MODULE_STORAGE_BUILTIN &&
          storage != SS_MODULE_STORAGE_DYNAMIC))
         return SS_ERR_PARAM;

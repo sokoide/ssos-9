@@ -34,6 +34,7 @@
 #define SS_TS_WAIT     3
 #define SS_TS_TERMINATED 4
 #define SS_TS_INITIALIZING 5
+#define SS_TS_REAPING 6
 
 /* Tick counter, incremented by the Timer D interrupt. */
 extern volatile uint32_t ss_tick_counter;

@@ -33,8 +33,6 @@ static void* reaper_task(void* arg) {
     (void)arg;
     for (;;) {
         for (uint16_t id = 1; id <= SS_MAX_TASKS; id++) {
-            if (reaper_hook != NULL)
-                reaper_hook(id);
             (void)ss_task_release_terminated(id);
         }
         (void)ss_task_sleep(1);
@@ -422,6 +420,14 @@ uint16_t ss_task_release_terminated(uint16_t id) {
         return SS_ERR_STATE;
     }
 
+    /* Claim the slot before enabling interrupts. A READY task must never
+     * become eligible between its process hook and TCB release. */
+    tcb->state = SS_TS_REAPING;
+    void (*hook)(uint16_t) = reaper_hook;
+    ss_irq_restore(saved_sr);
+    if (hook != NULL)
+        hook(id);
+    saved_sr = ss_irq_save();
     memset(tcb, 0, sizeof(*tcb));
     ss_irq_restore(saved_sr);
     return SS_OK;

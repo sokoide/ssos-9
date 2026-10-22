@@ -196,6 +196,54 @@ int main(void) {
         call_sys(0xffffffffu, 0) != SS9_ERR_NOSYS)
         fail("syscall ABI basics");
 
+    /* Aligned addresses in vectors, VRAM/I/O, or beyond supported RAM
+     * must fail before any load/store through the request pointer. */
+    const uint32_t invalid[] = {0, 0x80, 0x00c00000u, 0x00e88000u, 0xfffffffcu};
+    const uint32_t pointer_calls[] = {SS9_SYS_SPAWN, SS9_SYS_WAIT,
+                                      SS9_SYS_PROC_INFO, SS9_SYS_PROC_LIST};
+    for (unsigned i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++)
+        for (unsigned j = 0;
+             j < sizeof(pointer_calls) / sizeof(pointer_calls[0]); j++)
+            if (call_sys(pointer_calls[j], invalid[i]) != SS9_ERR_PARAM)
+                fail("unsafe syscall request accepted");
+    SS9ProcessInfoRequest bad_output = {1, 0x00bffffcu};
+    if (call_sys(SS9_SYS_PROC_INFO, (uint32_t)(uintptr_t)&bad_output) !=
+        SS9_ERR_PARAM)
+        fail("output crossing RAM end accepted");
+    SS9SpawnRequest bad_spawn = {0x00c00000u, 0, 0, 0};
+    if (call_sys(SS9_SYS_SPAWN, (uint32_t)(uintptr_t)&bad_spawn) !=
+        SS9_ERR_PARAM)
+        fail("invalid module name accepted");
+    bad_spawn.name = (uint32_t)(uintptr_t)"counter";
+    bad_spawn.argc = 1;
+    bad_spawn.argv = 0x00c00000u;
+    if (call_sys(SS9_SYS_SPAWN, (uint32_t)(uintptr_t)&bad_spawn) !=
+        SS9_ERR_PARAM)
+        fail("invalid argv accepted");
+    uint32_t bad_string = 0x00c00000u;
+    bad_spawn.argv = (uint32_t)(uintptr_t)&bad_string;
+    if (call_sys(SS9_SYS_SPAWN, (uint32_t)(uintptr_t)&bad_spawn) !=
+        SS9_ERR_PARAM)
+        fail("invalid argument string accepted");
+
+    char unterminated[SS_PROCESS_MAX_ARG_BYTES];
+    for (unsigned i = 0; i < sizeof(unterminated); i++) unterminated[i] = 'x';
+    bad_spawn.name = (uint32_t)(uintptr_t)unterminated;
+    bad_spawn.argc = 0;
+    if (call_sys(SS9_SYS_SPAWN, (uint32_t)(uintptr_t)&bad_spawn) !=
+        SS9_ERR_PARAM)
+        fail("unterminated name accepted");
+    bad_spawn.name = (uint32_t)(uintptr_t)"counter";
+    bad_spawn.argc = 1;
+    bad_string = (uint32_t)(uintptr_t)unterminated;
+    if (call_sys(SS9_SYS_SPAWN, (uint32_t)(uintptr_t)&bad_spawn) !=
+        SS9_ERR_PARAM)
+        fail("unterminated argument accepted");
+    SS9ProcessListRequest bad_list = {2, 0, 0x00bffffcu};
+    if (call_sys(SS9_SYS_PROC_LIST, (uint32_t)(uintptr_t)&bad_list) !=
+        SS9_ERR_PARAM)
+        fail("list crossing RAM end accepted");
+
     make_image();
     SSModuleId module_id;
     if (ss_module_register_image(image, sizeof(image),
@@ -219,6 +267,30 @@ int main(void) {
         first.got_base == second.got_base ||
         first.stack_low == second.stack_low)
         fail("private regions not separated");
+
+    /* Isolate buffer policy with IRQs masked; these dispatches do not sleep.
+     * Restore the real current task before scheduling either PIC process. */
+    uint16_t policy_sr = ss_irq_save();
+    ss_curr_task = &tcb_table[first.task_id - 1];
+    SS9ProcessInfoRequest* private_request =
+        (SS9ProcessInfoRequest*)first.stack_low;
+    private_request->pid = first_pid;
+    private_request->info = (uint32_t)(uintptr_t)first.stack_low + 16u;
+    int32_t private_result = ss_syscall_dispatch(
+        SS9_SYS_PROC_INFO, (uint32_t)(uintptr_t)private_request);
+    private_request->info = (uint32_t)(uintptr_t)second.stack_low;
+    int32_t foreign_result = ss_syscall_dispatch(
+        SS9_SYS_PROC_INFO, (uint32_t)(uintptr_t)private_request);
+    private_request->info = (uint32_t)(uintptr_t)image;
+    int32_t image_result = ss_syscall_dispatch(
+        SS9_SYS_PROC_INFO, (uint32_t)(uintptr_t)private_request);
+    int32_t foreign_request = ss_syscall_dispatch(
+        SS9_SYS_PROC_INFO, (uint32_t)(uintptr_t)second.stack_low);
+    ss_curr_task = &main_tcb;
+    ss_irq_restore(policy_sr);
+    if (private_result != SS_OK || foreign_result != SS9_ERR_PARAM ||
+        image_result != SS9_ERR_PARAM || foreign_request != SS9_ERR_PARAM)
+        fail("private syscall buffer policy");
 
     set_counter(first.data_base, 1000);
     if (get32(second.data_base + 8) != 0)

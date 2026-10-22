@@ -107,6 +107,8 @@ uint16_t ss_task_sleep(uint32_t ticks);
 void     ss_task_yield(void);
 void     ss_process_wakeups(void);
 void     ss_task_exit(void) __attribute__((noreturn));
+/* Claims TERMINATED as REAPING under the IRQ mask, invokes the reaper hook,
+ * then clears the TCB. Hook runs with the caller's interrupt state restored. */
 uint16_t ss_task_release_terminated(uint16_t id);
 uint16_t ss_trace_read(SSTraceEvent* events, uint16_t capacity);
 

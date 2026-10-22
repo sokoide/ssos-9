@@ -22,7 +22,8 @@ typedef struct {
 } SSModuleSnapshot;
 
 void ss_module_registry_init(void);
-/* BUILTIN bytes must remain immutable and live as long as the registry entry. */
+/* BUILTIN bytes must be even-aligned, immutable, and live as long as the
+ * registry entry. DYNAMIC input may be unaligned; its owned copy is aligned. */
 int16_t ss_module_register_image(const uint8_t* bytes, uint32_t size,
                                  SSModuleStorage storage, SSModuleId* id);
 int16_t ss_module_find(const char* name, SSModuleId* id);

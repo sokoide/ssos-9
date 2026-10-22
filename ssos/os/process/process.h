@@ -48,6 +48,9 @@ int16_t ss_process_wait(SSProcessId parent, SSProcessId child,
                         uint16_t* exit_status);
 SSProcessId ss_process_current_id(void);
 SSProcessId ss_process_current_parent_id(void);
+/* Syscall buffers: private allocation is read/write, module image read-only.
+ * PID 1 is trusted and may use main RAM above the low system work area. */
+int ss_process_memory_access(uintptr_t address, uint32_t size, int write);
 void ss_process_exit_current(uint16_t exit_status);
 void ss_process_reap_task(uint16_t task_id);
 void ss_process_syscall_enter(void);
