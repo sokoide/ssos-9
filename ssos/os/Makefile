@@ -1,5 +1,16 @@
-ifeq ($(shell which m68k-xelf-gcc),)
-$(error Cross-compilation toolchain not found. Please run: . ~/.elf2x68k)
+REQUIRED_TOOLCHAIN_COMMANDS := m68k-xelf-gcc m68k-xelf-as m68k-xelf-ld m68k-xelf-objcopy
+ifneq ($(strip $(MAKECMDGOALS)),)
+ifneq ($(strip $(filter-out clean,$(MAKECMDGOALS))),)
+MISSING_TOOLCHAIN_COMMANDS := $(shell for command in $(REQUIRED_TOOLCHAIN_COMMANDS); do command -v $$command >/dev/null 2>&1 || printf '%s ' $$command; done)
+ifneq ($(strip $(MISSING_TOOLCHAIN_COMMANDS)),)
+$(error Cross-compilation toolchain commands not found: $(MISSING_TOOLCHAIN_COMMANDS). Please run: . ~/.elf2x68k)
+endif
+endif
+else
+MISSING_TOOLCHAIN_COMMANDS := $(shell for command in $(REQUIRED_TOOLCHAIN_COMMANDS); do command -v $$command >/dev/null 2>&1 || printf '%s ' $$command; done)
+ifneq ($(strip $(MISSING_TOOLCHAIN_COMMANDS)),)
+$(error Cross-compilation toolchain commands not found: $(MISSING_TOOLCHAIN_COMMANDS). Please run: . ~/.elf2x68k)
+endif
 endif
 
 include ../config.mk
