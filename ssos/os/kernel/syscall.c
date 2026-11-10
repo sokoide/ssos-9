@@ -1,6 +1,8 @@
 #include "syscall.h"
 
 #include "../../include/ssos9/syscall.h"
+#include "../app/cli_console.h"
+#include "../fs/storage.h"
 #include "../module/module.h"
 #include "../process/process.h"
 #include "scheduler.h"
@@ -151,8 +153,39 @@ int32_t ss_syscall_dispatch(uint32_t number, uint32_t request) {
         req->count = count;
         return count;
     }
+    case SS9_SYS_WRITE: {
+        if (!valid_buffer(request, sizeof(SS9WriteRequest), 0))
+            return SS9_ERR_PARAM;
+        SS9WriteRequest req = *(const SS9WriteRequest*)(uintptr_t)request;
+        if (req.fd != 1 || req.length > SS9_WRITE_MAX)
+            return SS9_ERR_PARAM;
+        if (req.length == 0)
+            return 0;
+        if (!ss_process_memory_access(req.buffer, req.length, 0))
+            return SS9_ERR_PARAM;
+        ss_cli_console_write((const uint8_t*)(uintptr_t)req.buffer, req.length);
+        return (int32_t)req.length;
+    }
+    case SS9_SYS_FILE_LOAD:
+    case SS9_SYS_FILE_STORE: {
+        if (!valid_buffer(request, sizeof(SS9FileRequest), 0))
+            return SS9_ERR_PARAM;
+        SS9FileRequest req = *(const SS9FileRequest*)(uintptr_t)request;
+        char name[13];
+        if (!copy_string(req.name, name, sizeof(name)) ||
+            req.size > SS9_FILE_MAX ||
+            (number == SS9_SYS_FILE_LOAD && req.flags != 0) ||
+            (number == SS9_SYS_FILE_STORE && req.flags > SS9_FILE_REPLACE) ||
+            (req.size && !ss_process_memory_access(req.buffer, req.size,
+                                      number == SS9_SYS_FILE_LOAD)))
+            return SS9_ERR_PARAM;
+        if (number == SS9_SYS_FILE_LOAD)
+            return ss_system_file_load(name, (uint8_t*)(uintptr_t)req.buffer,
+                                       req.size);
+        return ss_system_file_store(name, (const uint8_t*)(uintptr_t)req.buffer,
+                                    req.size, req.flags);
+    }
     case SS9_SYS_READ:
-    case SS9_SYS_WRITE:
     case SS9_SYS_OPEN:
     case SS9_SYS_CLOSE:
     default: return SS9_ERR_NOSYS;

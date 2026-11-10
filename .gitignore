@@ -13,6 +13,7 @@ compile_commands.json
 .cache
 tools/makedisk/makedisk
 test_runner_native_*
+/tests/test_runner_native
 
 # ---- OS / Editor ----
 .DS_Store
@@ -82,3 +83,4 @@ yarn.lock
 __pycache__/
 
 /tools/makedisk/build/
+/examples/**/build/

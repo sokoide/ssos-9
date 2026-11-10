@@ -11,6 +11,33 @@ static uint8_t image[136];
 static uint8_t conflicting_image[136];
 static uint8_t odd_image[137] __attribute__((aligned(4)));
 
+typedef struct {
+    uint32_t position;
+    uint32_t limit;
+} ReaderState;
+
+static int32_t read_image(void* context, uint8_t* out, uint32_t size) {
+    ReaderState* state = context;
+    if (state->position >= state->limit)
+        return 0;
+    uint32_t count = state->limit - state->position;
+    if (count > size) count = size;
+    if (count > 7) count = 7;
+    for (uint32_t i = 0; i < count; i++)
+        out[i] = image[state->position++];
+    return (int32_t)count;
+}
+
+static int32_t read_error(void* context, uint8_t* out, uint32_t size) {
+    (void)context; (void)out; (void)size;
+    return -1;
+}
+
+static int32_t read_too_many(void* context, uint8_t* out, uint32_t size) {
+    (void)context; (void)out;
+    return (int32_t)(size + 1u);
+}
+
 static void put16(uint8_t* p, uint16_t value) {
     p[0] = (uint8_t)(value >> 8);
     p[1] = (uint8_t)value;
@@ -96,6 +123,32 @@ int main(void) {
         ss_module_snapshot_at(0, NULL) != SS_ERR_PARAM)
         fail("enumeration bounds or empty registry");
 
+    make_image("counter");
+    ReaderState reader = {0, sizeof(image) - 1};
+    SSModuleId loaded;
+    if (ss_module_load_reader(read_error, NULL, sizeof(image), &loaded) !=
+            SS_ERR_PARAM ||
+        ss_module_load_reader(read_too_many, NULL, sizeof(image), &loaded) !=
+            SS_ERR_PARAM ||
+        ss_module_load_reader(read_image, &reader, SS_MODULE_MAX_IMAGE_SIZE + 1u,
+                              &loaded) != SS_ERR_PARAM ||
+        ss_memory_free_bytes() != free_before ||
+        ss_module_snapshot_at(0, &listed) != SS_ERR_ID)
+        fail("invalid reader result cleanup");
+    if (ss_module_load_reader(read_image, &reader, sizeof(image), &loaded) !=
+            SS_ERR_PARAM || ss_memory_free_bytes() != free_before)
+        fail("short reader cleanup");
+    reader.position = 0;
+    reader.limit = sizeof(image);
+    if (ss_module_load_reader(read_image, &reader, sizeof(image), &loaded) !=
+            SS_OK || ss_module_unload(loaded) != SS_OK ||
+        ss_memory_free_bytes() != free_before)
+        fail("reader load/unload cleanup");
+    image[0] = 0;
+    reader.position = 0;
+    if (ss_module_load_reader(read_image, &reader, sizeof(image), &loaded) !=
+            SS_ERR_PARAM || ss_memory_free_bytes() != free_before)
+        fail("invalid reader cleanup");
     make_image("counter");
     SSModuleId odd_id = 0;
     for (uint32_t i = 0; i < sizeof(image); i++) odd_image[i + 1] = image[i];

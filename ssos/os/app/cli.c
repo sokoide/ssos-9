@@ -2,6 +2,9 @@
 #include "../kernel/kernel.h"
 #include "../kernel/main_task.h"
 #include "../kernel/scheduler.h"
+#include "../fs/fat12.h"
+#include "../fs/xdf.h"
+#include "../fs/scsi_volume.h"
 #include "../mem/system_arena.h"
 #include "../module/builtin.h"
 #include "../module/module.h"
@@ -12,12 +15,14 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <x68k/iocs.h>
 
-#ifndef SS_HOST_TEST
+#if !defined(SS_HOST_TEST) && !defined(SS_QEMU_TEST)
 uint8_t* ss_task_stack_base;
 #endif
 static SSTask main_tcb;
 static volatile uint32_t heartbeat;
+static SSProcessId mux_shell_pids[SS_PROCESS_CONSOLE_COUNT];
 #ifdef LOCAL_MODE
 static uint8_t local_task_stacks[SS_MAX_TASKS * SS_TASK_STACK]
     __attribute__((aligned(4)));
@@ -240,25 +245,80 @@ static int parse_pid(const char* text, SSProcessId* pid) {
     return 1;
 }
 
+static int parse_u32(const char* text, uint32_t* result) {
+    if (!text || !*text) return 0;
+    uint32_t value = 0;
+    while (*text) {
+        if (*text < '0' || *text > '9') return 0;
+        uint32_t digit = (uint32_t)(*text++ - '0');
+        if (value > (UINT32_MAX - digit) / 10u) return 0;
+        value = value * 10u + digit;
+    }
+    *result = value;
+    return 1;
+}
+
+static int interactive_shell(void) {
+    SSProcessId current = ss_process_current_id();
+    if (current == 1) return 1;
+    for (unsigned i = 1; i < SS_PROCESS_CONSOLE_COUNT; i++)
+        if (mux_shell_pids[i] == current) return 1;
+    return 0;
+}
+
 static int run_process_command(char* tokens[], uint16_t count, int background) {
-    if (strcmp(tokens[0], "ps") == 0 && count == 1) {
+    if (strcmp(tokens[0], "smount") == 0 && (count == 2 || count == 3)) {
+        uint32_t target, start = 0;
+        if (!parse_u32(tokens[1], &target) || target > 7 ||
+            (count == 3 && !parse_u32(tokens[2], &start))) {
+            print("Invalid SCSI target or start block.\r\n");
+            return 0;
+        }
+        ss_iocs_lock();
+        int result = ss_scsi_volume_mount_iocs(&ss_system_scsi_volume, (uint8_t)target,
+                                               start, 0);
+        ss_iocs_unlock();
+        print(result == 0 ? "FAT16 mounted.\r\n" : "Unable to mount FAT16.\r\n");
+    } else if ((strcmp(tokens[0], "swrite") == 0 ||
+                strcmp(tokens[0], "sreplace") == 0) && count == 3) {
+        int replace = strcmp(tokens[0], "sreplace") == 0;
+        ss_iocs_lock();
+        int result = ss_storage_store(&ss_system_scsi_volume.storage, tokens[1],
+                                      (const uint8_t*)tokens[2],
+                                      (uint32_t)strlen(tokens[2]), replace);
+        ss_iocs_unlock();
+        print(result == 0 ? "File written.\r\n" : "Unable to write file.\r\n");
+    } else if (strcmp(tokens[0], "sread") == 0 && count == 2) {
+        uint8_t bytes[256];
+        ss_iocs_lock();
+        int32_t result = ss_storage_read(&ss_system_scsi_volume.storage, tokens[1],
+                                         bytes, sizeof(bytes));
+        ss_iocs_unlock();
+        if (result < 0) print("Unable to read file (maximum 256 bytes).\r\n");
+        else {
+            ss_cli_console_write(bytes, (uint32_t)result);
+            print("\r\n");
+        }
+    } else if (strcmp(tokens[0], "ps") == 0 && count == 1) {
         show_processes();
     } else if (strcmp(tokens[0], "modules") == 0 && count == 1) {
         show_modules();
     } else if (strcmp(tokens[0], "mem") == 0 && count == 1) {
         show_memory();
-    } else if (strcmp(tokens[0], "run") == 0 && count == 2 &&
-               strcmp(tokens[1], "counter") == 0) {
+    } else if (strcmp(tokens[0], "run") == 0 && count == 2) {
         SSModuleId module_id;
         SSProcessId pid;
-        const char* argv[] = {"counter"};
-        if (ss_module_find("counter", &module_id) != SS_OK ||
+        const char* argv[] = {tokens[1]};
+        int16_t lookup = ss_module_find(tokens[1], &module_id);
+        if (lookup == SS_ERR_ID)
+            lookup = ss_builtin_load(tokens[1], &module_id);
+        if (lookup != SS_OK ||
             ss_process_spawn(ss_process_current_id(), module_id, 1, argv,
                              &pid) != SS_OK) {
-            print("Unable to start counter.\r\n");
+            print("Unable to start module.\r\n");
         } else {
             if (background) {
-                print("Started counter as PID ");
+                print("Started module as PID ");
                 print_u32(pid);
                 print("\r\n");
             } else {
@@ -284,6 +344,39 @@ static int run_process_command(char* tokens[], uint16_t count, int background) {
                 }
             }
         }
+    } else if (strcmp(tokens[0], "load") == 0 && count == 3) {
+        SSModuleId module_id;
+        SSFat12 volume;
+        SSFat12File file;
+        if (tokens[1][0] < '0' || tokens[1][0] > '3' || tokens[1][1]) {
+            print("Invalid 2HD drive.\r\n");
+            return 0;
+        }
+        SSXdfReader disk = {_iocs_b_read, (uint8_t)(tokens[1][0] - '0')};
+        ss_iocs_lock();
+        const char* error = "Unable to load module: disk or FAT12.\r\n";
+        int result = ss_fat12_mount(&volume, ss_xdf_read_sector, &disk,
+                                    SS_XDF_SECTORS);
+        if (result == 0 && volume.sector_size != 1024)
+            result = -1;
+        if (result == 0) {
+            error = "Unable to load module: file or cluster chain.\r\n";
+            result = ss_fat12_open(&volume, tokens[2], &file);
+        }
+        if (result == 0) {
+            error = "Unable to load module: image, memory, or registry.\r\n";
+            result = ss_module_load_reader(ss_fat12_read, &file, file.size,
+                                           &module_id);
+        }
+        ss_iocs_unlock();
+        print(result == SS_OK ? "Module loaded.\r\n" : error);
+    } else if (strcmp(tokens[0], "unload") == 0 && count == 2) {
+        SSModuleId module_id;
+        if (ss_module_find(tokens[1], &module_id) != SS_OK ||
+            ss_module_unload(module_id) != SS_OK)
+            print("Unable to unload module.\r\n");
+        else
+            print("Module unloaded.\r\n");
     } else if (strcmp(tokens[0], "kill") == 0 && count == 2) {
         SSProcessId pid;
         if (!parse_pid(tokens[1], &pid) || ss_process_kill(pid) != SS_OK) {
@@ -300,7 +393,7 @@ static int run_process_command(char* tokens[], uint16_t count, int background) {
             return 0;
         }
         int16_t status;
-        if (ss_process_current_id() == 1) {
+        if (interactive_shell()) {
             status = ss_cli_wait_pid(pid, &exit_status, NULL);
         } else {
             /* A subshell cannot wait for the parent shell's children, and
@@ -372,9 +465,54 @@ int16_t ss_init(void) {
 }
 
 static void show_help(void) {
-    print("Commands: help, uptime, ps, modules, mem, run counter [&], kill "
+    print("Commands: help, uptime, ps, modules, mem, run NAME [&], load DRIVE FILE, unload NAME, kill "
           "PID, wait PID, ");
-    print("debug, trace, clear, version, exit\r\n");
+    print("smount ID [START], swrite FILE TEXT, sreplace FILE TEXT, sread FILE, ");
+    print("debug, trace, clear, version, mux, exit\r\n");
+}
+
+static int shell_loop(void);
+static uint8_t mux_started;
+
+static void* mux_shell(void* argument) {
+    uint8_t console = *(const uint8_t*)argument;
+    ss_process_syscall_enter();
+    if (ss_process_set_current_console(console) == SS_OK) {
+        mux_shell_pids[console] = ss_process_current_id();
+        print("SSOS-9 shell\r\n> ");
+        (void)shell_loop();
+    }
+    if (ss_process_syscall_leave()) ss_process_exit_current(130);
+    return NULL;
+}
+
+static void start_mux(void) {
+    if (ss_process_current_id() != 1) {
+        print("Only the root shell can start the multiplexer.\r\n");
+        return;
+    }
+    if (!mux_started) {
+        mux_started = 1;
+        ss_cli_console_mux_enable();
+        print("Multiplexer: ~ then 1/2/3 (~~ for ~), F1/F2/F3, or Ctrl-].\r\n");
+    }
+    for (uint8_t id = 1; id < SS_PROCESS_CONSOLE_COUNT; id++) {
+        SSProcessSnapshot existing;
+        if (mux_shell_pids[id] &&
+            ss_process_snapshot(mux_shell_pids[id], &existing) == SS_OK) {
+            if (existing.state != SS_PROCESS_ZOMBIE) continue;
+            uint16_t status;
+            if (ss_process_wait(1, mux_shell_pids[id], &status) != SS_OK)
+                continue;
+        }
+        SSProcessId pid;
+        if (ss_process_spawn_kernel(1, "shell", mux_shell, &id, sizeof(id),
+                                    &pid) != SS_OK) {
+            print("Unable to start all shells.\r\n");
+            break;
+        }
+        mux_shell_pids[id] = pid;
+    }
 }
 
 static void* background_builtin(void* argument) {
@@ -455,6 +593,8 @@ int ss_cli_execute_line(char* line) {
         clear_screen();
     } else if (strcmp(command, "version") == 0) {
         print("SSOS-9 CLI preemptive minimum\r\n");
+    } else if (strcmp(command, "mux") == 0) {
+        start_mux();
     } else if (strcmp(command, "exit") == 0) {
         if (ss_process_current_id() != 1)
             return 1;
@@ -471,32 +611,21 @@ int ss_cli_execute_line(char* line) {
     return 0;
 }
 
-int ss_run(void) {
-    SSTaskInfo worker = {heartbeat_task, 8,    SS_CTX_NORMAL,
-                         SS_TASK_STACK,  NULL, NULL};
-    uint16_t worker_id = ss_task_create(&worker);
-    if (worker_id == 0 || worker_id > SS_MAX_TASKS ||
-        ss_task_start(worker_id) != SS_OK) {
-        (void)ss_irq_save();
-        for (;;) {
-        }
-    }
-
-    clear_screen();
-    print("SSOS-9: minimal X68000 CLI\r\n");
-    print("Type 'help' for commands.\r\n\r\n> ");
-
+static int shell_loop(void) {
     char line[64];
     unsigned used = 0;
     for (;;) {
+        if (ss_process_kill_pending()) return 0;
         if (ss_cli_poll_ctrl_c()) {
             used = 0;
             print("^C\r\n> ");
             continue;
         }
         int key = ss_cli_next_key();
-        if (key < 0)
+        if (key < 0) {
+            (void)ss_task_sleep(1);
             continue;
+        }
         if (key == '\r' || key == '\n') {
             line[used] = '\0';
             print("\r\n");
@@ -520,4 +649,20 @@ int ss_run(void) {
             print(echo);
         }
     }
+}
+
+int ss_run(void) {
+    SSTaskInfo worker = {heartbeat_task, 8,    SS_CTX_NORMAL,
+                         SS_TASK_STACK,  NULL, NULL};
+    uint16_t worker_id = ss_task_create(&worker);
+    if (worker_id == 0 || worker_id > SS_MAX_TASKS ||
+        ss_task_start(worker_id) != SS_OK) {
+        (void)ss_irq_save();
+        for (;;) {
+        }
+    }
+    clear_screen();
+    print("SSOS-9: minimal X68000 CLI\r\n");
+    print("Type 'help' for commands.\r\n\r\n> ");
+    return shell_loop();
 }

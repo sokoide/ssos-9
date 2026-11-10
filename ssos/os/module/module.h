@@ -26,6 +26,11 @@ void ss_module_registry_init(void);
  * registry entry. DYNAMIC input may be unaligned; its owned copy is aligned. */
 int16_t ss_module_register_image(const uint8_t* bytes, uint32_t size,
                                  SSModuleStorage storage, SSModuleId* id);
+/* Reader returns bytes read, 0 at EOF, or a negative error. The loader owns
+ * its temporary buffer; the registry copies a validated dynamic image. */
+typedef int32_t (*SSModuleReader)(void* context, uint8_t* out, uint32_t size);
+int16_t ss_module_load_reader(SSModuleReader reader, void* context,
+                              uint32_t size, SSModuleId* id);
 int16_t ss_module_find(const char* name, SSModuleId* id);
 int16_t ss_module_snapshot(SSModuleId id, SSModuleSnapshot* snapshot);
 /* Copies a READY entry without acquiring a reference. Image pointers are

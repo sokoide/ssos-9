@@ -65,6 +65,7 @@ static int16_t reserve_slot(SSProcessId parent, SSProcessId* pid,
     *pid = next_pid++;
     process_table[*slot].pid = *pid;
     process_table[*slot].ppid = parent;
+    process_table[*slot].console_id = process_table[parent_slot].console_id;
     process_table[*slot].state = SS_PROCESS_INITIALIZING;
     ss_irq_restore(saved_sr);
     return SS_OK;
@@ -349,6 +350,27 @@ int16_t ss_process_wait(SSProcessId parent, SSProcessId child,
         ((volatile uint8_t*)&process_table[slot])[i] = 0;
     process_tasks[slot] = NULL;
     process_blocks[slot] = NULL;
+    ss_irq_restore(saved_sr);
+    return SS_OK;
+}
+
+uint8_t ss_process_current_console(void) {
+    uint16_t saved_sr = ss_irq_save();
+    int16_t slot = find_slot_by_pid(ss_process_current_id());
+    uint8_t id = slot < 0 ? 0 : process_table[slot].console_id;
+    ss_irq_restore(saved_sr);
+    return id;
+}
+
+int16_t ss_process_set_current_console(uint8_t console_id) {
+    if (console_id >= SS_PROCESS_CONSOLE_COUNT) return SS_ERR_PARAM;
+    uint16_t saved_sr = ss_irq_save();
+    int16_t slot = find_slot_by_pid(ss_process_current_id());
+    if (slot < 0) {
+        ss_irq_restore(saved_sr);
+        return SS_ERR_ID;
+    }
+    process_table[slot].console_id = console_id;
     ss_irq_restore(saved_sr);
     return SS_OK;
 }

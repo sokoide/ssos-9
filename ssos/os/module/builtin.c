@@ -2,6 +2,9 @@
 
 #include "image.h"
 #include "module.h"
+#include "../kernel/kernel.h"
+
+#include <string.h>
 
 #define COUNTER_IMAGE_SIZE 124u
 #define COUNTER_CODE_OFFSET 80u
@@ -10,6 +13,12 @@
 #define COUNTER_FIXUP_OFFSET 112u
 
 static uint8_t counter_image[COUNTER_IMAGE_SIZE];
+
+#if !defined(SS_HOST_TEST)
+static const uint8_t hello_image[] __attribute__((aligned(4))) = {
+#include "../../../examples/hello/build/hello.inc"
+};
+#endif
 
 static void write_be16(uint32_t offset, uint16_t value) {
     counter_image[offset] = (uint8_t)(value >> 8);
@@ -74,4 +83,31 @@ int16_t ss_builtin_modules_init(void) {
     SSModuleId id;
     return ss_module_register_image(counter_image, sizeof(counter_image),
                                     SS_MODULE_STORAGE_BUILTIN, &id);
+}
+
+#if !defined(SS_HOST_TEST)
+typedef struct {
+    uint32_t offset;
+} SSBuiltinReader;
+
+static int32_t read_hello(void* context, uint8_t* out, uint32_t size) {
+    SSBuiltinReader* reader = context;
+    uint32_t remaining = sizeof(hello_image) - reader->offset;
+    if (size > remaining) size = remaining;
+    for (uint32_t i = 0; i < size; i++) out[i] = hello_image[reader->offset++];
+    return (int32_t)size;
+}
+#endif
+
+int16_t ss_builtin_load(const char* name, SSModuleId* id) {
+    if (name == NULL || id == NULL)
+        return SS_ERR_PARAM;
+#if !defined(SS_HOST_TEST)
+    if (strcmp(name, "hello") == 0) {
+        SSBuiltinReader reader = {0};
+        return ss_module_load_reader(read_hello, &reader, sizeof(hello_image),
+                                     id);
+    }
+#endif
+    return SS_ERR_ID;
 }

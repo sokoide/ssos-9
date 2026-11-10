@@ -194,6 +194,30 @@ int16_t ss_module_register_image(const uint8_t* bytes, uint32_t size,
     return SS_OK;
 }
 
+int16_t ss_module_load_reader(SSModuleReader reader, void* context,
+                              uint32_t size, SSModuleId* id) {
+    if (reader == NULL || id == NULL || size < SS_MODULE_IMAGE_HEADER_SIZE ||
+        size > SS_MODULE_MAX_IMAGE_SIZE)
+        return SS_ERR_PARAM;
+    uint8_t* bytes = ss_memory_alloc(size);
+    if (bytes == NULL)
+        return SS_ERR_LIMIT;
+    uint32_t offset = 0;
+    int16_t result = SS_ERR_PARAM;
+    while (offset < size) {
+        uint32_t remaining = size - offset;
+        int32_t count = reader(context, bytes + offset, remaining);
+        if (count <= 0 || (uint32_t)count > remaining)
+            goto done;
+        offset += (uint32_t)count;
+    }
+    result = ss_module_register_image(bytes, size, SS_MODULE_STORAGE_DYNAMIC,
+                                      id);
+done:
+    (void)ss_memory_free(bytes);
+    return result;
+}
+
 int16_t ss_module_find(const char* name, SSModuleId* id) {
     if (name == NULL || id == NULL)
         return SS_ERR_PARAM;

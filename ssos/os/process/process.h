@@ -7,6 +7,7 @@
 #define SS_PROCESS_MAX 8u
 #define SS_PROCESS_MAX_ARGS 16u
 #define SS_PROCESS_MAX_ARG_BYTES 512u
+#define SS_PROCESS_CONSOLE_COUNT 3u
 
 typedef uint32_t SSProcessId;
 
@@ -25,6 +26,7 @@ typedef struct {
     uint16_t task_id;
     uint16_t exit_status;
     uint8_t state;
+    uint8_t console_id;
     char name[SS_MODULE_NAME_CAPACITY];
     void* data_base;
     void* got_base;
@@ -48,6 +50,8 @@ int16_t ss_process_wait(SSProcessId parent, SSProcessId child,
                         uint16_t* exit_status);
 SSProcessId ss_process_current_id(void);
 SSProcessId ss_process_current_parent_id(void);
+uint8_t ss_process_current_console(void);
+int16_t ss_process_set_current_console(uint8_t console_id);
 /* Syscall buffers: private allocation is read/write, module image read-only.
  * PID 1 is trusted and may use main RAM above the low system work area. */
 int ss_process_memory_access(uintptr_t address, uint32_t size, int write);

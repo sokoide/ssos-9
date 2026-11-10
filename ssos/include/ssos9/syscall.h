@@ -24,13 +24,33 @@ enum {
     SS9_SYS_OPEN = 0x20,
     SS9_SYS_CLOSE = 0x21,
     SS9_SYS_READ = 0x22,
-    SS9_SYS_WRITE = 0x23
+    SS9_SYS_WRITE = 0x23,
+    SS9_SYS_FILE_LOAD = 0x24,
+    SS9_SYS_FILE_STORE = 0x25
 };
 
 #define SS9_ABI_VERSION 1u
 #define SS9_ERR (-1)
 #define SS9_ERR_PARAM (-2)
 #define SS9_ERR_NOSYS (-38)
+#define SS9_WRITE_MAX 256u
+#define SS9_FILE_MAX 65536u
+#define SS9_FILE_CREATE 0u
+#define SS9_FILE_REPLACE 1u
+
+/* Whole-file transfer; names are root-directory ASCII 8.3 strings. */
+typedef struct {
+    uint32_t name;
+    uint32_t buffer;
+    uint32_t size;
+    uint32_t flags;
+} SS9FileRequest;
+
+typedef struct {
+    uint32_t fd;
+    uint32_t buffer;
+    uint32_t length;
+} SS9WriteRequest;
 
 typedef struct {
     uint32_t name; /* NUL-terminated module name */

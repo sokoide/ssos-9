@@ -1,7 +1,7 @@
 # SSOS-9: OS-9型マルチプロセス・ローダー実装計画
 
 状態: 初期 CLI multi-process を実装済み。S9M1 validator/registry、private data fixup、合成 SR/PC frame、Process Table、built-in PIC counter、foreground/background spawn、wait/kill、Ctrl-C による foreground kill と wait 取消、初期`trap #0` process-control/info syscall、syscall 境界での遅延 kill、孤児の PID 1 への再親化を実装。
-外部 module loader/packer、GCC C runtime/wrapper、VFS/redirect、FAT は未実装。
+限定的な code-only ELF packer、C Hello、write wrapper、2HD からの読み取り専用 FAT12 loader と、SCSI FAT16 ルートの限定的なファイル作成・置換は実装済み。汎用 C runtime、VFS/redirect は未実装。FAT・IOCS の実機動作は未検証。現行範囲と実行手順は [README](../README.md) と [Hello 実装計画](hello-executable-plan.md)を参照する。
 
 対象: 16MHz 以上の MC68000 と 12MiB RAM を必須とする X68000、CLI 専用、Timer D による preemptive scheduling。
 `.x`と`.xdf`の両方で同じ process/module/syscall コードを使う。
@@ -719,16 +719,16 @@ saved PC/SP は最後の退避時点の値であり、実行中 process の瞬�
 arena platform 初期化、S9M1 validator/固定長 Module Table、private data/fixup、合成 SR/PC frame、
 PID 1 と built-in PIC counter の spawn/kill/wait、`ps`/`run`/`kill`/`wait`コマンド、
 version/PID/parent、spawn/exit/wait/kill/sleep/proc_info/proc_list syscall entry/dispatch、syscall 中 kill の安全境界、孤児 process 再親化、foreground Ctrl-C 処理まで実装済み。
-外部 module loader/packer、GCC C runtime/wrapper 以降は未完了。
+code-only ELF packer、C Hello、write wrapper、read-only 2HD FAT12 load は限定実装済み。GOT 対応 packer、一般的な C runtime、fd/redirect は未完了。
 FAT を待たず、RAM filesystem までで process と redirect を学べる状態にする。
 
 | phase | 実装 | 完了条件 |
 | --- | --- | --- |
 | 0 | RAM arena境界、idle、task取消/待ち解除/別stack回収、bootstrap PID対応 | 実装済み。最後の非idle taskがsleep/exitしても停止せず、slotを再利用する |
-| 1 | module header/packer、GOT/fixup、Table、allocator、組み込みcounter image | validator/Table/allocator/image 試験は実装済み。次は file I/O に依存せず ASM ELF→S9M1→組み込みで packer を確認する。外部 file load は phase 4 以降 |
+| 1 | module header/packer、GOT/fixup、Table、allocator、組み込みcounter image | validator/Table/allocator と code-only ELF→S9M1 の限定 packer は実装済み。GOT relocation 対応は未完了 |
 | 2 | trap ABI、process frame、spawn、exit/wait/kill、guard | syscall・遅延kill・孤児再親化を実装済み。同一PICのA5/GOT/stack分離と回収をQEMUで確認 |
 | 2C | C module build、start stub、process-control wrapper、出力なしの C counter | GCC global/BSS/pointer 初期値が 2 process で独立し、exit/sleep/PID を実 syscall で確認する。write/整数出力は phase 4 で追加 |
-| 3 | shell parser、background/foreground、ps/proc/modules/mem/trace | 最小 foreground/background counter、組み込みの背景実行、ps/modules/mem、kill/wait、Ctrl-C 経路を実装済み。quote/一般 argv parser、module/file load、process group は未実装 |
+| 3 | shell parser、background/foreground、ps/proc/modules/mem/trace | foreground/background 実行、ps/modules/mem、kill/wait、Ctrl-C と限定的な disk load/unload は実装済み。quote/一般 argv parser、process group は未実装 |
 | 4 | fd/open-file/node、TTY/null/romfs、継承/dup2、RAM filesystem、外部 module read | stdout を console/file へ同じ write syscall で出力し、ROM reader から bounded load できる |
 | 5 | `>`/`>>`/cat、node lock、partial write/error handling | 同じfileに2 processが追記しても既存内容を上書きしない |
 | 6 | FAT12 read-only、別disk mount、fileからmodule load | FAT fileからmoduleを読み、同じloaderで共有実行できる |
@@ -736,7 +736,7 @@ FAT を待たず、RAM filesystem までで process と redirect を学べる状
 | 後続 | C runtime拡張、子shell、user mode、pipe/shared subroutine module | 前段のABIと所有権を維持して個別に設計・検証 |
 
 phase 0〜3 を C module まで学べる multi process release、phase 4〜5 を redirect release とする。
-現在は内蔵 ASM multi-process subset が完成し、phase 1 の packer と phase 2C は未完了。
+現在は内蔵 ASM multi-process と code-only C Hello が動作し、phase 1 の GOT 対応 packer と phase 2C は未完了。
 section 3.4 の `ss_write` を使う C 例は phase 4 の TTY/write 導入後に実行する。
 それ以前は private data を snapshot/test で観察する出力なし C module を使う。
 外部 loader は phase 4 の bounded read-only ROM reader から開始し、phase 6 で FAT reader を接続する。

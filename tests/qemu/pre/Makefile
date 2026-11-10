@@ -41,7 +41,7 @@ image.o: $(SSOS)/module/image.c $(SSOS)/module/image.h
 	$(CC) $(CFLAGS) -I$(SSOS)/module -c $< -o $@
 module.o: $(SSOS)/module/module.c $(SSOS)/module/module.h $(SSOS)/module/image.h
 	$(CC) $(CFLAGS) -I$(SSOS)/module -I$(SSOS)/mem -c $< -o $@
-builtin.o: $(SSOS)/module/builtin.c $(SSOS)/module/builtin.h $(SSOS)/module/module.h
+builtin.o: $(SSOS)/module/builtin.c $(SSOS)/module/builtin.h $(SSOS)/module/module.h ../../../examples/hello/build/hello.s9m
 	$(CC) $(CFLAGS) -I$(SSOS)/module -c $< -o $@
 process.o: $(SSOS)/process/process.c $(SSOS)/process/process.h
 	$(CC) $(CFLAGS) -I$(SSOS)/module -I$(SSOS)/mem -I$(SSOS)/process -c $< -o $@
@@ -59,8 +59,30 @@ t13_ctrl_c.o: ../../../ssos/os/kernel/ctrl_c.s
 	$(CC) $(ASFLAGS) -c $< -o $@
 t13_cli_console.o: $(SSOS)/app/cli_console.c $(SSOS)/app/cli_console.h
 	$(CC) $(CFLAGS) -I$(SSOS)/app -c $< -o $@
+t13_mux.o: $(SSOS)/app/mux.c $(SSOS)/app/mux.h
+	$(CC) $(CFLAGS) -I$(SSOS)/app -c $< -o $@
 t13_cli_wait.o: $(SSOS)/app/cli_wait.c $(SSOS)/app/cli_wait.h
 	$(CC) $(CFLAGS) -I$(SSOS)/app -c $< -o $@
+t13_cli.o: $(SSOS)/app/cli.c
+	$(CC) $(CFLAGS) -I$(SSOS)/app -c $< -o $@
+t13_cli_parse.o: $(SSOS)/app/cli_parse.c
+	$(CC) $(CFLAGS) -I$(SSOS)/app -c $< -o $@
+t13_fat12.o: $(SSOS)/fs/fat12.c $(SSOS)/fs/fat12.h
+	$(CC) $(CFLAGS) -c $< -o $@
+t13_fat16_write.o: $(SSOS)/fs/fat16_write.c $(SSOS)/fs/fat12.h
+	$(CC) $(CFLAGS) -c $< -o $@
+t13_storage.o: $(SSOS)/fs/storage.c $(SSOS)/fs/storage.h
+	$(CC) $(CFLAGS) -c $< -o $@
+t13_storage_system.o: $(SSOS)/fs/storage_system.c $(SSOS)/fs/storage.h
+	$(CC) $(CFLAGS) -c $< -o $@
+t13_xdf.o: $(SSOS)/fs/xdf.c $(SSOS)/fs/xdf.h
+	$(CC) $(CFLAGS) -c $< -o $@
+../../../examples/hello/build/hello.s9m: FORCE
+	$(MAKE) -C ../../../examples/hello all
+../../../examples/hello/build/hello-data.xdf: ../../../examples/hello/build/hello.s9m
+	$(MAKE) -C ../../../examples/hello all
+hello_image.o: hello_image.s ../../../examples/hello/build/hello.s9m ../../../examples/hello/build/hello-data.xdf
+	$(CC) $(ASFLAGS) -c $< -o $@
 t02_register_save_entry.o: t02_register_save.s
 	$(CC) $(ASFLAGS) -c $< -o $@
 
@@ -81,8 +103,8 @@ t05_timerd_cadence.elf: t05_timerd_cadence.o stub.o sched.o wakeups.o main_task.
 t12_interrupted_start.elf: t12_interrupted_start.o t12_interrupted_start_entry.o $(COMMON_OBJS) ../common/linker.ld
 	$(CC) $(CFLAGS) t12_interrupted_start.o t12_interrupted_start_entry.o $(COMMON_OBJS) $(LDFLAGS) -o $@
 
-t13_process_spawn.elf: t13_process_spawn.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o $(COMMON_OBJS) ../common/linker.ld
-	$(CC) $(CFLAGS) t13_process_spawn.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o $(COMMON_OBJS) $(LDFLAGS) -o $@
+t13_process_spawn.elf: t13_process_spawn.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) ../common/linker.ld
+	$(CC) $(CFLAGS) t13_process_spawn.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) $(LDFLAGS) -o $@
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@

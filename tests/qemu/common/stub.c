@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 volatile uint32_t ss_tick_counter;
+uint8_t __ssosstack_start;
 
 static uint8_t stack_arena[SS_MAX_TASKS * SS_TASK_STACK]
     __attribute__((aligned(4)));
@@ -21,6 +22,23 @@ void* memcpy(void* dst, const void* src, size_t size) {
     const uint8_t* in = src;
     while (size-- != 0) *out++ = *in++;
     return dst;
+}
+
+size_t strlen(const char* text) {
+    size_t n = 0;
+    while (text[n]) n++;
+    return n;
+}
+
+int strcmp(const char* a, const char* b) {
+    while (*a && *a == *b) { a++; b++; }
+    return (int)(uint8_t)*a - (int)(uint8_t)*b;
+}
+
+char* strcat(char* dest, const char* source) {
+    char* out = dest + strlen(dest);
+    while ((*out++ = *source++) != '\0') {}
+    return dest;
 }
 
 #define GOLDFISH_TTY ((volatile uint32_t*)0xff008000)
@@ -46,8 +64,41 @@ void tty_putu(unsigned value) {
     tty_puts(&buf[i]);
 }
 
-/* Console output is not exercised by the process/keyboard integration port. */
-void _iocs_b_print(const char* text) { (void)text; }
+/* Captured IOCS bytes let the process integration test inspect console writes. */
+uint8_t ss_test_console_bytes[256];
+uint32_t ss_test_console_count;
+int _iocs_b_putc(int ch);
+void _iocs_b_print(const char* text) {
+    while (*text) _iocs_b_putc((uint8_t)*text++);
+}
+int _iocs_b_putc(int ch) {
+    if (ss_test_console_count < sizeof(ss_test_console_bytes))
+        ss_test_console_bytes[ss_test_console_count++] = (uint8_t)ch;
+    return ch;
+}
+__attribute__((weak)) int _iocs_b_read(int mode, int position, int size,
+                                       void* out) {
+    (void)mode; (void)position; (void)size; (void)out;
+    return -1;
+}
+
+__attribute__((weak)) void ss_cli_console_write(const uint8_t* bytes,
+                                                uint32_t length) {
+    (void)bytes;
+    (void)length;
+}
+__attribute__((weak)) int32_t ss_system_file_load(const char* name, uint8_t* data,
+                                                   uint32_t capacity) {
+    (void)name; (void)data; (void)capacity;
+    return -1;
+}
+__attribute__((weak)) int32_t ss_system_file_store(const char* name,
+                                                    const uint8_t* data,
+                                                    uint32_t size,
+                                                    uint32_t replace) {
+    (void)name; (void)data; (void)size; (void)replace;
+    return -1;
+}
 void _iocs_b_clr_st(void) {}
 void _iocs_b_locate(int x, int y) {
     (void)x;

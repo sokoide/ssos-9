@@ -54,6 +54,11 @@ LDFLAGS=$(LIB) -lx68kiocs -nostdlib -lc -lm -lgcc
 
 all: standalone
 
+../../examples/hello/build/hello.inc: FORCE
+	$(MAKE) -C ../../examples/hello all
+
+$(OBJDIR)/builtin.o: ../../examples/hello/build/hello.inc
+
 standalone: $(TARGET_FILE)
 	@mkdir -p $(SS_EXPORT_DIR)
 	cp $(TARGET_FILE) $(SS_EXPORT_DIR)/$(TARGET)
@@ -78,7 +83,7 @@ $(OBJDIR):
 
 # VPATH lets the generic %.o: %.c / %.s rules find sources across the
 # variant kernel dir and the shared subsystem dirs.
-VPATH=../os/kernel/preemptive:../os/app:../os/kernel:../os/mem:../os/module:../os/process
+VPATH=../os/kernel/preemptive:../os/app:../os/kernel:../os/mem:../os/module:../os/process:../os/fs
 
 $(OBJDIR)/%.o: %.c | $(OBJDIR)
 	$(CC) -c $< -o $@ $(CCFLAGS)

@@ -18,9 +18,21 @@ make install
 
 ## CLI
 
+Hello のデータディスクは `source ~/.elf2x68k` 後に `make -C examples/hello` で
+`examples/hello/build/hello-data.xdf` として生成する。起動用 `ssos9.xdf` とは別の
+ディスクであり、ドライブ 1 に入れて `load 1 HELLO.S9M`、`run hello`、
+`unload hello` の順に操作する。読み込み対象は 1024 バイト sector、root の ASCII 8.3 名、
+MS-DOS 型 FAT12 に限る。実機・Human68K 形式との互換性は未検証。
+
 - `help`: コマンド一覧
 - `uptime`: カーネル worker の起床回数
 - `run counter`: 内蔵 PIC counter を foreground 起動。Ctrl-C/Break で終了要求を出し、回収後に prompt へ戻る
+- `run hello`: クロスビルドして組み込んだ S9M1 サンプルを起動し、`Hello` を表示して終了する
+- `unload hello`: 実行後に保持している Hello のイメージを解放する。実行中は解放できない
+- `load 1 HELLO.S9M`: ドライブ 1 の別 2HD データディスクから S9M1 を読み込む
+- `smount ID [START]`: SCSI target の指定ブロック（省略時 0）にある FAT16 をマウント
+- `swrite FILE TEXT` / `sreplace FILE TEXT`: FAT16 ルートに短い文字列を新規作成／置換
+- `sread FILE`: FAT16 ルートのファイルを表示（最大 256 byte）
 - `run counter &` / `run counter&`: 内蔵 PIC counter をバックグラウンド起動
 - `ps`: PID、親 PID、状態、共有 module、private data/GOT のアドレスを表示
 - `modules`: module ID、名前、共有 image/code/entry アドレス、image サイズ、参照数を表示
@@ -32,6 +44,7 @@ make install
 - `trace`: 直近 16 件の task create/start/sleep/wake/switch/exit を表示
 - `clear`: IOCS テキスト画面を消去
 - `version`: OS 名を表示
+- `mux`: 3 つの全画面コンソールを起動。`~` の後に `1`～`3`、`F1`～`F3`、または `Ctrl-]` の後に `1`～`3` で切り替える。`~` の入力には `~~` を使う。MPX68K では `~` と数字、XEiJ では `F1`～`F3` による切り替えと画面保持を確認済み。
 - `exit`: `.x` は Human68K へ戻る。`.xdf` は初期プロセスの終了を拒否する
 
 末尾の `&` は全コマンドで共通に解析し、直前の空白は不要です。
@@ -40,7 +53,13 @@ make install
 `exit&` はその子だけを終了します。`wait PID&` は親 CLI の子を引き継がないため、
 親が起動した PID を回収できず終了値 127 を返します。背景の子も `wait PID` で回収します。
 IOCS は短い software lock で直列化しますが、背景出力後の入力行再描画は未対応です。
+SCSI/FAT16 は ASCII 8.3 のルートファイルに限定し、I/O エラーまたは書き込み開始後の失敗時は追加書き込みを拒否します。
+アプリは `ss9_file_load` / `ss9_file_store` で最大 65536 byte のファイル全体を読み書きできます。
+保存は新規作成または既存ファイル置換を明示し、置換には新しいクラスタを使います。
+XEiJ 0.26.10.08（MC68000、12 MiB、Human68k 3.02 から起動）では、SCSI ID 1 の 32 MiB FAT16 イメージに対する `smount`、新規作成、置換、読み戻しを確認しました。終了後に `mtype` と `fsck.fat -n` でも内容と整合性を確認しています。実機・実媒体と障害時の整合性は未検証です。ファイル記述子を用いる汎用 I/O は未実装です。
 行途中の `&`、`&&`、`&` だけの入力は構文エラーです。
+
+開発状況、残る制約、エディタ・アセンブラ・リンカまでの順序は [開発状況と今後のプラン](docs/status-and-plan.md)を参照してください。
 
 ## 学習の進め方
 
@@ -75,8 +94,8 @@ process の生存状態であり、scheduler の実行中/sleep の区別では�
 | trap、kill/wait、孤児、Ctrl-C | `ssos/os/kernel/syscall*`, `ssos/os/app/cli_wait.c` | QEMU T13 |
 
 `modules` は各行の snapshot、`mem` は一組の snapshot です。出力中にも process は進行します。
-外部 module、C runtime、fd/redirect、FAT の学習は [ローダー計画](docs/multiprocess-loader-plan.md)の
-各フェーズで追加します。計画のコマンド例には未実装機能が含まれます。
+外部 module、C runtime、fd/redirect の拡張は [ローダー計画](docs/multiprocess-loader-plan.md)を
+参照してください。計画のコマンド例には未実装機能が含まれます。
 
 ## デバッグ
 
@@ -114,7 +133,7 @@ Human68K の他の MFP source の enable/mask 状態を変更しません。MFP 
 
 ## 現在の実装範囲
 
-現在は CLI と heartbeat/idle/reaper の kernel task、S9M1 validator/Module Table、private data/fixup、Process Table、spawn/kill/wait、内蔵 PIC counter を実装しています。`run counter &`で同一コードを複数 process として起動し、各 process の A5/GOT、data、stack を`ps`で観察できます。`ssos/include/ssos9/syscall.h`に初期`trap #0` ABI を定義し、QEMU で trap 入口、version、PID/親 PID、process 情報/list、child kill/wait を確認します。任意の`.s9m`ファイルを読む loader、GCC C module runtime、user 向け wrapper、file I/O/redirect は未実装です。kernel worker task は独立 process ではありません。
+現在は CLI、kernel task、S9M1 validator/registry、private data/fixup、spawn/kill/wait、内蔵 PIC counter を実装しています。`run counter &`で共有 code と process ごとの A5/GOT、data、stack を観察できます。限定的な C Hello と write wrapper、2HD の読み取り専用 FAT12 からの S9M1 load も追加しています。packer は code-only ELF に限定し、一般的な C runtime、汎用 file I/O、redirect は未実装です。QEMU のディスク・IOCS は代役であり、実機での動作は未検証です。kernel worker task は独立 process ではありません。
 
 [全体設計](docs/design.md)は責務境界と ABI 変更方針を定めます。[マルチプロセス・ローダー実装計画](docs/multiprocess-loader-plan.md)に、共有 PIC、process lifecycle、background 起動、syscall、将来の FAT と stdout の`>`/`>>` redirect の設計と実装順序をまとめています。
 

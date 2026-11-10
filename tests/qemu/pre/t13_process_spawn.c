@@ -1,6 +1,9 @@
 /* Run one shared S9M1 code image with independent A5/GOT state. */
 
 #include "../../../ssos/os/app/cli_wait.h"
+#include "../../../ssos/os/app/cli.h"
+#include "../../../ssos/os/fs/fat12.h"
+#include "../../../ssos/os/fs/scsi_volume.h"
 #include "builtin.h"
 #include "main_task.h"
 #include "process.h"
@@ -17,6 +20,71 @@ static uint8_t fake_key_count;
 extern void ss_test_install_syscall_vector(void);
 extern void ss_test_install_ctrl_c_vector(void);
 extern int32_t ss_test_syscall_roundtrip(void);
+extern uint8_t ss_test_console_bytes[256];
+extern uint32_t ss_test_console_count;
+extern const uint8_t ss_test_hello_image[], ss_test_hello_image_end[];
+static uint8_t fat_disk[8][512];
+extern const uint8_t ss_test_data_disk[];
+static int32_t fail_disk_sector = -1;
+static uint32_t disk_read_calls;
+static uint8_t scsi_test_disk[50][512];
+static int scsi_test_read(void* context, uint32_t sector, uint8_t* out) {
+    (void)context;
+    if (sector >= 50) return -1;
+    for (unsigned i = 0; i < 512; i++) out[i] = scsi_test_disk[sector][i];
+    return 0;
+}
+static int scsi_test_write(void* context, uint32_t sector, const uint8_t* in) {
+    (void)context;
+    if (sector >= 50) return -1;
+    for (unsigned i = 0; i < 512; i++) scsi_test_disk[sector][i] = in[i];
+    return 0;
+}
+
+int ss_scsi_volume_mount_iocs(SSScsiVolume* volume, uint8_t target,
+                              uint32_t start, uint32_t blocks) {
+    (void)blocks;
+    if (target != 3 || start != 10) return -1;
+    return ss_storage_mount(&volume->storage, scsi_test_read, scsi_test_write,
+                            NULL, 5000, 512);
+}
+
+int _iocs_b_read(int mode, int position, int size, void* out) {
+    disk_read_calls++;
+    unsigned pos = (unsigned)position;
+    unsigned track = (pos >> 16) & 0xffu;
+    unsigned side = (pos >> 8) & 0xffu;
+    unsigned number = pos & 0xffu;
+    if (mode != 0x9170 || (pos >> 24) != 3 || track >= 77 || side > 1 ||
+        number < 1 || number > 8 || size != 1024)
+        return -1;
+    unsigned sector = (track * 2 + side) * 8 + number - 1;
+    if ((int32_t)sector == fail_disk_sector)
+        return -1;
+    for (unsigned i = 0; i < 1024; i++)
+        ((uint8_t*)out)[i] = ss_test_data_disk[sector * 1024 + i];
+    return 0;
+}
+
+static int fat_read_sector(void* context, uint32_t sector, uint8_t* out) {
+    (void)context;
+    if (sector >= 8) return -1;
+    for (unsigned i = 0; i < 512; i++) out[i] = fat_disk[sector][i];
+    return 0;
+}
+
+typedef struct {
+    const uint8_t* current;
+    const uint8_t* end;
+} HelloReader;
+
+static int32_t hello_read(void* context, uint8_t* out, uint32_t size) {
+    HelloReader* reader = context;
+    uint32_t remaining = (uint32_t)(reader->end - reader->current);
+    if (size > remaining) size = remaining;
+    for (uint32_t i = 0; i < size; i++) out[i] = *reader->current++;
+    return (int32_t)size;
+}
 
 int _iocs_b_keysns(void) { return fake_key_count; }
 
@@ -163,6 +231,17 @@ static void run_ticks(unsigned count) {
     for (unsigned i = 0; i < count; i++) tick();
 }
 
+static int console_contains(const char* needle) {
+    for (uint32_t i = 0; i < ss_test_console_count; i++) {
+        uint32_t j = 0;
+        while (needle[j] && i + j < ss_test_console_count &&
+               ss_test_console_bytes[i + j] == (uint8_t)needle[j])
+            j++;
+        if (!needle[j]) return 1;
+    }
+    return 0;
+}
+
 static volatile uint32_t kernel_child_value;
 static volatile SSProcessId kernel_child_pid;
 
@@ -206,11 +285,11 @@ int main(void) {
              j < sizeof(pointer_calls) / sizeof(pointer_calls[0]); j++)
             if (call_sys(pointer_calls[j], invalid[i]) != SS9_ERR_PARAM)
                 fail("unsafe syscall request accepted");
-    SS9ProcessInfoRequest bad_output = {1, 0x00bffffcu};
+    SS9ProcessInfoRequest bad_output __attribute__((aligned(4))) = {1, 0x00bffffcu};
     if (call_sys(SS9_SYS_PROC_INFO, (uint32_t)(uintptr_t)&bad_output) !=
         SS9_ERR_PARAM)
         fail("output crossing RAM end accepted");
-    SS9SpawnRequest bad_spawn = {0x00c00000u, 0, 0, 0};
+    SS9SpawnRequest bad_spawn __attribute__((aligned(4))) = {0x00c00000u, 0, 0, 0};
     if (call_sys(SS9_SYS_SPAWN, (uint32_t)(uintptr_t)&bad_spawn) !=
         SS9_ERR_PARAM)
         fail("invalid module name accepted");
@@ -239,7 +318,7 @@ int main(void) {
     if (call_sys(SS9_SYS_SPAWN, (uint32_t)(uintptr_t)&bad_spawn) !=
         SS9_ERR_PARAM)
         fail("unterminated argument accepted");
-    SS9ProcessListRequest bad_list = {2, 0, 0x00bffffcu};
+    SS9ProcessListRequest bad_list __attribute__((aligned(4))) = {2, 0, 0x00bffffcu};
     if (call_sys(SS9_SYS_PROC_LIST, (uint32_t)(uintptr_t)&bad_list) !=
         SS9_ERR_PARAM)
         fail("list crossing RAM end accepted");
@@ -292,6 +371,35 @@ int main(void) {
         image_result != SS9_ERR_PARAM || foreign_request != SS9_ERR_PARAM)
         fail("private syscall buffer policy");
 
+    uint8_t write_data[] = {'H', 0, 'i', '\n'};
+    SS9WriteRequest write_req __attribute__((aligned(4))) = {
+        1, (uint32_t)(uintptr_t)write_data, sizeof(write_data)};
+    ss_test_console_count = 0;
+    if (call_sys(SS9_SYS_WRITE, (uint32_t)(uintptr_t)&write_req) != 4 ||
+        ss_test_console_count != 4 || ss_test_console_bytes[0] != 'H' ||
+        ss_test_console_bytes[1] != 0 || ss_test_console_bytes[2] != 'i' ||
+        ss_test_console_bytes[3] != '\n')
+        fail("write bytes");
+    write_req.fd = 2;
+    if (call_sys(SS9_SYS_WRITE, (uint32_t)(uintptr_t)&write_req) !=
+        SS9_ERR_PARAM)
+        fail("write fd");
+    write_req.fd = 1;
+    write_req.length = SS9_WRITE_MAX + 1u;
+    if (call_sys(SS9_SYS_WRITE, (uint32_t)(uintptr_t)&write_req) !=
+        SS9_ERR_PARAM)
+        fail("write length");
+    write_req.buffer = 0xffffffffu;
+    write_req.length = 2;
+    if (call_sys(SS9_SYS_WRITE, (uint32_t)(uintptr_t)&write_req) !=
+        SS9_ERR_PARAM)
+        fail("write range");
+    write_req.length = 0;
+    if (call_sys(SS9_SYS_WRITE, (uint32_t)(uintptr_t)&write_req) != 0 ||
+        call_sys(SS9_SYS_WRITE, (uint32_t)(uintptr_t)&write_req + 1u) !=
+            SS9_ERR_PARAM || ss_test_console_count != 4)
+        fail("write empty or unaligned request");
+
     set_counter(first.data_base, 1000);
     if (get32(second.data_base + 8) != 0)
         fail("data area aliases");
@@ -304,11 +412,11 @@ int main(void) {
         first.state != SS_PROCESS_READY || second.state != SS_PROCESS_READY)
         fail("running process was reaped");
 
-    SS9ProcessInfo info;
-    SS9ProcessInfoRequest info_request = {first_pid,
+    SS9ProcessInfo info __attribute__((aligned(4)));
+    SS9ProcessInfoRequest info_request __attribute__((aligned(4))) = {first_pid,
                                           (uint32_t)(uintptr_t)&info};
-    SS9ProcessInfo entries[SS_PROCESS_MAX];
-    SS9ProcessListRequest list_request = {SS_PROCESS_MAX, 0,
+    SS9ProcessInfo entries[SS_PROCESS_MAX] __attribute__((aligned(4)));
+    SS9ProcessListRequest list_request __attribute__((aligned(4))) = {SS_PROCESS_MAX, 0,
                                           (uint32_t)(uintptr_t)entries};
     if (call_sys(SS9_SYS_PROC_INFO, (uint32_t)(uintptr_t)&info_request) !=
             SS_OK ||
@@ -320,8 +428,8 @@ int main(void) {
         fail("syscall process queries");
 
     const char* syscall_name = "qcounter";
-    const char* syscall_argv[] = {"qcounter"};
-    SS9SpawnRequest spawn_request = {(uint32_t)(uintptr_t)syscall_name, 1, 0,
+    const char* syscall_argv[] __attribute__((aligned(4))) = {"qcounter"};
+    SS9SpawnRequest spawn_request __attribute__((aligned(4))) = {(uint32_t)(uintptr_t)syscall_name, 1, 0,
                                      (uint32_t)(uintptr_t)syscall_argv};
     int32_t spawned_pid =
         call_sys(SS9_SYS_SPAWN, (uint32_t)(uintptr_t)&spawn_request);
@@ -329,7 +437,7 @@ int main(void) {
         fail("syscall spawn");
 
     uint16_t status;
-    SS9WaitRequest wait_request = {first_pid, 0, 0};
+    SS9WaitRequest wait_request __attribute__((aligned(4))) = {first_pid, 0, 0};
     if (call_sys(SS9_SYS_KILL, first_pid) != SS_OK)
         fail("syscall kill first");
     if (call_sys(SS9_SYS_WAIT, (uint32_t)(uintptr_t)&wait_request) !=
@@ -346,7 +454,7 @@ int main(void) {
     }
     if (wait_status != SS_OK || status != 0)
         fail("reap/wait second");
-    SS9WaitRequest syscall_wait = {(uint32_t)spawned_pid, 0, 0};
+    SS9WaitRequest syscall_wait __attribute__((aligned(4))) = {(uint32_t)spawned_pid, 0, 0};
     if (call_sys(SS9_SYS_KILL, (uint32_t)spawned_pid) != SS_OK ||
         call_sys(SS9_SYS_WAIT, (uint32_t)(uintptr_t)&syscall_wait) !=
             spawned_pid ||
@@ -447,6 +555,215 @@ int main(void) {
         ss_memory_free_bytes() != kernel_free_before)
         fail("kernel child copied argument/return/reap");
 
-    tty_puts("OK shared code/private A5 data\n");
+    uint32_t hello_free_before = ss_memory_free_bytes();
+    HelloReader hello_reader = {ss_test_hello_image, ss_test_hello_image_end};
+    SSModuleId hello_module;
+    if (ss_module_load_reader(hello_read, &hello_reader,
+                              (uint32_t)(ss_test_hello_image_end -
+                                         ss_test_hello_image),
+                              &hello_module) != SS_OK)
+        fail("hello load");
+    SSProcessId hello_pid;
+    ss_test_console_count = 0;
+    if (ss_process_spawn(1, hello_module, 0, NULL, &hello_pid) != SS_OK)
+        fail("hello spawn");
+    run_ticks(32);
+    if (ss_cli_wait_pid(hello_pid, &status, NULL) != SS_OK || status != 0 ||
+        ss_test_console_count != 6 || ss_test_console_bytes[0] != 'H' ||
+        ss_test_console_bytes[1] != 'e' || ss_test_console_bytes[2] != 'l' ||
+        ss_test_console_bytes[3] != 'l' || ss_test_console_bytes[4] != 'o' ||
+        ss_test_console_bytes[5] != '\n')
+        fail("hello output or wait");
+    if (ss_module_unload(hello_module) != SS_OK ||
+        ss_memory_free_bytes() != hello_free_before)
+        fail("hello cleanup");
+
+    char command[] = "run hello &";
+    ss_test_console_count = 0;
+    if (ss_cli_execute_line(command) != 0 ||
+        ss_module_find("hello", &hello_module) != SS_OK)
+        fail("shell hello command");
+    char busy_unload[] = "unload hello";
+    ss_test_console_count = 0;
+    if (ss_cli_execute_line(busy_unload) != 0 ||
+        !console_contains("Unable to unload module.") ||
+        ss_module_find("hello", &hello_module) != SS_OK)
+        fail("shell unload active module");
+    ss_test_console_count = 0;
+    run_ticks(32);
+    if (ss_test_console_count != 6 || ss_test_console_bytes[0] != 'H' ||
+        ss_test_console_bytes[1] != 'e' || ss_test_console_bytes[2] != 'l' ||
+        ss_test_console_bytes[3] != 'l' || ss_test_console_bytes[4] != 'o' ||
+        ss_test_console_bytes[5] != '\n')
+        fail("shell hello output");
+    SSProcessId shell_hello_pid = 0;
+    for (uint16_t i = 0; i < SS_PROCESS_MAX; i++) {
+        SSProcessSnapshot child;
+        if (ss_process_snapshot_at(i, &child) == SS_OK &&
+            child.module_id == hello_module)
+            shell_hello_pid = child.pid;
+    }
+    if (!shell_hello_pid || ss_process_wait(1, shell_hello_pid, &status) != SS_OK ||
+        status != 0)
+        fail("shell background cleanup");
+
+    char foreground_command[] = "run hello";
+    ss_test_console_count = 0;
+    if (ss_cli_execute_line(foreground_command) != 0 ||
+        !console_contains("Hello\n") ||
+        !console_contains("exited with status 0\r\n"))
+        fail("shell foreground hello or return");
+    char unload_command[] = "unload hello";
+    ss_test_console_count = 0;
+    if (ss_cli_execute_line(unload_command) != 0 ||
+        !console_contains("Module unloaded.") ||
+        ss_module_find("hello", &hello_module) != SS_ERR_ID ||
+        ss_memory_free_bytes() != hello_free_before)
+        fail("shell hello cleanup");
+
+    uint32_t hello_size = (uint32_t)(ss_test_hello_image_end - ss_test_hello_image);
+    if (hello_size > 512) fail("hello image exceeds fixture cluster");
+    fat_disk[0][12] = 2; fat_disk[0][13] = 1; fat_disk[0][14] = 1;
+    fat_disk[0][16] = 1; fat_disk[0][17] = 16; fat_disk[0][19] = 8;
+    fat_disk[0][22] = 1; fat_disk[0][510] = 0x55; fat_disk[0][511] = 0xaa;
+    fat_disk[1][3] = 0xff; fat_disk[1][4] = 0x0f;
+    const char disk_name[] = "HELLO   S9M";
+    for (unsigned i = 0; i < 11; i++) fat_disk[2][i] = disk_name[i];
+    fat_disk[2][26] = 2;
+    fat_disk[2][28] = (uint8_t)hello_size;
+    fat_disk[2][29] = (uint8_t)(hello_size >> 8);
+    for (uint32_t i = 0; i < hello_size; i++) fat_disk[3][i] = ss_test_hello_image[i];
+    SSFat12 volume;
+    SSFat12File file;
+    if (ss_fat12_mount(&volume, fat_read_sector, NULL, 8) ||
+        ss_fat12_open(&volume, "hello.s9m", &file) ||
+        ss_module_load_reader(ss_fat12_read, &file, file.size, &hello_module) != SS_OK)
+        fail("FAT hello load");
+    ss_test_console_count = 0;
+    char disk_command[] = "run hello";
+    if (ss_cli_execute_line(disk_command) != 0 ||
+        !console_contains("Hello\n") ||
+        !console_contains("exited with status 0\r\n"))
+        fail("FAT hello execution");
+    if (ss_module_unload(hello_module) != SS_OK ||
+        ss_memory_free_bytes() != hello_free_before)
+        fail("FAT hello cleanup");
+
+    char invalid_drive_command[] = "load 4 HELLO.S9M";
+    ss_test_console_count = 0;
+    disk_read_calls = 0;
+    if (ss_cli_execute_line(invalid_drive_command) != 0 ||
+        !console_contains("Invalid 2HD drive.") || disk_read_calls != 0 ||
+        ss_memory_free_bytes() != hello_free_before)
+        fail("invalid disk drive accepted");
+    char bad_disk_command[] = "load 0 HELLO.S9M";
+    ss_test_console_count = 0;
+    if (ss_cli_execute_line(bad_disk_command) != 0 ||
+        !console_contains("Unable to load module: disk or FAT12.") ||
+        ss_memory_free_bytes() != hello_free_before ||
+        ss_module_find("hello", &hello_module) != SS_ERR_ID)
+        fail("disk read failure cleanup");
+    char missing_file_command[] = "load 1 MISSING.S9M";
+    ss_test_console_count = 0;
+    if (ss_cli_execute_line(missing_file_command) != 0 ||
+        !console_contains("Unable to load module: file or cluster chain.") ||
+        ss_memory_free_bytes() != hello_free_before ||
+        ss_module_find("hello", &hello_module) != SS_ERR_ID)
+        fail("missing disk file cleanup");
+    fail_disk_sector = 11; /* Generated disk's first data sector. */
+    char failing_file_command[] = "load 1 HELLO.S9M";
+    ss_test_console_count = 0;
+    if (ss_cli_execute_line(failing_file_command) != 0 ||
+        !console_contains("Unable to load module: image, memory, or registry.") ||
+        ss_memory_free_bytes() != hello_free_before ||
+        ss_module_find("hello", &hello_module) != SS_ERR_ID)
+        fail("disk file read failure cleanup");
+    fail_disk_sector = -1;
+    char load_command[] = "load 1 HELLO.S9M";
+    ss_test_console_count = 0;
+    if (ss_cli_execute_line(load_command) != 0 || !console_contains("Module loaded.") ||
+        ss_module_find("hello", &hello_module) != SS_OK)
+        fail("disk CLI load");
+    uint32_t loaded_free = ss_memory_free_bytes();
+    SSModuleId first_loaded = hello_module;
+    char load_again[] = "load 1 HELLO.S9M";
+    ss_test_console_count = 0;
+    if (ss_cli_execute_line(load_again) != 0 ||
+        !console_contains("Module loaded.") ||
+        ss_module_find("hello", &hello_module) != SS_OK ||
+        hello_module != first_loaded || ss_memory_free_bytes() != loaded_free)
+        fail("disk duplicate load cleanup");
+    ss_test_console_count = 0;
+    char run_loaded[] = "run hello";
+    if (ss_cli_execute_line(run_loaded) != 0 || !console_contains("Hello\n") ||
+        !console_contains("exited with status 0"))
+        fail("disk CLI run");
+    if (ss_module_unload(hello_module) != SS_OK ||
+        ss_memory_free_bytes() != hello_free_before)
+        fail("disk CLI cleanup");
+
+    scsi_test_disk[0][12] = 2; scsi_test_disk[0][13] = 1;
+    scsi_test_disk[0][14] = 1; scsi_test_disk[0][16] = 2;
+    scsi_test_disk[0][17] = 16; scsi_test_disk[0][19] = 0x88;
+    scsi_test_disk[0][20] = 0x13; scsi_test_disk[0][22] = 20;
+    scsi_test_disk[0][510] = 0x55; scsi_test_disk[0][511] = 0xaa;
+    char scsi_mount[] = "smount 3 10";
+    ss_test_console_count = 0;
+    if (ss_cli_execute_line(scsi_mount) || !console_contains("FAT16 mounted."))
+        fail("SCSI FAT16 mount");
+    char scsi_write[] = "swrite MSG.TXT hello";
+    ss_test_console_count = 0;
+    if (ss_cli_execute_line(scsi_write) || !console_contains("File written."))
+        fail("SCSI FAT16 write");
+    char scsi_read[] = "sread MSG.TXT";
+    ss_test_console_count = 0;
+    if (ss_cli_execute_line(scsi_read) || !console_contains("hello\r\n"))
+        fail("SCSI FAT16 read");
+    char file_syscall_name[] = "ABI.TXT";
+    uint8_t syscall_data[8] = {'a', 'b', 'c', 'd'};
+    SS9FileRequest file_request __attribute__((aligned(4))) = {
+        (uint32_t)(uintptr_t)file_syscall_name,
+        (uint32_t)(uintptr_t)syscall_data, 4, SS9_FILE_CREATE
+    };
+    if (call_sys(SS9_SYS_FILE_STORE, (uint32_t)(uintptr_t)&file_request) != 4)
+        fail("FAT16 store syscall");
+    for (unsigned i = 0; i < 8; i++) syscall_data[i] = 0;
+    file_request.size = sizeof(syscall_data);
+    file_request.flags = 0;
+    if (call_sys(SS9_SYS_FILE_LOAD, (uint32_t)(uintptr_t)&file_request) != 4 ||
+        syscall_data[0] != 'a' || syscall_data[3] != 'd')
+        fail("FAT16 load syscall");
+    file_request.flags = 2;
+    if (call_sys(SS9_SYS_FILE_STORE, (uint32_t)(uintptr_t)&file_request) != SS9_ERR_PARAM)
+        fail("FAT16 syscall flags");
+    file_request.flags = 0;
+    file_request.buffer = 0;
+    if (call_sys(SS9_SYS_FILE_LOAD, (uint32_t)(uintptr_t)&file_request) != SS9_ERR_PARAM)
+        fail("FAT16 syscall buffer");
+
+    char mux_command[] = "mux";
+    if (ss_cli_execute_line(mux_command) != 0) fail("mux command");
+    for (unsigned i = 0; i < 40; i++) tick();
+    SSProcessId shells[2] = {0, 0};
+    for (unsigned i = 0; i < SS_PROCESS_MAX; i++) {
+        SSProcessSnapshot process;
+        if (ss_process_snapshot_at(i, &process) == SS_OK && process.ppid == 1 &&
+            process.name[0] == 's' && process.name[1] == 'h' &&
+            process.console_id >= 1 && process.console_id <= 2)
+            shells[process.console_id - 1] = process.pid;
+    }
+    if (!shells[0] || !shells[1] || shells[0] == shells[1])
+        fail("mux shell consoles");
+    if (ss_process_kill(shells[0]) != SS_OK ||
+        ss_process_kill(shells[1]) != SS_OK) fail("mux shell kill");
+    uint16_t shell_status;
+    int16_t first_wait = SS_ERR_STATE, second_wait = SS_ERR_STATE;
+    for (unsigned i = 0; i < 200 && (first_wait == SS_ERR_STATE || second_wait == SS_ERR_STATE); i++) {
+        tick();
+        if (first_wait == SS_ERR_STATE) first_wait = ss_process_wait(1, shells[0], &shell_status);
+        if (second_wait == SS_ERR_STATE) second_wait = ss_process_wait(1, shells[1], &shell_status);
+    }
+    if (first_wait != SS_OK || second_wait != SS_OK) fail("mux shell reap");
+    tty_puts("OK shared code/private A5 data and hello\n");
     for (;;) tick();
 }

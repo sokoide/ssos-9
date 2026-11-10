@@ -2,7 +2,7 @@
 
 ## Repository purpose
 
-SSOS-9 is a minimum CLI-only operating system for the Sharp X68000. The only supported scheduler is preemptive, driven by the MC68000 Timer D interrupt. It has a root CLI, heartbeat/idle/reaper kernel tasks, a first-fit arena allocator, an S9M1 image validator/registry, private data fixups, built-in PIC process execution, and an initial `trap #0` syscall ABI for process control and inspection. External module loading, a C module runtime, and file I/O/redirect remain unimplemented. Runtime requirements are an MC68000 at 16 MHz or faster and 12 MiB contiguous main RAM.
+SSOS-9 is a minimum CLI-only operating system for the Sharp X68000. The only supported scheduler is preemptive, driven by the MC68000 Timer D interrupt. It has a root CLI, heartbeat/idle/reaper kernel tasks, a first-fit arena allocator, an S9M1 image validator/registry, private data fixups, PIC process execution, and an initial `trap #0` syscall ABI. A restricted C Hello module, read-only 2HD FAT12 loader, limited SCSI FAT16 file operations, and a three-console shell multiplexer are available. A general C runtime, file-descriptor I/O, and redirection remain unimplemented. Disk and IOCS behavior need hardware verification. Runtime requirements are an MC68000 at 16 MHz or faster and 12 MiB contiguous main RAM.
 
 ## Layout
 

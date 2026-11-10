@@ -53,6 +53,11 @@ ASFLAGS=-m68000 --register-prefix-optional --traditional-format -I../include -I.
 
 all: $(TARGET_BIN)
 
+../../examples/hello/build/hello.inc: FORCE
+	$(MAKE) -C ../../examples/hello all
+
+$(BUILD_DIR)/module/builtin.o: ../../examples/hello/build/hello.inc
+
 $(TARGET_BIN): $(TARGET_ELF)
 	$(OBJCOPY) -O binary $< $@
 
