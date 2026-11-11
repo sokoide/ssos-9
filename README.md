@@ -30,7 +30,7 @@ MS-DOS 型 FAT12 に限る。実機・Human68K 形式との互換性は未検証
 - `run hello`: クロスビルドして組み込んだ S9M1 サンプルを起動し、`Hello` を表示して終了する
 - `unload hello`: 実行後に保持している Hello のイメージを解放する。実行中は解放できない
 - `load 1 HELLO.S9M`: ドライブ 1 の別 2HD データディスクから S9M1 を読み込む
-- `smount ID [START]`: SCSI target の指定ブロック（省略時 0）にある FAT16 をマウント
+- `smount ID [START [BLOCKS]]`: SCSI target の指定ブロック（省略時 0）にある FAT16 をマウント。`BLOCKS` を指定するとそのブロック数を上限とし、ボリュームが範囲を超える場合は拒否する。
 - `swrite FILE TEXT` / `sreplace FILE TEXT`: FAT16 ルートに短い文字列を新規作成／置換
 - `sread FILE`: FAT16 ルートのファイルを表示（最大 256 byte）
 - `run counter &` / `run counter&`: 内蔵 PIC counter をバックグラウンド起動
@@ -53,7 +53,8 @@ MS-DOS 型 FAT12 に限る。実機・Human68K 形式との互換性は未検証
 `exit&` はその子だけを終了します。`wait PID&` は親 CLI の子を引き継がないため、
 親が起動した PID を回収できず終了値 127 を返します。背景の子も `wait PID` で回収します。
 IOCS は短い software lock で直列化しますが、背景出力後の入力行再描画は未対応です。
-SCSI/FAT16 は ASCII 8.3 のルートファイルに限定し、I/O エラーまたは書き込み開始後の失敗時は追加書き込みを拒否します。
+SCSI/FAT16 は ASCII 8.3 のルートファイルに限定し、マウント時に FAT の複製が一致しない場合は拒否します。I/O エラーまたは書き込み開始後の失敗時は追加書き込みを拒否します。
+マウント境界と障害後の扱いは [ストレージの契約](docs/storage-contract.md)を参照してください。
 アプリは `ss9_file_load` / `ss9_file_store` で最大 65536 byte のファイル全体を読み書きできます。
 保存は新規作成または既存ファイル置換を明示し、置換には新しいクラスタを使います。
 XEiJ 0.26.10.08（MC68000、12 MiB、Human68k 3.02 から起動）では、SCSI ID 1 の 32 MiB FAT16 イメージに対する `smount`、新規作成、置換、読み戻しを確認しました。終了後に `mtype` と `fsck.fat -n` でも内容と整合性を確認しています。実機・実媒体と障害時の整合性は未検証です。ファイル記述子を用いる汎用 I/O は未実装です。

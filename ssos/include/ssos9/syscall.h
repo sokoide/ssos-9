@@ -37,6 +37,19 @@ enum {
 #define SS9_FILE_MAX 65536u
 #define SS9_FILE_CREATE 0u
 #define SS9_FILE_REPLACE 1u
+#define SS9_OPEN_READ 0u
+#define SS9_READ_MAX 65536u
+
+typedef struct {
+    uint32_t name;
+    uint32_t flags;
+} SS9OpenRequest;
+
+typedef struct {
+    uint32_t fd;
+    uint32_t buffer;
+    uint32_t length;
+} SS9ReadRequest;
 
 /* Whole-file transfer; names are root-directory ASCII 8.3 strings. */
 typedef struct {

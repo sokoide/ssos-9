@@ -1,6 +1,7 @@
 #include "process.h"
 
 #include "../mem/system_arena.h"
+#include "../fs/storage.h"
 
 #include <stddef.h>
 
@@ -508,6 +509,7 @@ void ss_process_reap_task(uint16_t task_id) {
         SSProcessId exiting_pid = process_table[i].pid;
         process_table[i].state = SS_PROCESS_REAPING;
         ss_irq_restore(saved_sr);
+        ss_system_close_process_files(exiting_pid);
         if (module_id != 0)
             ss_module_release(module_id);
         if (block != NULL)

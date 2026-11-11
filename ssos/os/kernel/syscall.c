@@ -185,9 +185,25 @@ int32_t ss_syscall_dispatch(uint32_t number, uint32_t request) {
         return ss_system_file_store(name, (const uint8_t*)(uintptr_t)req.buffer,
                                     req.size, req.flags);
     }
-    case SS9_SYS_READ:
-    case SS9_SYS_OPEN:
+    case SS9_SYS_OPEN: {
+        if (!valid_buffer(request, sizeof(SS9OpenRequest), 0)) return SS9_ERR_PARAM;
+        SS9OpenRequest req = *(const SS9OpenRequest*)(uintptr_t)request;
+        char name[13];
+        if (req.flags != SS9_OPEN_READ || !copy_string(req.name, name, sizeof(name)))
+            return SS9_ERR_PARAM;
+        return ss_system_open_reader(ss_process_current_id(), name);
+    }
+    case SS9_SYS_READ: {
+        if (!valid_buffer(request, sizeof(SS9ReadRequest), 0)) return SS9_ERR_PARAM;
+        SS9ReadRequest req = *(const SS9ReadRequest*)(uintptr_t)request;
+        if (req.length > SS9_READ_MAX ||
+            (req.length && !ss_process_memory_access(req.buffer, req.length, 1)))
+            return SS9_ERR_PARAM;
+        return ss_system_read_fd(ss_process_current_id(), req.fd,
+                                 (uint8_t*)(uintptr_t)req.buffer, req.length);
+    }
     case SS9_SYS_CLOSE:
+        return ss_system_close_fd(ss_process_current_id(), request);
     default: return SS9_ERR_NOSYS;
     }
 }

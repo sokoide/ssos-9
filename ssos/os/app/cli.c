@@ -267,16 +267,17 @@ static int interactive_shell(void) {
 }
 
 static int run_process_command(char* tokens[], uint16_t count, int background) {
-    if (strcmp(tokens[0], "smount") == 0 && (count == 2 || count == 3)) {
-        uint32_t target, start = 0;
+    if (strcmp(tokens[0], "smount") == 0 && count >= 2 && count <= 4) {
+        uint32_t target, start = 0, blocks = 0;
         if (!parse_u32(tokens[1], &target) || target > 7 ||
-            (count == 3 && !parse_u32(tokens[2], &start))) {
-            print("Invalid SCSI target or start block.\r\n");
+            (count >= 3 && !parse_u32(tokens[2], &start)) ||
+            (count == 4 && (!parse_u32(tokens[3], &blocks) || !blocks))) {
+            print("Invalid SCSI target, start block, or block count.\r\n");
             return 0;
         }
         ss_iocs_lock();
         int result = ss_scsi_volume_mount_iocs(&ss_system_scsi_volume, (uint8_t)target,
-                                               start, 0);
+                                               start, blocks);
         ss_iocs_unlock();
         print(result == 0 ? "FAT16 mounted.\r\n" : "Unable to mount FAT16.\r\n");
     } else if ((strcmp(tokens[0], "swrite") == 0 ||
@@ -467,7 +468,7 @@ int16_t ss_init(void) {
 static void show_help(void) {
     print("Commands: help, uptime, ps, modules, mem, run NAME [&], load DRIVE FILE, unload NAME, kill "
           "PID, wait PID, ");
-    print("smount ID [START], swrite FILE TEXT, sreplace FILE TEXT, sread FILE, ");
+    print("smount ID [START [BLOCKS]], swrite FILE TEXT, sreplace FILE TEXT, sread FILE, ");
     print("debug, trace, clear, version, mux, exit\r\n");
 }
 

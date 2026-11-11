@@ -99,6 +99,17 @@ __attribute__((weak)) int32_t ss_system_file_store(const char* name,
     (void)name; (void)data; (void)size; (void)replace;
     return -1;
 }
+__attribute__((weak)) int32_t ss_system_open_reader(uint32_t owner, const char* name) {
+    (void)owner; (void)name; return -1;
+}
+__attribute__((weak)) int32_t ss_system_read_fd(uint32_t owner, uint32_t fd,
+                                                uint8_t* data, uint32_t size) {
+    (void)owner; (void)fd; (void)data; (void)size; return -1;
+}
+__attribute__((weak)) int32_t ss_system_close_fd(uint32_t owner, uint32_t fd) {
+    (void)owner; (void)fd; return -1;
+}
+__attribute__((weak)) void ss_system_close_process_files(uint32_t owner) { (void)owner; }
 void _iocs_b_clr_st(void) {}
 void _iocs_b_locate(int x, int y) {
     (void)x;

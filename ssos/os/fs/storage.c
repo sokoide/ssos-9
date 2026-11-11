@@ -24,6 +24,25 @@ static int operation_write(void* context, uint32_t sector, const uint8_t* in) {
     return status;
 }
 
+/* A writer updates every FAT copy, so never allocate from a volume whose
+ * copies already disagree. Read-only FAT12 loading is deliberately separate. */
+static int matching_fat_copies(const SSFat12* volume) {
+    uint8_t primary[1024] __attribute__((aligned(4)));
+    uint8_t mirror[1024] __attribute__((aligned(4)));
+    if (volume->fat_count < 2) return 0;
+    for (uint32_t sector = 0; sector < volume->fat_sectors; sector++) {
+        if (volume->read_sector(volume->context, volume->fat_start + sector, primary))
+            return -1;
+        for (uint32_t copy = 1; copy < volume->fat_count; copy++) {
+            uint32_t at = volume->fat_start + copy * volume->fat_sectors + sector;
+            if (volume->read_sector(volume->context, at, mirror)) return -1;
+            for (uint32_t i = 0; i < volume->sector_size; i++)
+                if (primary[i] != mirror[i]) return -1;
+        }
+    }
+    return 0;
+}
+
 int ss_storage_mount(SSStorage* storage, SSFat12ReadSector read,
                      SSFatWriteSector write, void* context,
                      uint32_t sectors, uint16_t block_size) {
@@ -31,24 +50,26 @@ int ss_storage_mount(SSStorage* storage, SSFat12ReadSector read,
     if (!storage || storage->mounted || !write ||
         (block_size != 512 && block_size != 1024) ||
         ss_fat12_mount(&volume, read, context, sectors) ||
-        volume.fat_bits != 16 || volume.sector_size != block_size)
+        volume.fat_bits != 16 || volume.sector_size != block_size ||
+        matching_fat_copies(&volume))
         return -1;
     storage->volume = volume;
     storage->write_sector = write;
+    storage->readers = 0;
     storage->write_failed = 0;
     storage->mounted = 1;
     return 0;
 }
 
 void ss_storage_unmount(SSStorage* storage) {
-    if (!storage) return;
+    if (!storage || storage->readers) return;
     storage->mounted = 0;
     storage->write_sector = NULL;
 }
 
 int ss_storage_store(SSStorage* storage, const char* name, const uint8_t* data,
                      uint32_t size, int replace) {
-    if (!storage || !storage->mounted || storage->write_failed ||
+    if (!storage || !storage->mounted || storage->write_failed || storage->readers ||
         (replace != 0 && replace != 1)) return -1;
     SSStorageOperation operation = {storage, 0, 0};
     SSFat12 volume = storage->volume;
@@ -61,6 +82,20 @@ int ss_storage_store(SSStorage* storage, const char* name, const uint8_t* data,
     if (status && (operation.attempted_write || operation.io_failed))
         storage->write_failed = 1;
     return status;
+}
+
+int ss_storage_open_reader(SSStorage* storage, const char* name, SSFat12File* file) {
+    if (!storage || !storage->mounted || !file || storage->readers == UINT8_MAX ||
+        ss_fat12_open(&storage->volume, name, file)) return -1;
+    storage->readers++;
+    return 0;
+}
+
+void ss_storage_close_reader(SSStorage* storage, SSFat12File* file) {
+    if (!storage || !file || file->volume != &storage->volume || !storage->readers)
+        return;
+    storage->readers--;
+    file->volume = NULL;
 }
 
 int32_t ss_storage_read(SSStorage* storage, const char* name, uint8_t* data,
