@@ -2,6 +2,7 @@
 
 #include "../../include/ssos9/syscall.h"
 #include "../app/cli_console.h"
+#include "../app/cli_wait.h"
 #include "../fs/storage.h"
 #include "../module/module.h"
 #include "../process/process.h"
@@ -211,6 +212,18 @@ int32_t ss_syscall_dispatch(uint32_t number, uint32_t request) {
     }
     case SS9_SYS_CLOSE:
         return ss_system_close_fd(ss_process_current_id(), request);
+    case SS9_SYS_CONSOLE_CLEAR:
+        if (request) return SS9_ERR_PARAM;
+        ss_cli_console_clear();
+        return 0;
+    case SS9_SYS_CONSOLE_LOCATE:
+        if ((request >> 16) >= SS9_CONSOLE_COLUMNS ||
+            (request & 0xffffu) >= SS9_CONSOLE_ROWS)
+            return SS9_ERR_PARAM;
+        return ss_cli_console_locate(request >> 16, request & 0xffffu);
+    case SS9_SYS_CONSOLE_KEY:
+        if (request) return SS9_ERR_PARAM;
+        return ss_cli_foreground_key();
     default: return SS9_ERR_NOSYS;
     }
 }

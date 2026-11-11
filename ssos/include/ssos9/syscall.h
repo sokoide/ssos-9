@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 /* trap #0 ABI: D0 carries the number/result. D1 carries a request pointer or
- * the scalar argument for EXIT, KILL, SLEEP, and CLOSE.
+ * the scalar argument for EXIT, KILL, SLEEP, CLOSE, and CONSOLE_LOCATE.
  * Module requests/inputs must reside in private memory or the retained image;
  * outputs must reside in private memory. Structured buffers are 4-byte aligned.
  * Strings must terminate within their allowed region and the ABI size limits.
@@ -26,7 +26,10 @@ enum {
     SS9_SYS_READ = 0x22,
     SS9_SYS_WRITE = 0x23,
     SS9_SYS_FILE_LOAD = 0x24,
-    SS9_SYS_FILE_STORE = 0x25
+    SS9_SYS_FILE_STORE = 0x25,
+    SS9_SYS_CONSOLE_CLEAR = 0x26,
+    SS9_SYS_CONSOLE_LOCATE = 0x27,
+    SS9_SYS_CONSOLE_KEY = 0x28
 };
 
 #define SS9_ABI_VERSION 1u
@@ -42,6 +45,13 @@ enum {
 #define SS9_OPEN_REPLACE 2u
 #define SS9_READ_MAX 65536u
 #define SS9_FILE_WRITE_MAX 65536u
+#define SS9_CONSOLE_COLUMNS 80u
+#define SS9_CONSOLE_ROWS 25u
+
+/* CONSOLE_CLEAR and CONSOLE_KEY take scalar zero. CONSOLE_LOCATE packs x in
+ * the high 16 bits and y in the low 16 bits. CONSOLE_KEY is nonblocking:
+ * ASCII returns as 0x00xx, non-ASCII IOCS scan codes as scan << 8, and -1 means
+ * no key or the caller is not the foreground process. */
 
 typedef struct {
     uint32_t name;

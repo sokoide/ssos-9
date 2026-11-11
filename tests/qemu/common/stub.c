@@ -87,6 +87,11 @@ __attribute__((weak)) void ss_cli_console_write(const uint8_t* bytes,
     (void)bytes;
     (void)length;
 }
+__attribute__((weak)) void ss_cli_console_clear(void) {}
+__attribute__((weak)) int ss_cli_foreground_key(void) { return -1; }
+__attribute__((weak)) int ss_cli_console_locate(uint32_t x, uint32_t y) {
+    (void)x; (void)y; return 0;
+}
 __attribute__((weak)) int32_t ss_system_file_load(const char* name, uint8_t* data,
                                                    uint32_t capacity) {
     (void)name; (void)data; (void)capacity;

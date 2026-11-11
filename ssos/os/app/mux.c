@@ -8,6 +8,7 @@ void ss_mux_init(SSMux* mux) {
     for (unsigned n = 0; n < SS_MUX_WINDOWS; n++) {
         SSMuxWindow* window = &mux->windows[n];
         window->x = window->y = window->key_head = window->key_count = 0;
+        window->scroll_count = 0;
         for (unsigned y = 0; y < SS_MUX_ROWS; y++)
             for (unsigned x = 0; x < SS_MUX_COLUMNS; x++)
                 window->cells[y][x] = ' ';
@@ -30,8 +31,17 @@ int ss_mux_clear(SSMux* mux, uint8_t window_id) {
     return 0;
 }
 
+int ss_mux_locate(SSMux* mux, uint8_t window_id, uint8_t x, uint8_t y) {
+    if (!mux || window_id >= SS_MUX_WINDOWS || x >= SS_MUX_COLUMNS || y >= SS_MUX_ROWS)
+        return -1;
+    mux->windows[window_id].x = x;
+    mux->windows[window_id].y = y;
+    return 0;
+}
+
 static void newline(SSMuxWindow* window) {
     if (++window->y < SS_MUX_ROWS) return;
+    window->scroll_count++;
     for (unsigned y = 1; y < SS_MUX_ROWS; y++)
         for (unsigned x = 0; x < SS_MUX_COLUMNS; x++)
             window->cells[y - 1][x] = window->cells[y][x];
@@ -61,7 +71,7 @@ int ss_mux_write(SSMux* mux, uint8_t window_id, const uint8_t* data,
     return 0;
 }
 
-int ss_mux_key_push(SSMux* mux, uint8_t key) {
+int ss_mux_key_push(SSMux* mux, uint16_t key) {
     if (!mux || mux->active >= SS_MUX_WINDOWS) return -1;
     SSMuxWindow* window = &mux->windows[mux->active];
     if (window->key_count == SS_MUX_KEY_CAPACITY) return -1;

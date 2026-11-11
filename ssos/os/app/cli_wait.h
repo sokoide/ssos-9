@@ -12,5 +12,6 @@ int16_t ss_cli_wait_pid(SSProcessId pid, uint16_t* exit_status,
                         int* interrupted);
 int ss_cli_poll_ctrl_c(void);
 int ss_cli_next_key(void);
+int ss_cli_foreground_key(void);
 
 #endif

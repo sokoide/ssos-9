@@ -7,12 +7,35 @@
 #define SS_CLI_CTRL_C 0x03
 
 static SSProcessId foreground_pid[SS_PROCESS_CONSOLE_COUNT];
-static uint8_t pending_keys[SS_PROCESS_CONSOLE_COUNT][SS_CLI_KEY_QUEUE_CAPACITY];
+static uint16_t pending_keys[SS_PROCESS_CONSOLE_COUNT][SS_CLI_KEY_QUEUE_CAPACITY];
 static uint8_t pending_head[SS_PROCESS_CONSOLE_COUNT];
 static uint8_t pending_tail[SS_PROCESS_CONSOLE_COUNT];
 static uint8_t pending_count[SS_PROCESS_CONSOLE_COUNT];
 static uint8_t pending_interrupt[SS_PROCESS_CONSOLE_COUNT];
 volatile uint8_t ss_ctrl_c_pending;
+static uint8_t input_busy;
+
+/* One reader moves keyboard events into the per-window queue at a time, so
+ * the waiting shell cannot reorder keys against its foreground child. The
+ * lock may be held across IOCS locking; all owners are cancellation guarded. */
+static void input_lock(void) {
+    for (;;) {
+        uint16_t sr = ss_irq_save();
+        if (!input_busy) {
+            input_busy = 1;
+            ss_irq_restore(sr);
+            return;
+        }
+        ss_irq_restore(sr);
+        (void)ss_task_sleep(1);
+    }
+}
+
+static void input_unlock(void) {
+    uint16_t sr = ss_irq_save();
+    input_busy = 0;
+    ss_irq_restore(sr);
+}
 
 static int pop_pending_key(uint8_t id) {
     if (pending_count[id] == 0)
@@ -23,7 +46,7 @@ static int pop_pending_key(uint8_t id) {
     return key;
 }
 
-static void push_pending_key(uint8_t id, uint8_t key) {
+static void push_pending_key(uint8_t id, uint16_t key) {
     if (pending_count[id] == SS_CLI_KEY_QUEUE_CAPACITY)
         return;
     pending_keys[id][pending_tail[id]] = key;
@@ -32,17 +55,37 @@ static void push_pending_key(uint8_t id, uint8_t key) {
 }
 
 void ss_cli_set_foreground_pid(SSProcessId pid) {
+    input_lock();
     foreground_pid[ss_process_current_console()] = pid;
+    input_unlock();
 }
 
 int ss_cli_next_key(void) {
+    input_lock();
     int key = pop_pending_key(ss_process_current_console());
-    if (key >= 0)
-        return key;
-    return ss_cli_console_read_key();
+    if (key < 0) key = ss_cli_console_read_key();
+    input_unlock();
+    return key;
+}
+
+int ss_cli_foreground_key(void) {
+    input_lock();
+    uint8_t id = ss_process_current_console();
+    int key = -1;
+    if (foreground_pid[id] && foreground_pid[id] == ss_process_current_id()) {
+        key = pop_pending_key(id);
+        if (key < 0) key = ss_cli_console_read_key();
+        if (key == SS_CLI_CTRL_C) {
+            pending_interrupt[id] = 1;
+            key = -1;
+        }
+    }
+    input_unlock();
+    return key;
 }
 
 int ss_cli_poll_ctrl_c(void) {
+    input_lock();
     uint8_t id = ss_process_current_console();
     uint16_t saved_sr = ss_irq_save();
     if (ss_ctrl_c_pending)
@@ -54,13 +97,14 @@ int ss_cli_poll_ctrl_c(void) {
     int next_key;
     while (pending_count[id] < SS_CLI_KEY_QUEUE_CAPACITY &&
            (next_key = ss_cli_console_read_key()) >= 0) {
-        uint8_t key = (uint8_t)next_key;
+        uint16_t key = (uint16_t)next_key;
         if (key == SS_CLI_CTRL_C) {
             interrupted = 1;
             continue;
         }
         push_pending_key(id, key);
     }
+    input_unlock();
     return interrupted;
 }
 

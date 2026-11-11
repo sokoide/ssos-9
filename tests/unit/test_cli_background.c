@@ -14,6 +14,8 @@ static unsigned keyboard_polls;
 static uint16_t keyboard_bytes[16];
 static unsigned keyboard_length, keyboard_index;
 static int interrupt_print;
+static uint8_t display_cells[32][80];
+static unsigned display_x, display_y;
 static int16_t print_kill_status;
 static uint8_t scsi_test_disk[5000][512];
 static int enable_scsi_test;
@@ -52,6 +54,12 @@ int _iocs_b_putc(int ch) {
         output[used] = (char)ch;
         output[used + 1u] = '\0';
     }
+    if (ch == '\r') display_x = 0;
+    else if (ch == '\n') { if (display_y < 31) display_y++; }
+    else if (ch >= 32 && ch < 127) {
+        display_cells[display_y][display_x] = (uint8_t)ch;
+        if (++display_x == 80) { display_x = 0; if (display_y < 31) display_y++; }
+    }
     return ch;
 }
 
@@ -63,10 +71,13 @@ void _iocs_b_print(const char* text) {
         print_kill_status = ss_process_kill(ss_process_current_id());
     }
 }
-void _iocs_b_clr_st(void) {}
+void _iocs_b_clr_st(void) {
+    memset(display_cells, ' ', sizeof(display_cells));
+    display_x = display_y = 0;
+}
 void _iocs_b_locate(int x, int y) {
-    (void)x;
-    (void)y;
+    display_x = (unsigned)x;
+    display_y = (unsigned)y;
 }
 int _iocs_b_keysns(void) {
     keyboard_polls++;
@@ -199,11 +210,86 @@ TEST(console_mux_routes_output) {
     ASSERT_EQ(ss_cli_console_read_key(), '~');
     ASSERT_EQ(ss_process_set_current_console(0), SS_OK);
     ASSERT_EQ(ss_cli_console_mux_select(0), 0);
+    keyboard_index = 0;
+    keyboard_length = 2;
+    keyboard_bytes[0] = '~';
+    keyboard_bytes[1] = 0x3b00;
+    ASSERT_EQ(ss_cli_console_read_key(), '~');
+    ASSERT_EQ(ss_cli_console_read_key(), 0x3b00);
     ss_ctrl_c_pending = 1;
     ASSERT_EQ(ss_process_set_current_console(2), SS_OK);
     ASSERT_EQ(ss_cli_poll_ctrl_c(), 0);
     ASSERT_EQ(ss_process_set_current_console(0), SS_OK);
     ASSERT_EQ(ss_cli_poll_ctrl_c(), 1);
+}
+
+TEST(console_foreground_input_routing) {
+    setup_shell();
+    char line[] = "help&";
+    ASSERT_EQ(ss_cli_execute_line(line), 0);
+    SSProcessSnapshot child;
+    ASSERT_EQ(ss_process_snapshot(2, &child), SS_OK);
+    ss_cli_set_foreground_pid(2);
+    keyboard_bytes[0] = 'q';
+    keyboard_bytes[1] = 0x3b00;
+    keyboard_length = 2;
+    ASSERT_EQ(ss_cli_foreground_key(), -1);
+    ASSERT_EQ(keyboard_index, 0);
+    ASSERT_EQ(ss_cli_poll_ctrl_c(), 0);
+    ss_curr_task = &tcb_table[child.task_id - 1];
+    ASSERT_EQ(ss_cli_foreground_key(), 'q');
+    ASSERT_EQ(ss_cli_foreground_key(), 0x3b00);
+    keyboard_index = 0;
+    keyboard_length = 1;
+    keyboard_bytes[0] = 3;
+    ASSERT_EQ(ss_cli_foreground_key(), -1);
+    ss_curr_task = &root_task;
+    ASSERT_EQ(ss_cli_poll_ctrl_c(), 1);
+    ss_cli_set_foreground_pid(0);
+    collect_child(2);
+    uint16_t status;
+    ASSERT_EQ(ss_process_wait(1, 2, &status), SS_OK);
+}
+
+TEST(console_scroll_matches_virtual_screen) {
+    setup_shell();
+    ss_cli_console_mux_enable();
+    for (unsigned i = 0; i < 30; i++) {
+        uint8_t line[] = {'0', '0', '\r', '\n'};
+        line[0] = (uint8_t)('0' + i / 10);
+        line[1] = (uint8_t)('0' + i % 10);
+        ss_cli_console_write(line, sizeof(line));
+    }
+    ASSERT_EQ(memcmp(display_cells[0], "06", 2), 0);
+    ASSERT_EQ(memcmp(display_cells[23], "29", 2), 0);
+    ASSERT_EQ(display_cells[24][0], ' ');
+    ASSERT_EQ(ss_cli_console_mux_select(1), 0);
+    ASSERT_EQ(ss_cli_console_mux_select(0), 0);
+    ASSERT_EQ(memcmp(display_cells[0], "06", 2), 0);
+    ASSERT_EQ(memcmp(display_cells[23], "29", 2), 0);
+    ss_cli_console_print("30\r\n");
+    ASSERT_EQ(memcmp(display_cells[0], "07", 2), 0);
+    ASSERT_EQ(memcmp(display_cells[23], "30", 2), 0);
+}
+
+TEST(console_background_scroll_preserves_active_window) {
+    setup_shell();
+    ss_cli_console_mux_enable();
+    ss_cli_console_write((const uint8_t*)"active", 6);
+    ASSERT_EQ(ss_process_set_current_console(1), SS_OK);
+    for (unsigned i = 0; i < 30; i++) {
+        uint8_t line[] = {'0', '0', '\r', '\n'};
+        line[0] = (uint8_t)('0' + i / 10);
+        line[1] = (uint8_t)('0' + i % 10);
+        ss_cli_console_write(line, sizeof(line));
+    }
+    ASSERT_EQ(memcmp(display_cells[0], "active", 6), 0);
+    ASSERT_EQ(ss_cli_console_mux_select(1), 0);
+    ASSERT_EQ(memcmp(display_cells[0], "06", 2), 0);
+    ASSERT_EQ(memcmp(display_cells[23], "29", 2), 0);
+    ASSERT_EQ(ss_cli_console_mux_select(0), 0);
+    ASSERT_EQ(memcmp(display_cells[0], "active", 6), 0);
+    ASSERT_EQ(ss_process_set_current_console(0), SS_OK);
 }
 
 TEST(cli_scsi_mount_write_read) {
@@ -542,5 +628,8 @@ void run_cli_background_tests(void) {
     RUN_TEST(cli_kernel_child_allocation_and_task_failure_roll_back);
     RUN_TEST(cli_scsi_mount_write_read);
     RUN_TEST(console_mux_routes_output);
+    RUN_TEST(console_foreground_input_routing);
+    RUN_TEST(console_scroll_matches_virtual_screen);
+    RUN_TEST(console_background_scroll_preserves_active_window);
     RUN_TEST(mux_starts_shell_processes);
 }

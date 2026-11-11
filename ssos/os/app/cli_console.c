@@ -80,8 +80,12 @@ void ss_cli_console_print(const char* text) {
         uint32_t size = 0;
         while (text[size]) size++;
         uint8_t id = ss_process_current_console();
+        uint32_t old_scroll = mux.windows[id].scroll_count;
         (void)ss_mux_write(&mux, id, (const uint8_t*)text, size);
-        if (id == mux.active) _iocs_b_print(text);
+        if (id == mux.active) {
+            if (mux.windows[id].scroll_count != old_scroll) redraw();
+            else _iocs_b_print(text);
+        }
     }
     ss_iocs_unlock();
 }
@@ -89,8 +93,11 @@ void ss_cli_console_print(const char* text) {
 void ss_cli_console_write(const uint8_t* bytes, uint32_t length) {
     ss_iocs_lock();
     uint8_t id = mux_enabled ? ss_process_current_console() : 0;
+    uint32_t old_scroll = mux_enabled ? mux.windows[id].scroll_count : 0;
     if (mux_enabled) (void)ss_mux_write(&mux, id, bytes, length);
-    if (!mux_enabled || id == mux.active)
+    if (mux_enabled && id == mux.active && mux.windows[id].scroll_count != old_scroll)
+        redraw();
+    else if (!mux_enabled || id == mux.active)
         for (uint32_t i = 0; i < length; i++)
             (void)_iocs_b_putc(bytes[i]);
     ss_iocs_unlock();
@@ -107,11 +114,24 @@ void ss_cli_console_clear(void) {
     ss_iocs_unlock();
 }
 
+int ss_cli_console_locate(uint32_t x, uint32_t y) {
+    if (x >= SS_MUX_COLUMNS || y >= SS_MUX_ROWS) return -1;
+    ss_iocs_lock();
+    uint8_t id = mux_enabled ? ss_process_current_console() : 0;
+    if (mux_enabled) (void)ss_mux_locate(&mux, id, (uint8_t)x, (uint8_t)y);
+    if (!mux_enabled || id == mux.active) _iocs_b_locate((int)x, (int)y);
+    ss_iocs_unlock();
+    return 0;
+}
+
 int ss_cli_console_read_key(void) {
     ss_iocs_lock();
     int key = -1;
     if (!mux_enabled) {
-        key = _iocs_b_keysns() > 0 ? (_iocs_b_keyinp() & 0xff) : -1;
+        if (_iocs_b_keysns() > 0) {
+            uint16_t event = (uint16_t)_iocs_b_keyinp();
+            key = (event & 0xffu) ? (event & 0xffu) : event;
+        }
     } else {
         while (_iocs_b_keysns() > 0) {
             if (mux.windows[mux.active].key_count >=
@@ -126,7 +146,16 @@ int ss_cli_console_read_key(void) {
                 redraw();
                 continue;
             }
-            if (!next) continue;
+            if (!next) {
+                if (scan) {
+                    if (mux_prefix) {
+                        (void)ss_mux_key_push(&mux, mux_prefix);
+                        mux_prefix = 0;
+                    }
+                    (void)ss_mux_key_push(&mux, event);
+                }
+                continue;
+            }
             if (mux_prefix) {
                 uint8_t prefix = mux_prefix;
                 mux_prefix = 0;

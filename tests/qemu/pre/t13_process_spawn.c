@@ -399,6 +399,12 @@ int main(void) {
         call_sys(SS9_SYS_WRITE, (uint32_t)(uintptr_t)&write_req + 1u) !=
             SS9_ERR_PARAM || ss_test_console_count != 4)
         fail("write empty or unaligned request");
+    if (call_sys(SS9_SYS_CONSOLE_CLEAR, 0) != 0 ||
+        call_sys(SS9_SYS_CONSOLE_CLEAR, 1) != SS9_ERR_PARAM ||
+        call_sys(SS9_SYS_CONSOLE_LOCATE, (79u << 16) | 24u) != 0 ||
+        call_sys(SS9_SYS_CONSOLE_LOCATE, 80u << 16) != SS9_ERR_PARAM ||
+        call_sys(SS9_SYS_CONSOLE_LOCATE, 25u) != SS9_ERR_PARAM)
+        fail("console position syscall");
 
     set_counter(first.data_base, 1000);
     if (get32(second.data_base + 8) != 0)
@@ -540,6 +546,13 @@ int main(void) {
     if (ss_process_kill(background_pid) != SS_OK ||
         ss_cli_wait_pid(background_pid, &status, NULL) != SS_OK)
         fail("background cleanup after cancelled wait");
+    ss_cli_set_foreground_pid(1);
+    push_key('k');
+    if (call_sys(SS9_SYS_CONSOLE_KEY, 1) != SS9_ERR_PARAM ||
+        call_sys(SS9_SYS_CONSOLE_KEY, 0) != 'k' ||
+        call_sys(SS9_SYS_CONSOLE_KEY, 0) != -1)
+        fail("foreground key syscall");
+    ss_cli_set_foreground_pid(0);
 
     uint32_t copied_argument = 42;
     uint32_t kernel_free_before = ss_memory_free_bytes();
