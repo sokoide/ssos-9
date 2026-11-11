@@ -90,3 +90,36 @@ int ss_mux_key_pop(SSMux* mux, uint8_t window_id) {
     window->key_count--;
     return key;
 }
+
+int ss_mux_key_event(SSMux* mux, uint8_t* prefix, uint16_t event) {
+    if (!mux || !prefix) return -1;
+    uint8_t scan = (uint8_t)(event >> 8);
+    uint8_t next = (uint8_t)event;
+    if (scan >= 0x63 && scan <= 0x65) {
+        *prefix = 0;
+        uint8_t target = (uint8_t)(scan - 0x63);
+        if (target == mux->active) return 0;
+        return ss_mux_select(mux, target) == 0 ? 1 : -1;
+    }
+    if (!next) {
+        if (scan) {
+            if (*prefix && ss_mux_key_push(mux, *prefix) != 0) return -1;
+            *prefix = 0;
+            return ss_mux_key_push(mux, event);
+        }
+        return 0;
+    }
+    if (*prefix) {
+        uint8_t old = *prefix;
+        *prefix = 0;
+        if (next >= '1' && next < '1' + SS_MUX_WINDOWS) {
+            uint8_t target = (uint8_t)(next - '1');
+            if (target == mux->active) return 0;
+            return ss_mux_select(mux, target) == 0 ? 1 : -1;
+        }
+        if (ss_mux_key_push(mux, old) != 0) return -1;
+        if (old == '~' && next == '~') return 0;
+    }
+    if (next == 0x1d || next == '~') { *prefix = next; return 0; }
+    return ss_mux_key_push(mux, next);
+}

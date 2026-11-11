@@ -136,39 +136,10 @@ int ss_cli_console_read_key(void) {
         while (_iocs_b_keysns() > 0) {
             if (mux.windows[mux.active].key_count >=
                 SS_MUX_KEY_CAPACITY - (mux_prefix ? 1u : 0u)) break;
-            uint16_t event = (uint16_t)_iocs_b_keyinp();
-            uint8_t scan = (uint8_t)(event >> 8);
-            uint8_t next = (uint8_t)event;
-            /* IOCS reports F1-F3 as scan codes with no ASCII character. */
-            if (scan >= 0x63 && scan <= 0x65) {
-                mux_prefix = 0;
-                (void)ss_mux_select(&mux, (uint8_t)(scan - 0x63));
-                redraw();
-                continue;
-            }
-            if (!next) {
-                if (scan) {
-                    if (mux_prefix) {
-                        (void)ss_mux_key_push(&mux, mux_prefix);
-                        mux_prefix = 0;
-                    }
-                    (void)ss_mux_key_push(&mux, event);
-                }
-                continue;
-            }
-            if (mux_prefix) {
-                uint8_t prefix = mux_prefix;
-                mux_prefix = 0;
-                if (next >= '1' && next < '1' + SS_MUX_WINDOWS) {
-                    (void)ss_mux_select(&mux, (uint8_t)(next - '1'));
-                    redraw();
-                    continue;
-                }
-                if (ss_mux_key_push(&mux, prefix) != 0) break;
-                if (prefix == '~' && next == '~') continue;
-            }
-            if (next == 0x1d || next == '~') mux_prefix = next;
-            else if (ss_mux_key_push(&mux, next) != 0) break;
+            int event_result = ss_mux_key_event(&mux, &mux_prefix,
+                                                (uint16_t)_iocs_b_keyinp());
+            if (event_result < 0) break;
+            if (event_result > 0) redraw();
         }
         key = ss_mux_key_pop(&mux, ss_process_current_console());
     }

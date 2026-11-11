@@ -37,6 +37,14 @@ class PackerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.pack(self.elf, "../bad")
 
+    def test_stack_size_bounds(self):
+        for size in (4096, 32768, 65532):
+            image = module.pack(self.elf, "hello", size)
+            self.assertEqual(struct.unpack_from(">I", image, 0x28)[0], size)
+        for size in (0, 4095, 4097, 65536):
+            with self.assertRaises(ValueError):
+                module.pack(self.elf, "hello", size)
+
     def test_unknown_relocation_and_displacement(self):
         bad = bytearray(self.elf)
         bad[self.rela[4] + 7] = 1

@@ -24,11 +24,18 @@ int main(void) {
     assert(ss_mux_key_pop(&mux, 1) == 'b');
     assert(ss_mux_key_pop(&mux, 0) == 'a');
     assert(ss_mux_key_pop(&mux, 0) == -1);
+    uint8_t prefix = 0;
+    assert(ss_mux_key_event(&mux, &prefix, '~') == 0 && prefix == '~');
+    assert(ss_mux_key_event(&mux, &prefix, '3') == 1 && mux.active == 2);
+    assert(ss_mux_key_event(&mux, &prefix, '~') == 0);
+    assert(ss_mux_key_event(&mux, &prefix, '~') == 0 && prefix == 0);
+    assert(ss_mux_key_pop(&mux, 2) == '~');
+    assert(ss_mux_key_event(&mux, &prefix, 0x6300) == 1 && mux.active == 0);
     for (unsigned i = 0; i < SS_MUX_KEY_CAPACITY; i++)
         assert(ss_mux_key_push(&mux, (uint8_t)i) == 0);
     assert(ss_mux_key_push(&mux, 0) == -1);
     for (unsigned i = 0; i < SS_MUX_KEY_CAPACITY; i++)
-        assert(ss_mux_key_pop(&mux, 1) == (int)i);
+        assert(ss_mux_key_pop(&mux, 0) == (int)i);
     assert(ss_mux_select(&mux, SS_MUX_WINDOWS) == -1);
     ss_mux_init(&mux);
     for (unsigned y = 0; y < SS_MUX_ROWS; y++)

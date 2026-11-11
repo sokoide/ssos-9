@@ -24,6 +24,7 @@ usage:
 
 all: tools/makedisk
 	$(MAKE) -C ssos all
+	$(MAKE) -C apps/edit all
 
 debug: all
 	$(MAKE) -C ssos debug
@@ -34,6 +35,7 @@ install: tools/makedisk
 clean:
 	$(MAKE) -C tools/makedisk clean
 	$(MAKE) -C ssos clean
+	$(MAKE) -C apps/edit clean
 	$(MAKE) -C tests clean
 
 format:

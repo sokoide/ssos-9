@@ -81,7 +81,9 @@ t13_xdf.o: $(SSOS)/fs/xdf.c $(SSOS)/fs/xdf.h
 	$(MAKE) -C ../../../examples/hello all
 ../../../examples/hello/build/hello-data.xdf: ../../../examples/hello/build/hello.s9m
 	$(MAKE) -C ../../../examples/hello all
-hello_image.o: hello_image.s ../../../examples/hello/build/hello.s9m ../../../examples/hello/build/hello-data.xdf
+../../../apps/edit/build/edit.s9m: FORCE
+	$(MAKE) -C ../../../apps/edit all
+hello_image.o: hello_image.s ../../../examples/hello/build/hello.s9m ../../../examples/hello/build/hello-data.xdf ../../../apps/edit/build/edit.s9m
 	$(CC) $(ASFLAGS) -c $< -o $@
 t02_register_save_entry.o: t02_register_save.s
 	$(CC) $(ASFLAGS) -c $< -o $@

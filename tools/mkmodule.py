@@ -9,7 +9,7 @@ import zlib
 from pathlib import Path
 
 
-def pack(raw, name):
+def pack(raw, name, stack_size=4096):
     def check(condition, message):
         if not condition:
             raise ValueError(message)
@@ -21,6 +21,8 @@ def pack(raw, name):
 
     check(re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,30}", name)
           and not name.endswith("."), "invalid module name")
+    check(4096 <= stack_size <= 65532 and stack_size % 4 == 0,
+          "invalid module stack size")
     header = unpack(">16sHHIIIIIHHHHHH", 0)
     ident, kind, machine, version, entry, _, shoff, flags, ehsize, _, _, shsize, shnum, shstr = header
     check(ident[:7] == b"\x7fELF\x01\x02\x01" and kind == 2 and machine == 4
@@ -98,7 +100,7 @@ def pack(raw, name):
     image = bytearray(name_offset + len(encoded_name))
     image[:4] = b"S9M1"
     struct.pack_into(">HHIIIIIIIII", image, 4, 1, 80, 3, len(image), code_offset,
-                     len(code), code_offset + entry, data_offset, 4, 0, 4096)
+                     len(code), code_offset + entry, data_offset, 4, 0, stack_size)
     struct.pack_into(">IH", image, 0x2c, name_offset, len(encoded_name))
     struct.pack_into(">IIII", image, 0x38, 0, 4, 0, 0)
     image[code_offset:code_offset + len(code)] = code
@@ -111,10 +113,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("elf", type=Path)
     parser.add_argument("--name", required=True)
+    parser.add_argument("--stack-size", type=int, default=4096)
     parser.add_argument("-o", "--output", required=True, type=Path)
     args = parser.parse_args()
     try:
-        image = pack(args.elf.read_bytes(), args.name)
+        image = pack(args.elf.read_bytes(), args.name, args.stack_size)
         args.output.write_bytes(image)
     except (OSError, ValueError, struct.error) as error:
         print(f"mkmodule: {error}", file=sys.stderr)

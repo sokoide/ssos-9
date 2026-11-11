@@ -1,7 +1,15 @@
 # Preemptive-only verification entry points.
-.PHONY: test test-native test-fat12 test-mux test-asm test-qemu clean
+.PHONY: test test-native test-fat12 test-mux test-editor test-asm test-qemu clean
 
-test: test-native test-fat12 test-mux
+test: test-native test-fat12 test-mux test-editor
+
+test-editor:
+	@mkdir -p build
+	$(CC) -std=c11 -Wall -Wextra -Werror unit/test_editor_buffer.c ../apps/edit/buffer.c -o build/test-editor
+	./build/test-editor
+	$(CC) -std=c11 -Wall -Wextra -Werror -DEDIT_HOST_TEST -Dmain=editor_main -Iunit/editor_fake -c ../apps/edit/main.c -o build/editor-main.o
+	$(CC) -std=c11 -Wall -Wextra -Werror unit/test_editor_app.c ../apps/edit/buffer.c build/editor-main.o -o build/test-editor-app
+	./build/test-editor-app
 
 test-mux:
 	@mkdir -p build

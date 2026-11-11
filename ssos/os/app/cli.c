@@ -306,15 +306,17 @@ static int run_process_command(char* tokens[], uint16_t count, int background) {
         show_modules();
     } else if (strcmp(tokens[0], "mem") == 0 && count == 1) {
         show_memory();
-    } else if (strcmp(tokens[0], "run") == 0 && count == 2) {
+    } else if (strcmp(tokens[0], "run") == 0 && count >= 2 &&
+               count - 1u <= SS_PROCESS_MAX_ARGS) {
         SSModuleId module_id;
         SSProcessId pid;
-        const char* argv[] = {tokens[1]};
+        const char* argv[SS_PROCESS_MAX_ARGS];
+        for (uint16_t i = 1; i < count; i++) argv[i - 1u] = tokens[i];
         int16_t lookup = ss_module_find(tokens[1], &module_id);
         if (lookup == SS_ERR_ID)
             lookup = ss_builtin_load(tokens[1], &module_id);
         if (lookup != SS_OK ||
-            ss_process_spawn(ss_process_current_id(), module_id, 1, argv,
+            ss_process_spawn(ss_process_current_id(), module_id, count - 1u, argv,
                              &pid) != SS_OK) {
             print("Unable to start module.\r\n");
         } else {
@@ -466,7 +468,7 @@ int16_t ss_init(void) {
 }
 
 static void show_help(void) {
-    print("Commands: help, uptime, ps, modules, mem, run NAME [&], load DRIVE FILE, unload NAME, kill "
+    print("Commands: help, uptime, ps, modules, mem, run NAME [ARGS...] [&], load DRIVE FILE, unload NAME, kill "
           "PID, wait PID, ");
     print("smount ID [START [BLOCKS]], swrite FILE TEXT, sreplace FILE TEXT, sread FILE, ");
     print("debug, trace, clear, version, mux, exit\r\n");
@@ -532,9 +534,9 @@ int ss_cli_execute_line(char* line) {
         return 0;
     }
     memcpy(command_copy, line, length + 1u);
-    char* tokens[4];
+    char* tokens[SS_PROCESS_MAX_ARGS + 1u];
     int background;
-    int16_t count = ss_cli_parse_line(line, tokens, 4, &background);
+    int16_t count = ss_cli_parse_line(line, tokens, SS_PROCESS_MAX_ARGS + 1u, &background);
     if (count < 0) {
         print(count == SS_CLI_PARSE_LIMIT ? "Too many arguments.\r\n"
                                           : "Syntax error.\r\n");

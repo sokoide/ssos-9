@@ -163,6 +163,25 @@ TEST(process_console_inherited) {
     ASSERT_EQ(ss_process_wait(1, 2, &status), SS_OK);
 }
 
+TEST(cli_run_passes_arguments) {
+    setup_shell();
+    char line[] = "run counter SOURCE.S OTHER.O&";
+    ASSERT_EQ(ss_cli_execute_line(line), 0);
+    SSProcessSnapshot child;
+    ASSERT_EQ(ss_process_snapshot(2, &child), SS_OK);
+    memset(line, 'x', sizeof(line) - 1u);
+    const uint8_t* data = child.data_base;
+    size_t size = (size_t)((const uint8_t*)child.stack_low - data);
+    int found = 0;
+    static const char args[] = "counter\0SOURCE.S\0OTHER.O";
+    for (size_t i = 0; i + sizeof(args) <= size; i++)
+        if (memcmp(data + i, args, sizeof(args)) == 0) found = 1;
+    ASSERT_TRUE(found);
+    collect_child(2);
+    uint16_t status;
+    ASSERT_EQ(ss_process_wait(1, 2, &status), SS_OK);
+}
+
 TEST(console_mux_routes_output) {
     setup_shell();
     ss_cli_console_mux_enable();
@@ -618,6 +637,7 @@ void run_cli_background_tests(void) {
     RUN_TEST(process_reaper_claims_before_hook_and_release);
     RUN_TEST(process_syscall_memory_ownership);
     RUN_TEST(process_console_inherited);
+    RUN_TEST(cli_run_passes_arguments);
     RUN_TEST(cli_background_builtin_exit_isolated);
     RUN_TEST(cli_background_wait_cannot_reap_parent_child);
     RUN_TEST(cli_background_diagnostics_and_kill);

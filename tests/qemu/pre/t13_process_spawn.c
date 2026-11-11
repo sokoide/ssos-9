@@ -2,6 +2,7 @@
 
 #include "../../../ssos/os/app/cli_wait.h"
 #include "../../../ssos/os/app/cli.h"
+#include "../../../ssos/os/app/cli_console.h"
 #include "../../../ssos/os/fs/fat12.h"
 #include "../../../ssos/os/fs/scsi_volume.h"
 #include "builtin.h"
@@ -23,6 +24,7 @@ extern int32_t ss_test_syscall_roundtrip(void);
 extern uint8_t ss_test_console_bytes[256];
 extern uint32_t ss_test_console_count;
 extern const uint8_t ss_test_hello_image[], ss_test_hello_image_end[];
+extern const uint8_t ss_test_edit_image[], ss_test_edit_image_end[];
 static uint8_t fat_disk[8][512];
 extern const uint8_t ss_test_data_disk[];
 static int32_t fail_disk_sector = -1;
@@ -802,6 +804,28 @@ int main(void) {
     if (call_sys(SS9_SYS_FILE_LOAD, (uint32_t)(uintptr_t)&file_request) != SS9_ERR_PARAM)
         fail("FAT16 syscall buffer");
 
+    SSModuleId edit_module;
+    if (ss_module_register_image(ss_test_edit_image,
+                                 (uint32_t)(ss_test_edit_image_end - ss_test_edit_image),
+                                 SS_MODULE_STORAGE_DYNAMIC, &edit_module) != SS_OK)
+        fail("register editor image");
+    const char* edit_argv[] = {"edit", "SOURCE.S"};
+    SSProcessId edit_pid;
+    if (ss_process_spawn(1, edit_module, 2, edit_argv, &edit_pid) != SS_OK)
+        fail("spawn editor");
+    ss_cli_set_foreground_pid(edit_pid);
+    const uint8_t edit_keys[] = {'n', 'i', 'A', 27, ':', 'w', 'q', '\r'};
+    for (unsigned i = 0; i < sizeof(edit_keys); i++) push_key(edit_keys[i]);
+    int16_t edit_wait = SS_ERR_STATE;
+    for (unsigned i = 0; i < 200 && edit_wait == SS_ERR_STATE; i++) {
+        tick();
+        edit_wait = ss_process_wait(1, edit_pid, &status);
+    }
+    ss_cli_set_foreground_pid(0);
+    uint8_t edited[4] = {0};
+    if (edit_wait != SS_OK || status != 0 ||
+        ss_system_file_load("SOURCE.S", edited, sizeof(edited)) != 1 || edited[0] != 'A')
+        fail("editor create and save");
     char mux_command[] = "mux";
     if (ss_cli_execute_line(mux_command) != 0) fail("mux command");
     for (unsigned i = 0; i < 40; i++) tick();
@@ -815,6 +839,30 @@ int main(void) {
     }
     if (!shells[0] || !shells[1] || shells[0] == shells[1])
         fail("mux shell consoles");
+    if (ss_process_spawn(1, edit_module, 2, edit_argv, &edit_pid) != SS_OK)
+        fail("spawn editor for mux");
+    ss_cli_set_foreground_pid(edit_pid);
+    push_key('i'); push_key('B'); push_key(27);
+    run_ticks(80);
+    push_key('~'); push_key('2');
+    run_ticks(20);
+    if (ss_cli_console_mux_active() != 1) fail("editor key switch away");
+    run_ticks(80);
+    push_key('~'); push_key('1');
+    run_ticks(20);
+    if (ss_cli_console_mux_active() != 0) fail("editor key switch back");
+    push_key(':'); push_key('w'); push_key('q'); push_key('\r');
+    edit_wait = SS_ERR_STATE;
+    for (unsigned i = 0; i < 200 && edit_wait == SS_ERR_STATE; i++) {
+        tick();
+        edit_wait = ss_process_wait(1, edit_pid, &status);
+    }
+    ss_cli_set_foreground_pid(0);
+    if (edit_wait != SS_OK || status != 0 ||
+        ss_system_file_load("SOURCE.S", edited, sizeof(edited)) != 2 ||
+        edited[0] != 'B' || edited[1] != 'A')
+        fail("editor mux edit and replace");
+    if (ss_module_unload(edit_module) != SS_OK) fail("unload editor");
     if (ss_process_kill(shells[0]) != SS_OK ||
         ss_process_kill(shells[1]) != SS_OK) fail("mux shell kill");
     uint16_t shell_status;
