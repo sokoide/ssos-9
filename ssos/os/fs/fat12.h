@@ -49,4 +49,28 @@ int ss_fat16_create(SSFat12* volume, SSFatWriteSector write_sector,
 int ss_fat16_replace(SSFat12* volume, SSFatWriteSector write_sector,
                      const char* name, const uint8_t* data, uint32_t size);
 
+/* Private, unpublished replacement chain. Access must be serialized and the
+ * volume must not be changed by other writers until commit or abort. */
+typedef struct {
+    uint32_t slot;
+    uint32_t size;
+    uint16_t first;
+    uint16_t last;
+    uint16_t old_cluster;
+    uint8_t name[11];
+    uint8_t slot_was_end;
+    uint8_t replacing;
+    uint8_t active;
+} SSFat16Writer;
+
+int ss_fat16_writer_begin(SSFat12* volume, const char* name, int replace,
+                          SSFat16Writer* writer);
+int32_t ss_fat16_writer_write(SSFat12* volume, SSFatWriteSector write_sector,
+                              SSFat16Writer* writer, const uint8_t* data,
+                              uint32_t size);
+int ss_fat16_writer_commit(SSFat12* volume, SSFatWriteSector write_sector,
+                           SSFat16Writer* writer);
+int ss_fat16_writer_abort(SSFat12* volume, SSFatWriteSector write_sector,
+                          SSFat16Writer* writer);
+
 #endif

@@ -233,6 +233,56 @@ TEST(cli_scsi_mount_write_read) {
     char read[] = "sread TEST.TXT";
     ASSERT_EQ(ss_cli_execute_line(read), 0);
     ASSERT_STR_EQ(output, "world\r\n");
+    ASSERT_EQ(ss_system_open_reader(1, "TEST.TXT"), 3);
+    ASSERT_EQ(ss_system_open_reader(2, "TEST.TXT"), 3);
+    ASSERT_EQ(ss_system_open_reader(1, "TEST.TXT"), 4);
+    uint8_t chunk[6] = {0};
+    ASSERT_EQ(ss_system_read_fd(1, 3, chunk, 2), 2);
+    ASSERT_EQ(ss_system_read_fd(2, 3, chunk + 2, 2), 2);
+    ASSERT_EQ(memcmp(chunk, "wowo", 4), 0);
+    ASSERT_EQ(ss_system_read_fd(3, 3, chunk, 1), -1);
+    ASSERT_EQ(ss_system_file_store("TEST.TXT", (const uint8_t*)"x", 1, 1), -1);
+    ss_system_close_process_files(2);
+    ASSERT_EQ(ss_system_read_fd(2, 3, chunk, 1), -1);
+    ASSERT_EQ(ss_system_read_fd(1, 3, chunk, 3), 3);
+    ASSERT_EQ(memcmp(chunk, "rld", 3), 0);
+    ASSERT_EQ(ss_system_read_fd(1, 3, chunk, 1), 0);
+    ASSERT_EQ(ss_system_close_fd(1, 3), 0);
+    ASSERT_EQ(ss_system_close_fd(1, 3), -1);
+    ASSERT_EQ(ss_system_close_fd(1, 4), 0);
+    ASSERT_EQ(ss_system_file_store("TEST.TXT", (const uint8_t*)"x", 1, 1), 1);
+    char child_command[] = "help&";
+    ASSERT_EQ(ss_cli_execute_line(child_command), 0);
+    ASSERT_EQ(ss_system_open_reader(2, "TEST.TXT"), 3);
+    collect_child(2);
+    ASSERT_EQ(ss_system_read_fd(2, 3, chunk, 1), -1);
+    ASSERT_EQ(ss_system_file_store("TEST.TXT", (const uint8_t*)"y", 1, 1), 1);
+    for (int32_t fd = 3; fd < 11; fd++)
+        ASSERT_EQ(ss_system_open_reader(1, "TEST.TXT"), fd);
+    ASSERT_EQ(ss_system_open_reader(1, "TEST.TXT"), -1);
+    for (int32_t fd = 3; fd < 11; fd++)
+        ASSERT_EQ(ss_system_open_reader(2, "TEST.TXT"), fd);
+    ASSERT_EQ(ss_system_open_reader(3, "TEST.TXT"), -1);
+    ss_system_close_process_files(1);
+    ss_system_close_process_files(2);
+    ASSERT_EQ(ss_system_open_reader(3, "TEST.TXT"), 3);
+    ss_system_close_process_files(3);
+    ASSERT_EQ(ss_system_open_writer(1, "TEST.TXT", 1), 3);
+    ASSERT_EQ(ss_system_open_reader(2, "TEST.TXT"), -1);
+    ASSERT_EQ(ss_system_open_writer(2, "NEW.TXT", 0), -1);
+    ASSERT_EQ(ss_system_write_fd(2, 3, (const uint8_t*)"bad", 3), -1);
+    ASSERT_EQ(ss_system_write_fd(1, 3, (const uint8_t*)"ab", 2), 2);
+    ASSERT_EQ(ss_system_file_load("TEST.TXT", chunk, sizeof(chunk)), 1);
+    ASSERT_EQ(chunk[0], 'y');
+    ASSERT_EQ(ss_system_write_fd(1, 3, (const uint8_t*)"cd", 2), 2);
+    ASSERT_EQ(ss_system_close_fd(1, 3), 0);
+    ASSERT_EQ(ss_system_file_load("TEST.TXT", chunk, sizeof(chunk)), 4);
+    ASSERT_EQ(memcmp(chunk, "abcd", 4), 0);
+    ASSERT_EQ(ss_system_open_writer(2, "TEST.TXT", 1), 3);
+    ASSERT_EQ(ss_system_write_fd(2, 3, (const uint8_t*)"zz", 2), 2);
+    ss_system_close_process_files(2);
+    ASSERT_EQ(ss_system_file_load("TEST.TXT", chunk, sizeof(chunk)), 4);
+    ASSERT_EQ(memcmp(chunk, "abcd", 4), 0);
     enable_scsi_test = 0;
 }
 

@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 /* trap #0 ABI: D0 carries the number/result. D1 carries a request pointer or
- * the scalar argument for EXIT, KILL, and SLEEP.
+ * the scalar argument for EXIT, KILL, SLEEP, and CLOSE.
  * Module requests/inputs must reside in private memory or the retained image;
  * outputs must reside in private memory. Structured buffers are 4-byte aligned.
  * Strings must terminate within their allowed region and the ABI size limits.
@@ -38,7 +38,10 @@ enum {
 #define SS9_FILE_CREATE 0u
 #define SS9_FILE_REPLACE 1u
 #define SS9_OPEN_READ 0u
+#define SS9_OPEN_CREATE 1u
+#define SS9_OPEN_REPLACE 2u
 #define SS9_READ_MAX 65536u
+#define SS9_FILE_WRITE_MAX 65536u
 
 typedef struct {
     uint32_t name;

@@ -733,6 +733,54 @@ int main(void) {
     if (call_sys(SS9_SYS_FILE_LOAD, (uint32_t)(uintptr_t)&file_request) != 4 ||
         syscall_data[0] != 'a' || syscall_data[3] != 'd')
         fail("FAT16 load syscall");
+    SS9OpenRequest open_request __attribute__((aligned(4))) = {
+        (uint32_t)(uintptr_t)file_syscall_name, SS9_OPEN_READ
+    };
+    int32_t fd = call_sys(SS9_SYS_OPEN, (uint32_t)(uintptr_t)&open_request);
+    if (fd < 3) fail("file open syscall");
+    SS9ReadRequest read_request __attribute__((aligned(4))) = {
+        (uint32_t)fd, (uint32_t)(uintptr_t)syscall_data, 2
+    };
+    read_request.buffer = 0;
+    if (call_sys(SS9_SYS_READ, (uint32_t)(uintptr_t)&read_request) != SS9_ERR_PARAM)
+        fail("file read invalid buffer");
+    read_request.length = 0;
+    if (call_sys(SS9_SYS_READ, (uint32_t)(uintptr_t)&read_request) != 0)
+        fail("file read empty buffer");
+    read_request.buffer = (uint32_t)(uintptr_t)syscall_data;
+    read_request.length = 2;
+    syscall_data[0] = syscall_data[1] = 0;
+    if (call_sys(SS9_SYS_READ, (uint32_t)(uintptr_t)&read_request) != 2 ||
+        syscall_data[0] != 'a' || syscall_data[1] != 'b')
+        fail("first file read syscall");
+    if (call_sys(SS9_SYS_READ, (uint32_t)(uintptr_t)&read_request) != 2 ||
+        syscall_data[0] != 'c' || syscall_data[1] != 'd' ||
+        call_sys(SS9_SYS_READ, (uint32_t)(uintptr_t)&read_request) != 0)
+        fail("file read syscall EOF");
+    if (call_sys(SS9_SYS_CLOSE, (uint32_t)fd) != 0 ||
+        call_sys(SS9_SYS_READ, (uint32_t)(uintptr_t)&read_request) != SS9_ERR)
+        fail("file close syscall");
+    open_request.flags = 3;
+    if (call_sys(SS9_SYS_OPEN, (uint32_t)(uintptr_t)&open_request) != SS9_ERR_PARAM)
+        fail("file open flags");
+    open_request.flags = SS9_OPEN_REPLACE;
+    fd = call_sys(SS9_SYS_OPEN, (uint32_t)(uintptr_t)&open_request);
+    if (fd < 3) fail("file writer open");
+    SS9WriteRequest file_write __attribute__((aligned(4))) = {
+        (uint32_t)fd, (uint32_t)(uintptr_t)syscall_data, 2
+    };
+    syscall_data[0] = 'x'; syscall_data[1] = 'y';
+    if (call_sys(SS9_SYS_WRITE, (uint32_t)(uintptr_t)&file_write) != 2 ||
+        call_sys(SS9_SYS_WRITE, (uint32_t)(uintptr_t)&file_write) != 2 ||
+        call_sys(SS9_SYS_CLOSE, (uint32_t)fd) != 0)
+        fail("file writer commit");
+    file_request.flags = 0;
+    file_request.buffer = (uint32_t)(uintptr_t)syscall_data;
+    file_request.size = sizeof(syscall_data);
+    if (call_sys(SS9_SYS_FILE_LOAD, (uint32_t)(uintptr_t)&file_request) != 4 ||
+        syscall_data[0] != 'x' || syscall_data[1] != 'y' ||
+        syscall_data[2] != 'x' || syscall_data[3] != 'y')
+        fail("file writer content");
     file_request.flags = 2;
     if (call_sys(SS9_SYS_FILE_STORE, (uint32_t)(uintptr_t)&file_request) != SS9_ERR_PARAM)
         fail("FAT16 syscall flags");

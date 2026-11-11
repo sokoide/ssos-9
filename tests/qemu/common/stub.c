@@ -102,6 +102,14 @@ __attribute__((weak)) int32_t ss_system_file_store(const char* name,
 __attribute__((weak)) int32_t ss_system_open_reader(uint32_t owner, const char* name) {
     (void)owner; (void)name; return -1;
 }
+__attribute__((weak)) int32_t ss_system_open_writer(uint32_t owner, const char* name,
+                                                    int replace) {
+    (void)owner; (void)name; (void)replace; return -1;
+}
+__attribute__((weak)) int32_t ss_system_write_fd(uint32_t owner, uint32_t fd,
+                                                 const uint8_t* data, uint32_t size) {
+    (void)owner; (void)fd; (void)data; (void)size; return -1;
+}
 __attribute__((weak)) int32_t ss_system_read_fd(uint32_t owner, uint32_t fd,
                                                 uint8_t* data, uint32_t size) {
     (void)owner; (void)fd; (void)data; (void)size; return -1;

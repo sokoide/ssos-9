@@ -9,8 +9,10 @@ SSScsiVolume ss_system_scsi_volume;
 
 typedef struct {
     SSFat12File file;
+    SSFat16Writer writer;
     uint32_t owner;
     uint8_t fd;
+    uint8_t writing;
 } SSFileHandle;
 
 static SSFileHandle handles[SS_FILE_HANDLES];
@@ -34,8 +36,50 @@ int32_t ss_system_open_reader(uint32_t owner, const char* name) {
     }
     handles[slot].owner = owner;
     handles[slot].fd = (uint8_t)fd;
+    handles[slot].writing = 0;
     ss_iocs_unlock();
     return (int32_t)fd;
+}
+
+int32_t ss_system_open_writer(uint32_t owner, const char* name, int replace) {
+    if (!owner) return -1;
+    ss_iocs_lock();
+    uint32_t slot, fd;
+    for (slot = 0; slot < SS_FILE_HANDLES && handles[slot].owner; slot++) {}
+    if (slot == SS_FILE_HANDLES) { ss_iocs_unlock(); return -1; }
+    for (fd = SS_FILE_FD_FIRST; fd < SS_FILE_FD_LIMIT; fd++) {
+        uint32_t i;
+        for (i = 0; i < SS_FILE_HANDLES; i++)
+            if (handles[i].owner == owner && handles[i].fd == fd) break;
+        if (i == SS_FILE_HANDLES) break;
+    }
+    if (fd == SS_FILE_FD_LIMIT ||
+        ss_storage_writer_begin(&ss_system_scsi_volume.storage, name, replace,
+                                &handles[slot].writer)) {
+        ss_iocs_unlock();
+        return -1;
+    }
+    handles[slot].owner = owner;
+    handles[slot].fd = (uint8_t)fd;
+    handles[slot].writing = 1;
+    ss_iocs_unlock();
+    return (int32_t)fd;
+}
+
+int32_t ss_system_write_fd(uint32_t owner, uint32_t fd, const uint8_t* data,
+                           uint32_t size) {
+    if (!owner) return -1;
+    ss_iocs_lock();
+    int32_t result = -1;
+    for (uint32_t i = 0; i < SS_FILE_HANDLES; i++)
+        if (handles[i].owner == owner && handles[i].fd == fd && handles[i].writing) {
+            result = ss_storage_writer_write(&ss_system_scsi_volume.storage,
+                                             &handles[i].writer, data, size);
+            if (result < 0) handles[i].owner = 0;
+            break;
+        }
+    ss_iocs_unlock();
+    return result;
 }
 
 int32_t ss_system_read_fd(uint32_t owner, uint32_t fd, uint8_t* data, uint32_t size) {
@@ -43,7 +87,7 @@ int32_t ss_system_read_fd(uint32_t owner, uint32_t fd, uint8_t* data, uint32_t s
     ss_iocs_lock();
     int32_t result = -1;
     for (uint32_t i = 0; i < SS_FILE_HANDLES; i++)
-        if (handles[i].owner == owner && handles[i].fd == fd) {
+        if (handles[i].owner == owner && handles[i].fd == fd && !handles[i].writing) {
             result = ss_fat12_read(&handles[i].file, data, size);
             break;
         }
@@ -57,9 +101,14 @@ int32_t ss_system_close_fd(uint32_t owner, uint32_t fd) {
     int32_t result = -1;
     for (uint32_t i = 0; i < SS_FILE_HANDLES; i++)
         if (handles[i].owner == owner && handles[i].fd == fd) {
-            ss_storage_close_reader(&ss_system_scsi_volume.storage, &handles[i].file);
+            if (handles[i].writing)
+                result = ss_storage_writer_end(&ss_system_scsi_volume.storage,
+                                               &handles[i].writer, 1);
+            else {
+                ss_storage_close_reader(&ss_system_scsi_volume.storage, &handles[i].file);
+                result = 0;
+            }
             handles[i].owner = 0;
-            result = 0;
             break;
         }
     ss_iocs_unlock();
@@ -71,7 +120,11 @@ void ss_system_close_process_files(uint32_t owner) {
     ss_iocs_lock();
     for (uint32_t i = 0; i < SS_FILE_HANDLES; i++)
         if (handles[i].owner == owner) {
-            ss_storage_close_reader(&ss_system_scsi_volume.storage, &handles[i].file);
+            if (handles[i].writing)
+                (void)ss_storage_writer_end(&ss_system_scsi_volume.storage,
+                                            &handles[i].writer, 0);
+            else
+                ss_storage_close_reader(&ss_system_scsi_volume.storage, &handles[i].file);
             handles[i].owner = 0;
         }
     ss_iocs_unlock();

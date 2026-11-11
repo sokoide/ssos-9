@@ -157,12 +157,16 @@ int32_t ss_syscall_dispatch(uint32_t number, uint32_t request) {
         if (!valid_buffer(request, sizeof(SS9WriteRequest), 0))
             return SS9_ERR_PARAM;
         SS9WriteRequest req = *(const SS9WriteRequest*)(uintptr_t)request;
-        if (req.fd != 1 || req.length > SS9_WRITE_MAX)
+        if ((req.fd != 1 && req.fd < 3) ||
+            (req.fd == 1 && req.length > SS9_WRITE_MAX) ||
+            (req.fd != 1 && req.length > SS9_FILE_WRITE_MAX))
             return SS9_ERR_PARAM;
-        if (req.length == 0)
-            return 0;
-        if (!ss_process_memory_access(req.buffer, req.length, 0))
+        if (req.length && !ss_process_memory_access(req.buffer, req.length, 0))
             return SS9_ERR_PARAM;
+        if (req.fd != 1)
+            return ss_system_write_fd(ss_process_current_id(), req.fd,
+                                      (const uint8_t*)(uintptr_t)req.buffer, req.length);
+        if (!req.length) return 0;
         ss_cli_console_write((const uint8_t*)(uintptr_t)req.buffer, req.length);
         return (int32_t)req.length;
     }
@@ -189,9 +193,12 @@ int32_t ss_syscall_dispatch(uint32_t number, uint32_t request) {
         if (!valid_buffer(request, sizeof(SS9OpenRequest), 0)) return SS9_ERR_PARAM;
         SS9OpenRequest req = *(const SS9OpenRequest*)(uintptr_t)request;
         char name[13];
-        if (req.flags != SS9_OPEN_READ || !copy_string(req.name, name, sizeof(name)))
+        if (req.flags > SS9_OPEN_REPLACE || !copy_string(req.name, name, sizeof(name)))
             return SS9_ERR_PARAM;
-        return ss_system_open_reader(ss_process_current_id(), name);
+        if (req.flags == SS9_OPEN_READ)
+            return ss_system_open_reader(ss_process_current_id(), name);
+        return ss_system_open_writer(ss_process_current_id(), name,
+                                     req.flags == SS9_OPEN_REPLACE);
     }
     case SS9_SYS_READ: {
         if (!valid_buffer(request, sizeof(SS9ReadRequest), 0)) return SS9_ERR_PARAM;

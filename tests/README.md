@@ -14,10 +14,11 @@ scheduler, process/module primitives, and 68000 assembly samples. The root Makef
 - `make verify-check`: reports target artifacts affected by the current changes.
 
 The native suite exercises scheduler queue and lifecycle logic with host mocks.
-The FAT16 storage integrity test covers 512- and 1024-byte sectors, rejecting
-unequal FAT copies and read errors at mount, and fencing later writes after an
-injected failure that may already have modified a FAT copy. It does not model
-power loss or establish a recovery guarantee.
+The FAT16 storage integrity test covers 512- and 1024-byte sectors, 2 GiB sparse
+images with external FAT tools, incremental reads/writes, abort and replacement,
+rejection of unequal FAT copies and read errors at mount, and fencing later
+writes after an injected failure that may already have modified a FAT copy. It
+does not model power loss or establish a recovery guarantee.
 It also tests the production shell parser: attached/spaced trailing `&`,
 whitespace, foreground commands, token limits, and rejection of internal or
 repeated `&` before dispatch. Native integration tests exercise background

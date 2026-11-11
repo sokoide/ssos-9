@@ -188,3 +188,138 @@ int ss_fat16_replace(SSFat12* v, SSFatWriteSector write, const char* name,
                      const uint8_t* data, uint32_t size) {
     return write_file(v, write, name, data, size, 1);
 }
+
+int ss_fat16_writer_begin(SSFat12* v, const char* name, int replace,
+                          SSFat16Writer* writer) {
+    uint8_t sector[1024] __attribute__((aligned(4)));
+    uint8_t short_name[11];
+    if (!v || !writer || v->fat_bits != 16 || !v->read_sector ||
+        (replace != 0 && replace != 1) || make_name(name, short_name)) return -1;
+    SSFat16Writer result = {0};
+    result.slot = UINT32_MAX;
+    uint32_t per_sector = v->sector_size / 32u;
+    for (uint32_t i = 0; i < v->root_entries; i++) {
+        if (i % per_sector == 0 &&
+            v->read_sector(v->context, v->root_start + i / per_sector, sector))
+            return -1;
+        uint8_t* entry = sector + (i % per_sector) * 32u;
+        if (!entry[0] || entry[0] == 0xe5) {
+            if (result.slot == UINT32_MAX) {
+                result.slot = i;
+                result.slot_was_end = entry[0] == 0;
+            }
+            if (!entry[0]) break;
+            continue;
+        }
+        unsigned j = 0;
+        while (j < 11 && entry[j] == short_name[j]) j++;
+        if (j == 11) {
+            if (!replace || (entry[11] & 0x19u)) return -1;
+            SSFat12File existing;
+            if (ss_fat12_open(v, name, &existing) ||
+                (!existing.size && existing.cursor_cluster)) return -1;
+            result.old_cluster = existing.cursor_cluster;
+            result.slot = i;
+            result.slot_was_end = 0;
+            result.replacing = 1;
+            break;
+        }
+    }
+    if (result.slot == UINT32_MAX || (replace && !result.replacing)) return -1;
+    for (unsigned i = 0; i < 11; i++) result.name[i] = short_name[i];
+    result.active = 1;
+    *writer = result;
+    return 0;
+}
+
+static int writer_allocate(SSFat12* v, SSFatWriteSector write,
+                           SSFat16Writer* writer) {
+    uint32_t limit = (uint32_t)v->cluster_count + 2u;
+    if (limit > 0xfff0u) limit = 0xfff0u;
+    uint32_t start = writer->last ? (uint32_t)writer->last + 1u : 2u;
+    if (start >= limit) start = 2;
+    uint32_t c = start;
+    do {
+        uint16_t value;
+        if (fat_get(v, (uint16_t)c, &value)) return -1;
+        if (!value) {
+            if (fat_set(v, write, (uint16_t)c, 0xffffu)) return -1;
+            if (writer->last && fat_set(v, write, writer->last, (uint16_t)c)) {
+                (void)fat_set(v, write, (uint16_t)c, 0);
+                return -1;
+            }
+            if (!writer->first) writer->first = (uint16_t)c;
+            writer->last = (uint16_t)c;
+            return 0;
+        }
+        if (++c >= limit) c = 2;
+    } while (c != start);
+    return -1;
+}
+
+int32_t ss_fat16_writer_write(SSFat12* v, SSFatWriteSector write,
+                              SSFat16Writer* writer, const uint8_t* data,
+                              uint32_t size) {
+    uint8_t sector[1024] __attribute__((aligned(4)));
+    if (!v || !write || !writer || !writer->active || (!data && size) ||
+        size > 0x7fffffffu || size > UINT32_MAX - writer->size) return -1;
+    uint32_t cluster_bytes = (uint32_t)v->sector_size * v->sectors_per_cluster;
+    uint32_t done = 0;
+    while (done < size) {
+        uint32_t within_cluster = writer->size % cluster_bytes;
+        if (!within_cluster && writer_allocate(v, write, writer)) return -1;
+        uint32_t within_sector = writer->size % v->sector_size;
+        uint32_t at = v->data_start + ((uint32_t)writer->last - 2u) *
+                      v->sectors_per_cluster + within_cluster / v->sector_size;
+        if (at >= v->total_sectors) return -1;
+        if (within_sector) {
+            if (v->read_sector(v->context, at, sector)) return -1;
+        } else {
+            for (uint32_t i = 0; i < v->sector_size; i++) sector[i] = 0;
+        }
+        uint32_t count = v->sector_size - within_sector;
+        if (count > size - done) count = size - done;
+        for (uint32_t i = 0; i < count; i++) sector[within_sector + i] = data[done + i];
+        if (write(v->context, at, sector)) return -1;
+        writer->size += count;
+        done += count;
+    }
+    return (int32_t)done;
+}
+
+int ss_fat16_writer_abort(SSFat12* v, SSFatWriteSector write,
+                          SSFat16Writer* writer) {
+    if (!v || !write || !writer || !writer->active) return -1;
+    writer->active = 0;
+    return free_chain(v, write, writer->first);
+}
+
+int ss_fat16_writer_commit(SSFat12* v, SSFatWriteSector write,
+                           SSFat16Writer* writer) {
+    uint8_t sector[1024] __attribute__((aligned(4)));
+    if (!v || !write || !writer || !writer->active) return -1;
+    uint32_t per_sector = v->sector_size / 32u;
+    uint32_t at = v->root_start + writer->slot / per_sector;
+    if (writer->slot_was_end && writer->slot + 1u < v->root_entries &&
+        (writer->slot + 1u) % per_sector == 0) {
+        if (v->read_sector(v->context, at + 1u, sector)) return -1;
+        sector[0] = 0;
+        if (write(v->context, at + 1u, sector)) return -1;
+    }
+    if (v->read_sector(v->context, at, sector)) return -1;
+    uint8_t* entry = sector + (writer->slot % per_sector) * 32u;
+    if (writer->slot_was_end && writer->slot + 1u < v->root_entries &&
+        (writer->slot + 1u) % per_sector != 0) entry[32] = 0;
+    if (!writer->replacing) {
+        for (unsigned i = 0; i < 32; i++) entry[i] = 0;
+        for (unsigned i = 0; i < 11; i++) entry[i] = writer->name[i];
+    }
+    entry[11] |= 0x20;
+    entry[26] = (uint8_t)writer->first;
+    entry[27] = (uint8_t)(writer->first >> 8);
+    for (unsigned i = 0; i < 4; i++) entry[28 + i] = (uint8_t)(writer->size >> (i * 8));
+    /* Once submitted, a failing directory write may still publish the chain. */
+    writer->active = 0;
+    if (write(v->context, at, sector)) return -1;
+    return writer->replacing ? free_chain(v, write, writer->old_cluster) : 0;
+}
