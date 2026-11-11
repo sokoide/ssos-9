@@ -1,0 +1,5 @@
+.text
+
+foo:
+foo:
+	nop

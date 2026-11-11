@@ -1,7 +1,7 @@
 # Preemptive-only verification entry points.
-.PHONY: test test-native test-fat12 test-mux test-editor test-asm test-qemu clean
+.PHONY: test test-native test-fat12 test-mux test-editor test-asm test-asm-host test-asm-golden test-qemu clean
 
-test: test-native test-fat12 test-mux test-editor
+test: test-native test-fat12 test-mux test-editor test-asm-host
 
 test-editor:
 	@mkdir -p build
@@ -28,11 +28,33 @@ test-fat12:
 	./build/test-storage-integrity
 	python3 test_disk_image.py
 
+ASM_CORE = ../apps/asm/lex.c ../apps/asm/parse.c ../apps/asm/encode.c ../apps/asm/obj.c ../apps/asm/ctx.c ../apps/asm/assemble.c
+ASM_HOST_FLAGS = -std=c11 -Wall -Wextra -Werror -I../apps/asm
+
+test-asm-host:
+	@mkdir -p build
+	$(CC) $(ASM_HOST_FLAGS) unit/test_asm_parse.c ../apps/asm/lex.c ../apps/asm/parse.c ../apps/asm/ctx.c -o build/test-asm-parse
+	./build/test-asm-parse
+	$(CC) $(ASM_HOST_FLAGS) unit/test_asm_encode.c ../apps/asm/encode.c ../apps/asm/ctx.c -o build/test-asm-encode
+	./build/test-asm-encode
+	$(CC) $(ASM_HOST_FLAGS) unit/test_asm_obj.c ../apps/asm/obj.c ../apps/asm/ctx.c -o build/test-asm-obj
+	./build/test-asm-obj
+	$(CC) $(ASM_HOST_FLAGS) unit/asm_host_main.c $(ASM_CORE) -o build/asm-host
+	@long_src=$$(python3 -c "print('a'*64 + '.S')"); \
+	if ./build/asm-host "$$long_src" 2>/dev/null; then \
+	    echo "long source name accepted as default output"; exit 1; fi
+
+test-asm-golden: test-asm-host
+	python3 asm_golden.py
+
 test-asm:
 	$(MAKE) -C asm runall
+	$(MAKE) test-asm-golden
 
 test-qemu:
 	$(MAKE) -C ../examples/hello all
+	$(MAKE) -C ../apps/asm all
+	$(MAKE) test-asm-host
 	python3 test_mkmodule.py
 	$(MAKE) test-fat12
 	./build/test-fat12 ../examples/hello/build/hello-data.xdf ../examples/hello/build/hello.s9m
@@ -42,3 +64,4 @@ clean:
 	$(MAKE) -f Makefile.native clean
 	$(MAKE) -C asm clean
 	$(MAKE) -C qemu clean
+	rm -f build/test-asm-parse build/test-asm-encode build/test-asm-obj build/asm-host

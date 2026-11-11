@@ -1,8 +1,8 @@
 /* Run one shared S9M1 code image with independent A5/GOT state. */
 
-#include "../../../ssos/os/app/cli_wait.h"
 #include "../../../ssos/os/app/cli.h"
 #include "../../../ssos/os/app/cli_console.h"
+#include "../../../ssos/os/app/cli_wait.h"
 #include "../../../ssos/os/fs/fat12.h"
 #include "../../../ssos/os/fs/scsi_volume.h"
 #include "builtin.h"
@@ -25,6 +25,9 @@ extern uint8_t ss_test_console_bytes[256];
 extern uint32_t ss_test_console_count;
 extern const uint8_t ss_test_hello_image[], ss_test_hello_image_end[];
 extern const uint8_t ss_test_edit_image[], ss_test_edit_image_end[];
+extern const uint8_t ss_test_asm_image[], ss_test_asm_image_end[];
+extern const uint8_t ss_test_asm_source[], ss_test_asm_source_end[];
+extern const uint8_t ss_test_asm_expected[], ss_test_asm_expected_end[];
 static uint8_t fat_disk[8][512];
 extern const uint8_t ss_test_data_disk[];
 static int32_t fail_disk_sector = -1;
@@ -32,13 +35,15 @@ static uint32_t disk_read_calls;
 static uint8_t scsi_test_disk[50][512];
 static int scsi_test_read(void* context, uint32_t sector, uint8_t* out) {
     (void)context;
-    if (sector >= 50) return -1;
+    if (sector >= 50)
+        return -1;
     for (unsigned i = 0; i < 512; i++) out[i] = scsi_test_disk[sector][i];
     return 0;
 }
 static int scsi_test_write(void* context, uint32_t sector, const uint8_t* in) {
     (void)context;
-    if (sector >= 50) return -1;
+    if (sector >= 50)
+        return -1;
     for (unsigned i = 0; i < 512; i++) scsi_test_disk[sector][i] = in[i];
     return 0;
 }
@@ -46,7 +51,8 @@ static int scsi_test_write(void* context, uint32_t sector, const uint8_t* in) {
 int ss_scsi_volume_mount_iocs(SSScsiVolume* volume, uint8_t target,
                               uint32_t start, uint32_t blocks) {
     (void)blocks;
-    if (target != 3 || start != 10) return -1;
+    if (target != 3 || start != 10)
+        return -1;
     return ss_storage_mount(&volume->storage, scsi_test_read, scsi_test_write,
                             NULL, 5000, 512);
 }
@@ -70,7 +76,8 @@ int _iocs_b_read(int mode, int position, int size, void* out) {
 
 static int fat_read_sector(void* context, uint32_t sector, uint8_t* out) {
     (void)context;
-    if (sector >= 8) return -1;
+    if (sector >= 8)
+        return -1;
     for (unsigned i = 0; i < 512; i++) out[i] = fat_disk[sector][i];
     return 0;
 }
@@ -83,7 +90,8 @@ typedef struct {
 static int32_t hello_read(void* context, uint8_t* out, uint32_t size) {
     HelloReader* reader = context;
     uint32_t remaining = (uint32_t)(reader->end - reader->current);
-    if (size > remaining) size = remaining;
+    if (size > remaining)
+        size = remaining;
     for (uint32_t i = 0; i < size; i++) out[i] = *reader->current++;
     return (int32_t)size;
 }
@@ -239,7 +247,8 @@ static int console_contains(const char* needle) {
         while (needle[j] && i + j < ss_test_console_count &&
                ss_test_console_bytes[i + j] == (uint8_t)needle[j])
             j++;
-        if (!needle[j]) return 1;
+        if (!needle[j])
+            return 1;
     }
     return 0;
 }
@@ -287,11 +296,13 @@ int main(void) {
              j < sizeof(pointer_calls) / sizeof(pointer_calls[0]); j++)
             if (call_sys(pointer_calls[j], invalid[i]) != SS9_ERR_PARAM)
                 fail("unsafe syscall request accepted");
-    SS9ProcessInfoRequest bad_output __attribute__((aligned(4))) = {1, 0x00bffffcu};
+    SS9ProcessInfoRequest bad_output
+        __attribute__((aligned(4))) = {1, 0x00bffffcu};
     if (call_sys(SS9_SYS_PROC_INFO, (uint32_t)(uintptr_t)&bad_output) !=
         SS9_ERR_PARAM)
         fail("output crossing RAM end accepted");
-    SS9SpawnRequest bad_spawn __attribute__((aligned(4))) = {0x00c00000u, 0, 0, 0};
+    SS9SpawnRequest bad_spawn
+        __attribute__((aligned(4))) = {0x00c00000u, 0, 0, 0};
     if (call_sys(SS9_SYS_SPAWN, (uint32_t)(uintptr_t)&bad_spawn) !=
         SS9_ERR_PARAM)
         fail("invalid module name accepted");
@@ -320,7 +331,8 @@ int main(void) {
     if (call_sys(SS9_SYS_SPAWN, (uint32_t)(uintptr_t)&bad_spawn) !=
         SS9_ERR_PARAM)
         fail("unterminated argument accepted");
-    SS9ProcessListRequest bad_list __attribute__((aligned(4))) = {2, 0, 0x00bffffcu};
+    SS9ProcessListRequest bad_list
+        __attribute__((aligned(4))) = {2, 0, 0x00bffffcu};
     if (call_sys(SS9_SYS_PROC_LIST, (uint32_t)(uintptr_t)&bad_list) !=
         SS9_ERR_PARAM)
         fail("list crossing RAM end accepted");
@@ -399,7 +411,8 @@ int main(void) {
     write_req.length = 0;
     if (call_sys(SS9_SYS_WRITE, (uint32_t)(uintptr_t)&write_req) != 0 ||
         call_sys(SS9_SYS_WRITE, (uint32_t)(uintptr_t)&write_req + 1u) !=
-            SS9_ERR_PARAM || ss_test_console_count != 4)
+            SS9_ERR_PARAM ||
+        ss_test_console_count != 4)
         fail("write empty or unaligned request");
     if (call_sys(SS9_SYS_CONSOLE_CLEAR, 0) != 0 ||
         call_sys(SS9_SYS_CONSOLE_CLEAR, 1) != SS9_ERR_PARAM ||
@@ -421,11 +434,11 @@ int main(void) {
         fail("running process was reaped");
 
     SS9ProcessInfo info __attribute__((aligned(4)));
-    SS9ProcessInfoRequest info_request __attribute__((aligned(4))) = {first_pid,
-                                          (uint32_t)(uintptr_t)&info};
+    SS9ProcessInfoRequest info_request
+        __attribute__((aligned(4))) = {first_pid, (uint32_t)(uintptr_t)&info};
     SS9ProcessInfo entries[SS_PROCESS_MAX] __attribute__((aligned(4)));
-    SS9ProcessListRequest list_request __attribute__((aligned(4))) = {SS_PROCESS_MAX, 0,
-                                          (uint32_t)(uintptr_t)entries};
+    SS9ProcessListRequest list_request __attribute__((aligned(4))) = {
+        SS_PROCESS_MAX, 0, (uint32_t)(uintptr_t)entries};
     if (call_sys(SS9_SYS_PROC_INFO, (uint32_t)(uintptr_t)&info_request) !=
             SS_OK ||
         call_sys(SS9_SYS_PROC_INFO, (uint32_t)(uintptr_t)&info_request + 1u) !=
@@ -437,8 +450,9 @@ int main(void) {
 
     const char* syscall_name = "qcounter";
     const char* syscall_argv[] __attribute__((aligned(4))) = {"qcounter"};
-    SS9SpawnRequest spawn_request __attribute__((aligned(4))) = {(uint32_t)(uintptr_t)syscall_name, 1, 0,
-                                     (uint32_t)(uintptr_t)syscall_argv};
+    SS9SpawnRequest spawn_request
+        __attribute__((aligned(4))) = {(uint32_t)(uintptr_t)syscall_name, 1, 0,
+                                       (uint32_t)(uintptr_t)syscall_argv};
     int32_t spawned_pid =
         call_sys(SS9_SYS_SPAWN, (uint32_t)(uintptr_t)&spawn_request);
     if (spawned_pid <= 1)
@@ -462,7 +476,8 @@ int main(void) {
     }
     if (wait_status != SS_OK || status != 0)
         fail("reap/wait second");
-    SS9WaitRequest syscall_wait __attribute__((aligned(4))) = {(uint32_t)spawned_pid, 0, 0};
+    SS9WaitRequest syscall_wait
+        __attribute__((aligned(4))) = {(uint32_t)spawned_pid, 0, 0};
     if (call_sys(SS9_SYS_KILL, (uint32_t)spawned_pid) != SS_OK ||
         call_sys(SS9_SYS_WAIT, (uint32_t)(uintptr_t)&syscall_wait) !=
             spawned_pid ||
@@ -573,10 +588,10 @@ int main(void) {
     uint32_t hello_free_before = ss_memory_free_bytes();
     HelloReader hello_reader = {ss_test_hello_image, ss_test_hello_image_end};
     SSModuleId hello_module;
-    if (ss_module_load_reader(hello_read, &hello_reader,
-                              (uint32_t)(ss_test_hello_image_end -
-                                         ss_test_hello_image),
-                              &hello_module) != SS_OK)
+    if (ss_module_load_reader(
+            hello_read, &hello_reader,
+            (uint32_t)(ss_test_hello_image_end - ss_test_hello_image),
+            &hello_module) != SS_OK)
         fail("hello load");
     SSProcessId hello_pid;
     ss_test_console_count = 0;
@@ -618,8 +633,8 @@ int main(void) {
             child.module_id == hello_module)
             shell_hello_pid = child.pid;
     }
-    if (!shell_hello_pid || ss_process_wait(1, shell_hello_pid, &status) != SS_OK ||
-        status != 0)
+    if (!shell_hello_pid ||
+        ss_process_wait(1, shell_hello_pid, &status) != SS_OK || status != 0)
         fail("shell background cleanup");
 
     char foreground_command[] = "run hello";
@@ -636,23 +651,34 @@ int main(void) {
         ss_memory_free_bytes() != hello_free_before)
         fail("shell hello cleanup");
 
-    uint32_t hello_size = (uint32_t)(ss_test_hello_image_end - ss_test_hello_image);
-    if (hello_size > 512) fail("hello image exceeds fixture cluster");
-    fat_disk[0][12] = 2; fat_disk[0][13] = 1; fat_disk[0][14] = 1;
-    fat_disk[0][16] = 1; fat_disk[0][17] = 16; fat_disk[0][19] = 8;
-    fat_disk[0][22] = 1; fat_disk[0][510] = 0x55; fat_disk[0][511] = 0xaa;
-    fat_disk[1][3] = 0xff; fat_disk[1][4] = 0x0f;
+    uint32_t hello_size =
+        (uint32_t)(ss_test_hello_image_end - ss_test_hello_image);
+    if (hello_size > 512)
+        fail("hello image exceeds fixture cluster");
+    fat_disk[0][12] = 2;
+    fat_disk[0][13] = 1;
+    fat_disk[0][14] = 1;
+    fat_disk[0][16] = 1;
+    fat_disk[0][17] = 16;
+    fat_disk[0][19] = 8;
+    fat_disk[0][22] = 1;
+    fat_disk[0][510] = 0x55;
+    fat_disk[0][511] = 0xaa;
+    fat_disk[1][3] = 0xff;
+    fat_disk[1][4] = 0x0f;
     const char disk_name[] = "HELLO   S9M";
     for (unsigned i = 0; i < 11; i++) fat_disk[2][i] = disk_name[i];
     fat_disk[2][26] = 2;
     fat_disk[2][28] = (uint8_t)hello_size;
     fat_disk[2][29] = (uint8_t)(hello_size >> 8);
-    for (uint32_t i = 0; i < hello_size; i++) fat_disk[3][i] = ss_test_hello_image[i];
+    for (uint32_t i = 0; i < hello_size; i++)
+        fat_disk[3][i] = ss_test_hello_image[i];
     SSFat12 volume;
     SSFat12File file;
     if (ss_fat12_mount(&volume, fat_read_sector, NULL, 8) ||
         ss_fat12_open(&volume, "hello.s9m", &file) ||
-        ss_module_load_reader(ss_fat12_read, &file, file.size, &hello_module) != SS_OK)
+        ss_module_load_reader(ss_fat12_read, &file, file.size, &hello_module) !=
+            SS_OK)
         fail("FAT hello load");
     ss_test_console_count = 0;
     char disk_command[] = "run hello";
@@ -689,14 +715,16 @@ int main(void) {
     char failing_file_command[] = "load 1 HELLO.S9M";
     ss_test_console_count = 0;
     if (ss_cli_execute_line(failing_file_command) != 0 ||
-        !console_contains("Unable to load module: image, memory, or registry.") ||
+        !console_contains(
+            "Unable to load module: image, memory, or registry.") ||
         ss_memory_free_bytes() != hello_free_before ||
         ss_module_find("hello", &hello_module) != SS_ERR_ID)
         fail("disk file read failure cleanup");
     fail_disk_sector = -1;
     char load_command[] = "load 1 HELLO.S9M";
     ss_test_console_count = 0;
-    if (ss_cli_execute_line(load_command) != 0 || !console_contains("Module loaded.") ||
+    if (ss_cli_execute_line(load_command) != 0 ||
+        !console_contains("Module loaded.") ||
         ss_module_find("hello", &hello_module) != SS_OK)
         fail("disk CLI load");
     uint32_t loaded_free = ss_memory_free_bytes();
@@ -717,11 +745,16 @@ int main(void) {
         ss_memory_free_bytes() != hello_free_before)
         fail("disk CLI cleanup");
 
-    scsi_test_disk[0][12] = 2; scsi_test_disk[0][13] = 1;
-    scsi_test_disk[0][14] = 1; scsi_test_disk[0][16] = 2;
-    scsi_test_disk[0][17] = 16; scsi_test_disk[0][19] = 0x88;
-    scsi_test_disk[0][20] = 0x13; scsi_test_disk[0][22] = 20;
-    scsi_test_disk[0][510] = 0x55; scsi_test_disk[0][511] = 0xaa;
+    scsi_test_disk[0][12] = 2;
+    scsi_test_disk[0][13] = 1;
+    scsi_test_disk[0][14] = 1;
+    scsi_test_disk[0][16] = 2;
+    scsi_test_disk[0][17] = 16;
+    scsi_test_disk[0][19] = 0x88;
+    scsi_test_disk[0][20] = 0x13;
+    scsi_test_disk[0][22] = 20;
+    scsi_test_disk[0][510] = 0x55;
+    scsi_test_disk[0][511] = 0xaa;
     char scsi_mount[] = "smount 3 10";
     ss_test_console_count = 0;
     if (ss_cli_execute_line(scsi_mount) || !console_contains("FAT16 mounted."))
@@ -738,8 +771,7 @@ int main(void) {
     uint8_t syscall_data[8] = {'a', 'b', 'c', 'd'};
     SS9FileRequest file_request __attribute__((aligned(4))) = {
         (uint32_t)(uintptr_t)file_syscall_name,
-        (uint32_t)(uintptr_t)syscall_data, 4, SS9_FILE_CREATE
-    };
+        (uint32_t)(uintptr_t)syscall_data, 4, SS9_FILE_CREATE};
     if (call_sys(SS9_SYS_FILE_STORE, (uint32_t)(uintptr_t)&file_request) != 4)
         fail("FAT16 store syscall");
     for (unsigned i = 0; i < 8; i++) syscall_data[i] = 0;
@@ -749,15 +781,15 @@ int main(void) {
         syscall_data[0] != 'a' || syscall_data[3] != 'd')
         fail("FAT16 load syscall");
     SS9OpenRequest open_request __attribute__((aligned(4))) = {
-        (uint32_t)(uintptr_t)file_syscall_name, SS9_OPEN_READ
-    };
+        (uint32_t)(uintptr_t)file_syscall_name, SS9_OPEN_READ};
     int32_t fd = call_sys(SS9_SYS_OPEN, (uint32_t)(uintptr_t)&open_request);
-    if (fd < 3) fail("file open syscall");
+    if (fd < 3)
+        fail("file open syscall");
     SS9ReadRequest read_request __attribute__((aligned(4))) = {
-        (uint32_t)fd, (uint32_t)(uintptr_t)syscall_data, 2
-    };
+        (uint32_t)fd, (uint32_t)(uintptr_t)syscall_data, 2};
     read_request.buffer = 0;
-    if (call_sys(SS9_SYS_READ, (uint32_t)(uintptr_t)&read_request) != SS9_ERR_PARAM)
+    if (call_sys(SS9_SYS_READ, (uint32_t)(uintptr_t)&read_request) !=
+        SS9_ERR_PARAM)
         fail("file read invalid buffer");
     read_request.length = 0;
     if (call_sys(SS9_SYS_READ, (uint32_t)(uintptr_t)&read_request) != 0)
@@ -776,15 +808,17 @@ int main(void) {
         call_sys(SS9_SYS_READ, (uint32_t)(uintptr_t)&read_request) != SS9_ERR)
         fail("file close syscall");
     open_request.flags = 3;
-    if (call_sys(SS9_SYS_OPEN, (uint32_t)(uintptr_t)&open_request) != SS9_ERR_PARAM)
+    if (call_sys(SS9_SYS_OPEN, (uint32_t)(uintptr_t)&open_request) !=
+        SS9_ERR_PARAM)
         fail("file open flags");
     open_request.flags = SS9_OPEN_REPLACE;
     fd = call_sys(SS9_SYS_OPEN, (uint32_t)(uintptr_t)&open_request);
-    if (fd < 3) fail("file writer open");
+    if (fd < 3)
+        fail("file writer open");
     SS9WriteRequest file_write __attribute__((aligned(4))) = {
-        (uint32_t)fd, (uint32_t)(uintptr_t)syscall_data, 2
-    };
-    syscall_data[0] = 'x'; syscall_data[1] = 'y';
+        (uint32_t)fd, (uint32_t)(uintptr_t)syscall_data, 2};
+    syscall_data[0] = 'x';
+    syscall_data[1] = 'y';
     if (call_sys(SS9_SYS_WRITE, (uint32_t)(uintptr_t)&file_write) != 2 ||
         call_sys(SS9_SYS_WRITE, (uint32_t)(uintptr_t)&file_write) != 2 ||
         call_sys(SS9_SYS_CLOSE, (uint32_t)fd) != 0)
@@ -797,17 +831,20 @@ int main(void) {
         syscall_data[2] != 'x' || syscall_data[3] != 'y')
         fail("file writer content");
     file_request.flags = 2;
-    if (call_sys(SS9_SYS_FILE_STORE, (uint32_t)(uintptr_t)&file_request) != SS9_ERR_PARAM)
+    if (call_sys(SS9_SYS_FILE_STORE, (uint32_t)(uintptr_t)&file_request) !=
+        SS9_ERR_PARAM)
         fail("FAT16 syscall flags");
     file_request.flags = 0;
     file_request.buffer = 0;
-    if (call_sys(SS9_SYS_FILE_LOAD, (uint32_t)(uintptr_t)&file_request) != SS9_ERR_PARAM)
+    if (call_sys(SS9_SYS_FILE_LOAD, (uint32_t)(uintptr_t)&file_request) !=
+        SS9_ERR_PARAM)
         fail("FAT16 syscall buffer");
 
     SSModuleId edit_module;
-    if (ss_module_register_image(ss_test_edit_image,
-                                 (uint32_t)(ss_test_edit_image_end - ss_test_edit_image),
-                                 SS_MODULE_STORAGE_DYNAMIC, &edit_module) != SS_OK)
+    if (ss_module_register_image(
+            ss_test_edit_image,
+            (uint32_t)(ss_test_edit_image_end - ss_test_edit_image),
+            SS_MODULE_STORAGE_DYNAMIC, &edit_module) != SS_OK)
         fail("register editor image");
     const char* edit_argv[] = {"edit", "SOURCE.S"};
     SSProcessId edit_pid;
@@ -824,10 +861,12 @@ int main(void) {
     ss_cli_set_foreground_pid(0);
     uint8_t edited[4] = {0};
     if (edit_wait != SS_OK || status != 0 ||
-        ss_system_file_load("SOURCE.S", edited, sizeof(edited)) != 1 || edited[0] != 'A')
+        ss_system_file_load("SOURCE.S", edited, sizeof(edited)) != 1 ||
+        edited[0] != 'A')
         fail("editor create and save");
     char mux_command[] = "mux";
-    if (ss_cli_execute_line(mux_command) != 0) fail("mux command");
+    if (ss_cli_execute_line(mux_command) != 0)
+        fail("mux command");
     for (unsigned i = 0; i < 40; i++) tick();
     SSProcessId shells[2] = {0, 0};
     for (unsigned i = 0; i < SS_PROCESS_MAX; i++) {
@@ -842,16 +881,25 @@ int main(void) {
     if (ss_process_spawn(1, edit_module, 2, edit_argv, &edit_pid) != SS_OK)
         fail("spawn editor for mux");
     ss_cli_set_foreground_pid(edit_pid);
-    push_key('i'); push_key('B'); push_key(27);
+    push_key('i');
+    push_key('B');
+    push_key(27);
     run_ticks(80);
-    push_key('~'); push_key('2');
+    push_key('~');
+    push_key('2');
     run_ticks(20);
-    if (ss_cli_console_mux_active() != 1) fail("editor key switch away");
+    if (ss_cli_console_mux_active() != 1)
+        fail("editor key switch away");
     run_ticks(80);
-    push_key('~'); push_key('1');
+    push_key('~');
+    push_key('1');
     run_ticks(20);
-    if (ss_cli_console_mux_active() != 0) fail("editor key switch back");
-    push_key(':'); push_key('w'); push_key('q'); push_key('\r');
+    if (ss_cli_console_mux_active() != 0)
+        fail("editor key switch back");
+    push_key(':');
+    push_key('w');
+    push_key('q');
+    push_key('\r');
     edit_wait = SS_ERR_STATE;
     for (unsigned i = 0; i < 200 && edit_wait == SS_ERR_STATE; i++) {
         tick();
@@ -862,17 +910,69 @@ int main(void) {
         ss_system_file_load("SOURCE.S", edited, sizeof(edited)) != 2 ||
         edited[0] != 'B' || edited[1] != 'A')
         fail("editor mux edit and replace");
-    if (ss_module_unload(edit_module) != SS_OK) fail("unload editor");
+    if (ss_module_unload(edit_module) != SS_OK)
+        fail("unload editor");
+
+    /* On-target assembler: store a source on FAT16, run the real S9M1 asm
+     * module, and compare its object byte-for-byte with the host build of
+     * the same core. */
+    ss_test_console_count = 0; /* make room for the assembler's output */
+    char asm_source_name[] = "PROG.S";
+    SS9FileRequest asm_store __attribute__((aligned(4))) = {
+        (uint32_t)(uintptr_t)asm_source_name,
+        (uint32_t)(uintptr_t)ss_test_asm_source,
+        (uint32_t)(ss_test_asm_source_end - ss_test_asm_source),
+        SS9_FILE_CREATE};
+    if (call_sys(SS9_SYS_FILE_STORE, (uint32_t)(uintptr_t)&asm_store) !=
+        (int32_t)asm_store.size)
+        fail("assembler source store");
+    SSModuleId asm_module;
+    if (ss_module_register_image(
+            ss_test_asm_image,
+            (uint32_t)(ss_test_asm_image_end - ss_test_asm_image),
+            SS_MODULE_STORAGE_DYNAMIC, &asm_module) != SS_OK)
+        fail("register assembler image");
+    const char* asm_argv[] = {"asm", "PROG.S"};
+    SSProcessId asm_pid;
+    if (ss_process_spawn(1, asm_module, 2, asm_argv, &asm_pid) != SS_OK)
+        fail("spawn assembler");
+    ss_cli_set_foreground_pid(asm_pid);
+    int16_t asm_wait = SS_ERR_STATE;
+    for (unsigned i = 0; i < 5000 && asm_wait == SS_ERR_STATE; i++) {
+        tick();
+        asm_wait = ss_process_wait(1, asm_pid, &status);
+    }
+    ss_cli_set_foreground_pid(0);
+    uint32_t expected_size =
+        (uint32_t)(ss_test_asm_expected_end - ss_test_asm_expected);
+    static uint8_t produced[512];
+    if (asm_wait != SS_OK || status != 0 || !console_contains("Wrote PROG.O"))
+        fail("assembler run");
+    if (ss_system_file_load("PROG.O", produced, sizeof(produced)) !=
+            (int32_t)expected_size ||
+        expected_size > sizeof(produced))
+        fail("assembler object size");
+    for (uint32_t i = 0; i < expected_size; i++)
+        if (produced[i] != ss_test_asm_expected[i])
+            fail("assembler object bytes");
+    if (ss_module_unload(asm_module) != SS_OK)
+        fail("unload assembler");
     if (ss_process_kill(shells[0]) != SS_OK ||
-        ss_process_kill(shells[1]) != SS_OK) fail("mux shell kill");
+        ss_process_kill(shells[1]) != SS_OK)
+        fail("mux shell kill");
     uint16_t shell_status;
     int16_t first_wait = SS_ERR_STATE, second_wait = SS_ERR_STATE;
-    for (unsigned i = 0; i < 200 && (first_wait == SS_ERR_STATE || second_wait == SS_ERR_STATE); i++) {
+    for (unsigned i = 0;
+         i < 200 && (first_wait == SS_ERR_STATE || second_wait == SS_ERR_STATE);
+         i++) {
         tick();
-        if (first_wait == SS_ERR_STATE) first_wait = ss_process_wait(1, shells[0], &shell_status);
-        if (second_wait == SS_ERR_STATE) second_wait = ss_process_wait(1, shells[1], &shell_status);
+        if (first_wait == SS_ERR_STATE)
+            first_wait = ss_process_wait(1, shells[0], &shell_status);
+        if (second_wait == SS_ERR_STATE)
+            second_wait = ss_process_wait(1, shells[1], &shell_status);
     }
-    if (first_wait != SS_OK || second_wait != SS_OK) fail("mux shell reap");
+    if (first_wait != SS_OK || second_wait != SS_OK)
+        fail("mux shell reap");
     tty_puts("OK shared code/private A5 data and hello\n");
     for (;;) tick();
 }

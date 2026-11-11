@@ -1,16 +1,28 @@
 # Scheduler verification
 
 The OS build is preemptive-only and CLI-only. Automated checks exercise the
-scheduler, process/module primitives, and 68000 assembly samples. The root Makefile exposes:
+scheduler, process/module primitives, 68000 assembly samples, and the MC68000
+assembler. The root Makefile exposes:
 
 - For SSOS-9 feature changes, normally update and run `make test` and
   `make test-qemu`; add cases to the suite that covers the changed behavior.
-- `make test`: native C tests and FAT image tests, including FAT16 create/replace
-  interoperability with `mkfs.fat`, `fsck.fat`, and `mcopy` when available.
-- `make test-qemu`: preemptive scheduler/context-switch tests under `qemu-system-m68k`.
-- `make test-asm`: standalone assembly samples under QEMU, mainly for checking
-  the examples and test environment. Run it when changing those samples or
-  their execution environment; it is not normally part of an OS feature change.
+- `make test`: native C tests, FAT image tests, and the assembler host unit
+  tests (`test-asm-host`), including FAT16 create/replace interoperability
+  with `mkfs.fat`, `fsck.fat`, and `mcopy` when available.
+- `make test-asm-host`: assembler host unit tests against fixed expectations
+  (lexer/parser: 315 checks, encoder: 262 checks, S9O1 object output). It
+  also builds `build/asm-host`, a host entry point sharing the module's
+  assembler core, which the golden and QEMU tests reuse.
+- `make test-asm-golden`: depends on `test-asm-host` and compares the text
+  bytes of the `tests/asm/cases` sources between `asm-host` and
+  `m68k-xelf-as`; needs `source ~/.elf2x68k`. See the golden paragraph below.
+- `make test-qemu`: preemptive scheduler/context-switch tests under
+  `qemu-system-m68k`. It cross-builds the assembler S9M1 module, runs the
+  assembler host tests first, and t13 includes an on-target assembler check.
+- `make test-asm`: standalone assembly samples under QEMU plus the assembler
+  golden comparison. The sample run mainly checks the examples and the test
+  environment; run the golden part (with `test-asm-host`) when changing the
+  assembler or its cases.
 - `make verify-check`: reports target artifacts affected by the current changes.
 
 The native suite exercises scheduler queue and lifecycle logic with host mocks.
@@ -42,6 +54,27 @@ T13 also loads the generated S9M1 image through a FAT12 disk and a mocked IOCS
 exit, and checks failure cleanup. The C Hello ELF and disk are built with
 `m68k-xelf-gcc`, so source `~/.elf2x68k` before `make test-qemu`.
 QEMU does not run the production MFP interrupt handler on X68000 hardware.
+
+The assembler is verified at three levels. `test-asm-host` compiles the
+production lexer/parser/encoder/object writer for the host and checks them
+against fixed expectations (315 parse checks, 262 encode checks, plus S9O1
+object output); it also builds `build/asm-host`, a host entry point sharing
+the module's `assemble.c` core. `test-asm-golden` assembles the cases in
+`tests/asm/cases` with both `asm-host` and `m68k-xelf-as` and requires
+byte-identical `.text` sections: 7 positive cases must match byte for byte,
+and the 5 `*.err.s` cases must fail with a `file:line` diagnostic. GAS keeps
+0 in a field it relocates against a defined section symbol and stores the
+value as an addend, while the S9O1 contract stores the resolved
+section-relative value in the field bytes, so the comparison
+(`tests/asm_golden.py`) folds GAS-side defined relocations into the bytes
+before comparing. Binutils 2.46 m68k GAS turns `$hex` literals into
+undefined symbols and rejects forward `.s`/`.b` branches, so positive cases
+use `0x` literals and backward short branches only. In QEMU, t13 stores
+`tests/asm/qemu-prog.s` on FAT16 as `PROG.S`, spawns the real S9M1 `asm`
+module, waits for its exit, and byte-compares the produced `PROG.O` against
+the object built by `asm-host` on the host. Like the rest of the QEMU suite,
+this runs under the QEMU port of the Timer D context-switch path; it does
+not run the assembler on real hardware.
 
 For the interactive console smoke test, run `source ~/.elf2x68k` and
 `make -C tests/target`. Start the current standalone launcher from Human68k,

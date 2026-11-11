@@ -83,8 +83,14 @@ t13_xdf.o: $(SSOS)/fs/xdf.c $(SSOS)/fs/xdf.h
 	$(MAKE) -C ../../../examples/hello all
 ../../../apps/edit/build/edit.s9m: FORCE
 	$(MAKE) -C ../../../apps/edit all
-hello_image.o: hello_image.s ../../../examples/hello/build/hello.s9m ../../../examples/hello/build/hello-data.xdf ../../../apps/edit/build/edit.s9m
+hello_image.o: hello_image.s ../../../examples/hello/build/hello.s9m ../../../examples/hello/build/hello-data.xdf ../../../apps/edit/build/edit.s9m ../../../apps/asm/build/asm.s9m ../../../tests/asm/qemu-prog.s build/asm-expected.bin
 	$(CC) $(ASFLAGS) -c $< -o $@
+
+# Expected S9O1 object for the on-target assembler test, produced by the
+# host build of the same assembler core (tests/Makefile test-asm-host).
+build/asm-expected.bin: ../../../tests/asm/qemu-prog.s ../../../tests/build/asm-host
+	@mkdir -p build
+	../../../tests/build/asm-host $< $@
 t02_register_save_entry.o: t02_register_save.s
 	$(CC) $(ASFLAGS) -c $< -o $@
 

@@ -84,3 +84,6 @@ __pycache__/
 
 /tools/makedisk/build/
 /examples/**/build/
+
+# App build outputs
+/apps/**/build/
