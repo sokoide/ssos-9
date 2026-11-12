@@ -2,17 +2,29 @@
 
 #include <stddef.h>
 
-void ss_mux_init(SSMux* mux) {
-    if (!mux) return;
+static void clear_windows(SSMux* mux) {
     mux->active = 0;
     for (unsigned n = 0; n < SS_MUX_WINDOWS; n++) {
         SSMuxWindow* window = &mux->windows[n];
         window->x = window->y = window->key_head = window->key_count = 0;
         window->scroll_count = 0;
-        for (unsigned y = 0; y < SS_MUX_ROWS; y++)
+        for (unsigned y = 0; y < SS_MUX_ROWS_MAX; y++)
             for (unsigned x = 0; x < SS_MUX_COLUMNS; x++)
                 window->cells[y][x] = ' ';
     }
+}
+
+void ss_mux_init(SSMux* mux) {
+    if (!mux) return;
+    mux->rows = SS_MUX_ROWS;
+    clear_windows(mux);
+}
+
+int ss_mux_set_rows(SSMux* mux, uint8_t rows) {
+    if (!mux || !rows || rows > SS_MUX_ROWS_MAX) return -1;
+    mux->rows = rows;
+    clear_windows(mux);
+    return 0;
 }
 
 int ss_mux_select(SSMux* mux, uint8_t window) {
@@ -24,7 +36,7 @@ int ss_mux_select(SSMux* mux, uint8_t window) {
 int ss_mux_clear(SSMux* mux, uint8_t window_id) {
     if (!mux || window_id >= SS_MUX_WINDOWS) return -1;
     SSMuxWindow* window = &mux->windows[window_id];
-    for (unsigned y = 0; y < SS_MUX_ROWS; y++)
+    for (unsigned y = 0; y < SS_MUX_ROWS_MAX; y++)
         for (unsigned x = 0; x < SS_MUX_COLUMNS; x++)
             window->cells[y][x] = ' ';
     window->x = window->y = 0;
@@ -32,22 +44,23 @@ int ss_mux_clear(SSMux* mux, uint8_t window_id) {
 }
 
 int ss_mux_locate(SSMux* mux, uint8_t window_id, uint8_t x, uint8_t y) {
-    if (!mux || window_id >= SS_MUX_WINDOWS || x >= SS_MUX_COLUMNS || y >= SS_MUX_ROWS)
+    if (!mux || window_id >= SS_MUX_WINDOWS || x >= SS_MUX_COLUMNS ||
+        y >= mux->rows)
         return -1;
     mux->windows[window_id].x = x;
     mux->windows[window_id].y = y;
     return 0;
 }
 
-static void newline(SSMuxWindow* window) {
-    if (++window->y < SS_MUX_ROWS) return;
+static void newline(SSMuxWindow* window, uint8_t rows) {
+    if (++window->y < rows) return;
     window->scroll_count++;
-    for (unsigned y = 1; y < SS_MUX_ROWS; y++)
+    for (unsigned y = 1; y < rows; y++)
         for (unsigned x = 0; x < SS_MUX_COLUMNS; x++)
             window->cells[y - 1][x] = window->cells[y][x];
     for (unsigned x = 0; x < SS_MUX_COLUMNS; x++)
-        window->cells[SS_MUX_ROWS - 1][x] = ' ';
-    window->y = SS_MUX_ROWS - 1;
+        window->cells[rows - 1][x] = ' ';
+    window->y = rows - 1;
 }
 
 int ss_mux_write(SSMux* mux, uint8_t window_id, const uint8_t* data,
@@ -57,14 +70,14 @@ int ss_mux_write(SSMux* mux, uint8_t window_id, const uint8_t* data,
     for (uint32_t i = 0; i < size; i++) {
         uint8_t c = data[i];
         if (c == '\r') window->x = 0;
-        else if (c == '\n') newline(window);
+        else if (c == '\n') newline(window, mux->rows);
         else if (c == '\b') {
             if (window->x) window->x--;
         } else if (c >= 32 && c != 127) {
             window->cells[window->y][window->x++] = c;
             if (window->x == SS_MUX_COLUMNS) {
                 window->x = 0;
-                newline(window);
+                newline(window, mux->rows);
             }
         }
     }

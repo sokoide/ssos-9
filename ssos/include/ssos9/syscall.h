@@ -46,7 +46,9 @@ enum {
 #define SS9_READ_MAX 65536u
 #define SS9_FILE_WRITE_MAX 65536u
 #define SS9_CONSOLE_COLUMNS 80u
-#define SS9_CONSOLE_ROWS 25u
+/* Tallest text screen (31 kHz mode, above the function-key row); a 25-row
+ * console region is narrower and IOCS clips locations beyond it. */
+#define SS9_CONSOLE_ROWS 31u
 
 /* CONSOLE_CLEAR and CONSOLE_KEY take scalar zero. CONSOLE_LOCATE packs x in
  * the high 16 bits and y in the low 16 bits. CONSOLE_KEY is nonblocking:

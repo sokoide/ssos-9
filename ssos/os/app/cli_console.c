@@ -14,12 +14,12 @@ static SSMux mux;
 static void redraw(void) {
     const SSMuxWindow* window = &mux.windows[mux.active];
     _iocs_b_clr_st();
-    for (unsigned y = 0; y < SS_MUX_ROWS; y++) {
+    for (unsigned y = 0; y < mux.rows; y++) {
         unsigned end = SS_MUX_COLUMNS;
         while (end && window->cells[y][end - 1] == ' ') end--;
         /* Avoid a physical terminal scroll when writing the bottom-right
          * cell. It remains in the backing buffer until the next redraw. */
-        if (y == SS_MUX_ROWS - 1 && end == SS_MUX_COLUMNS) end--;
+        if (y == mux.rows - 1 && end == SS_MUX_COLUMNS) end--;
         if (!end) continue;
         _iocs_b_locate(0, (int)y);
         for (unsigned x = 0; x < end; x++)
@@ -28,9 +28,30 @@ static void redraw(void) {
     _iocs_b_locate(window->x, window->y);
 }
 
+/* The hardware text screen shows 25 rows in 15 kHz modes and 31 rows above
+ * the function-key row in 31 kHz modes. B_CONSOL with d1=d2=-1 returns the
+ * live console region (d2: high word columns-1, low word rows-1), so the
+ * multiplexer windows fill the whole visible screen instead of stopping at
+ * the 25-row default. Synthetic harnesses keep the default. */
+static uint8_t console_region_rows(void) {
+#if defined(SS_HOST_TEST) || defined(SS_QEMU_TEST)
+    return SS_MUX_ROWS;
+#else
+    register int32_t d0 __asm__("d0") = 0x2e; /* IOCS B_CONSOL */
+    register int32_t d1 __asm__("d1") = -1;
+    register int32_t d2 __asm__("d2") = -1;
+    __asm__ volatile("trap #15" : "+d"(d0), "+d"(d1), "+d"(d2)
+                             : : "cc", "memory");
+    uint32_t rows = ((uint32_t)(uint16_t)d2 & 0xffffu) + 1u;
+    if (!rows || rows > SS_MUX_ROWS_MAX) return SS_MUX_ROWS;
+    return (uint8_t)rows;
+#endif
+}
+
 void ss_cli_console_mux_enable(void) {
     ss_iocs_lock();
     ss_mux_init(&mux);
+    (void)ss_mux_set_rows(&mux, console_region_rows());
     mux_prefix = 0;
     mux_enabled = 1;
     redraw();
@@ -115,7 +136,9 @@ void ss_cli_console_clear(void) {
 }
 
 int ss_cli_console_locate(uint32_t x, uint32_t y) {
-    if (x >= SS_MUX_COLUMNS || y >= SS_MUX_ROWS) return -1;
+    /* Without the multiplexer the bound is the tallest hardware text screen;
+     * IOCS clips to the live console region. */
+    if (x >= SS_MUX_COLUMNS || y >= SS_MUX_ROWS_MAX) return -1;
     ss_iocs_lock();
     uint8_t id = mux_enabled ? ss_process_current_console() : 0;
     if (mux_enabled) (void)ss_mux_locate(&mux, id, (uint8_t)x, (uint8_t)y);

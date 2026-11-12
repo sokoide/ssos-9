@@ -5,11 +5,12 @@
 
 #define SS_MUX_WINDOWS 3u
 #define SS_MUX_COLUMNS 80u
-#define SS_MUX_ROWS 25u
+#define SS_MUX_ROWS 25u          /* default height when the region is unknown */
+#define SS_MUX_ROWS_MAX 31u      /* hardware text screen rows above the FK row */
 #define SS_MUX_KEY_CAPACITY 64u
 
 typedef struct {
-    uint8_t cells[SS_MUX_ROWS][SS_MUX_COLUMNS];
+    uint8_t cells[SS_MUX_ROWS_MAX][SS_MUX_COLUMNS];
     uint16_t keys[SS_MUX_KEY_CAPACITY];
     uint32_t scroll_count;
     uint8_t x, y, key_head, key_count;
@@ -18,10 +19,14 @@ typedef struct {
 typedef struct {
     SSMuxWindow windows[SS_MUX_WINDOWS];
     uint8_t active;
+    uint8_t rows; /* active window height, [1, SS_MUX_ROWS_MAX] */
 } SSMux;
 
 /* Callers serialize access and perform physical display and keyboard I/O. */
 void ss_mux_init(SSMux* mux);
+/* Change the window height to match the IOCS console region. Clears every
+ * window, so call it before any output (at enable time). */
+int ss_mux_set_rows(SSMux* mux, uint8_t rows);
 int ss_mux_select(SSMux* mux, uint8_t window);
 int ss_mux_write(SSMux* mux, uint8_t window, const uint8_t* data, uint32_t size);
 int ss_mux_key_push(SSMux* mux, uint16_t key);

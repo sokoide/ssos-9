@@ -44,5 +44,19 @@ int main(void) {
     assert(mux.windows[2].scroll_count == 1);
     assert(mux.windows[2].cells[0][0] == 'x');
     assert(mux.windows[2].cells[SS_MUX_ROWS - 1][0] == ' ');
+    /* The console region decides the window height: a 31 kHz screen keeps
+     * rows 25..30 usable and scrolls one row later. */
+    assert(ss_mux_set_rows(&mux, 0) == -1);
+    assert(ss_mux_set_rows(&mux, SS_MUX_ROWS_MAX + 1u) == -1);
+    assert(ss_mux_set_rows(&mux, SS_MUX_ROWS_MAX) == 0);
+    assert(ss_mux_locate(&mux, 2, 0, SS_MUX_ROWS_MAX - 1u) == 0);
+    assert(ss_mux_locate(&mux, 2, 0, SS_MUX_ROWS_MAX) == -1);
+    assert(ss_mux_locate(&mux, 2, 0, 0) == 0);
+    for (unsigned y = 0; y < SS_MUX_ROWS_MAX; y++)
+        assert(ss_mux_write(&mux, 2, (const uint8_t*)"y\r\n", 3) == 0);
+    assert(mux.windows[2].y == SS_MUX_ROWS_MAX - 1u);
+    assert(mux.windows[2].scroll_count == 1);
+    assert(mux.windows[2].cells[0][0] == 'y');
+    assert(mux.windows[2].cells[SS_MUX_ROWS_MAX - 1u][0] == ' ');
     return 0;
 }

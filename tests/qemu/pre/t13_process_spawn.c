@@ -417,8 +417,9 @@ int main(void) {
     if (call_sys(SS9_SYS_CONSOLE_CLEAR, 0) != 0 ||
         call_sys(SS9_SYS_CONSOLE_CLEAR, 1) != SS9_ERR_PARAM ||
         call_sys(SS9_SYS_CONSOLE_LOCATE, (79u << 16) | 24u) != 0 ||
+        call_sys(SS9_SYS_CONSOLE_LOCATE, (79u << 16) | 30u) != 0 ||
         call_sys(SS9_SYS_CONSOLE_LOCATE, 80u << 16) != SS9_ERR_PARAM ||
-        call_sys(SS9_SYS_CONSOLE_LOCATE, 25u) != SS9_ERR_PARAM)
+        call_sys(SS9_SYS_CONSOLE_LOCATE, 31u) != SS9_ERR_PARAM)
         fail("console position syscall");
 
     set_counter(first.data_base, 1000);
