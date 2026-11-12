@@ -31,6 +31,9 @@ assembler. The root Makefile exposes:
 - `make verify-check`: reports target artifacts affected by the current changes.
 
 The native suite exercises scheduler queue and lifecycle logic with host mocks.
+The Human68k SCSI volume probe has a synthetic host fixture and QEMU t16
+covering partition and BPB validation. It is not yet connected to `smount`;
+these tests do not exercise Human68k file reads or writes.
 The FAT16 storage integrity test covers 512- and 1024-byte sectors, 2 GiB sparse
 images with external FAT tools, incremental reads/writes, abort and replacement,
 rejection of unequal FAT copies and read errors at mount, and fencing later

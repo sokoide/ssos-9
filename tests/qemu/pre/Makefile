@@ -19,7 +19,7 @@ SSOS = ../../../ssos/os
 TESTS = t01_round_robin t02_register_save t03_sleep_wakeup \
 	t04_main_task_register t05_timerd_cadence t06_idle_sleep t07_task_reap \
 	t08_cancel_waiting t09_arena t10_module_image t11_module_registry \
-	t12_interrupted_start t13_process_spawn t14_link_run t15_mux_flow
+	t12_interrupted_start t13_process_spawn t14_link_run t15_mux_flow t16_human68k_volume
 COMMON_OBJS = stub.o sched.o syscall.o syscall_entry.o wakeups.o main_task.o arena.o image.o module.o builtin.o process.o \
 	system_arena_local.o preempt_ctx_switch.o
 
@@ -76,6 +76,8 @@ t13_storage.o: $(SSOS)/fs/storage.c $(SSOS)/fs/storage.h
 t13_storage_system.o: $(SSOS)/fs/storage_system.c $(SSOS)/fs/storage.h
 	$(CC) $(CFLAGS) -c $< -o $@
 t13_xdf.o: $(SSOS)/fs/xdf.c $(SSOS)/fs/xdf.h
+	$(CC) $(CFLAGS) -c $< -o $@
+t16_human68k_volume_impl.o: $(SSOS)/fs/human68k_volume.c $(SSOS)/fs/human68k_volume.h
 	$(CC) $(CFLAGS) -c $< -o $@
 ../../../examples/hello/build/hello.s9m: FORCE
 	$(MAKE) -C ../../../examples/hello all
@@ -136,6 +138,9 @@ t14_link_run.elf: t14_link_run.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o 
 
 t15_mux_flow.elf: t15_mux_flow.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) ../common/linker.ld
 	$(CC) $(CFLAGS) t15_mux_flow.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) $(LDFLAGS) -o $@
+
+t16_human68k_volume.elf: t16_human68k_volume.o t16_human68k_volume_impl.o $(COMMON_OBJS) ../common/linker.ld
+	$(CC) $(CFLAGS) t16_human68k_volume.o t16_human68k_volume_impl.o $(COMMON_OBJS) $(LDFLAGS) -o $@
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
