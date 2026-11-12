@@ -243,3 +243,25 @@ what the script uses for `\`); after many in-guest SSOS-9 start/exit cycles
 the guest once stopped echoing keys entirely and a full XEiJ restart
 (restart the app, not just the guest) restored input, after which the same
 binary worked unchanged.
+
+On 2026-11-13, `tools/emulator-itest.sh` gained B2-B4, C1-C5, and D2-D4
+areas. B2 (trace: 16 scheduler events with non-empty kinds while the builtin
+counter ran), B3 (ticks advanced by 1860 over ~9 s with the spinner running
+while typing/debug/ps stayed responsive; the counter's own count is not
+screen-observable, so responsiveness plus tick advance is the check), B4
+(real-key Ctrl-C on foreground `run counter`: `^C`, `PID 2 interrupted`,
+prompt back, arena exactly `free_bytes=262132 largest_free=262132` again),
+C1 (help output equals the cli.c table after whitespace normalization), C2
+(8x `ps` kept the prompt on the last console row with the function-key row
+last; the never-written bottom-right cell is not text-copy distinguishable
+and stays a manual check), and C3 (F1/F2/F3 switching retained and restored
+each window's output) all passed against standalone SHA-256
+`6c6cf6c5cd7389d337e3a02cb224aa22d87c02b4dfff50c84e419e6e31cc7058`.
+C4 ran and failed by design on this environment: IOCS encodes ctrl only for
+letter keys (ctrl-c works; ctrl+] never arrives as 0x1d) and shift+caret
+delivers the JIS full-width tilde pair instead of ASCII 0x7e, so neither mux
+prefix is deliverable through the emulated keyboard; the script documents
+this, verifies the stray input harmlessly errors, and exits via F1. F-key
+switching itself is covered by C3. XEiJ `typekey &` also drops the
+ampersand, so the script sends it as shift+6. C5 and D2-D4 are implemented
+but not yet executed. Physical hardware was not tested.

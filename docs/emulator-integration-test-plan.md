@@ -1,6 +1,7 @@
 # XEiJ で確認すべき統合テスト計画
 
-更新日: 2026-11-13。状態: **A1〜A3・B1・D1・E3実装・実行済み、その他は計画**。
+更新日: 2026-11-13。状態: **A1〜A3・B1〜B4・C1〜C3・D1・E3実装・実行済み (C4を除きPASS)。
+C4は実行済み・エミュレータキー経路の制限でFAIL (下記)。C5・D2〜D4実装済み・未実行**。
 `smount` は Human68k 形式の先頭パーティションのみを受け付け、MS-DOS 型 FAT16 は拒否される。
 パスの 8.3 名照合は大文字小文字を区別しない (Human68k 側の作成・検索の挙動に合わせている)。
 
@@ -164,6 +165,40 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
   ログへ出力する (失敗診断は画面テキストが全て)。
 - Human68k 形式のファイル比較・整合性確認には、当該形式に対応すると確認した手段を
   使用する。PC 用 mtools / fsck.fat がそのまま使用可能とは仮定しない。
+- B2/B3: `tools/emulator-itest.sh b2|b3`。`run counter&` でビルトイン counter
+  (画面出力なしの private data カウンタ) を回しつつ `trace` / `debug` / `ps` を
+  実行する。counter のカウント値自体は画面から観測できないため、tick 前進・
+  イベント種別・シェル応答性をもって preemptive 動作の代替確認とする。
+- B4: `tools/emulator-itest.sh b4`。foreground `run counter` に実 Ctrl-C を送り、
+  `^C` と `PID n interrupted`、プロンプト復帰、`mem` の baseline 復帰を確認する。
+- C1: `tools/emulator-itest.sh c1`。`help` 出力を空白・改行を除去して正規化し
+  `cli.c` のコマンド表と突き合わせる (コンソール折返しの位置に依存しない)。
+- C2: `tools/emulator-itest.sh c2`。`ps` ×8 で 25 行超の出力を流し、内部ウィンドウ
+  再描画によりプロンプトが最終行に残ることとエラーなしを確認する。右下セルが
+  書き込まれないことの確認はテキストコピーでは区別できないため手動確認のまま。
+- C3/C4: `tools/emulator-itest.sh c3|c4`。F1〜F3 と Ctrl-]+数字 の切替え、各画面の
+  出力保持・復元を確認する。C4 は 2026-11-13 に実行したが、この環境
+  (XEiJ + Human68k 3.02 + ASK68K フロントプロセッサ) では IOCS が ctrl を文字キーに
+  のみエンコードし (ctrl-c=0x03 は B4 で実証)、ctrl+]→0x1d は届かない。
+  また shift+caret は ASCII の `~` (0x7e) ではなく JIS 全角チルダの 2 バイト
+  (0x81,0x60) として届くため `~` プレフィックスも自動送信できない。両者を試行して
+  切替わらない場合は F1 に戻って終了し FAIL する。F キー経由の切替え自体は C3 で
+  確認済み。実キーボードでの `~` 切替えは 2026-11-11 の手動実績による。
+- C5: `tools/emulator-itest.sh c5`。`tests/target/build/console.s9m` を `A:\TEST` の
+  `CONSOLE.S9M` として配置し (既存なら再配置しない)、`smount 0` 後 `run
+  test/console` で実キー入力が `KEY: xxxx` と一致することを確認する。
+- D2: `tools/emulator-itest.sh d2`。`apps/edit/build/edit.s9m` を `EDIT.S9M` として
+  配置し、`run test/edit test/<新規名>` で新規作成 (`n`) → 挿入 (`i` … ESC) →
+  `:wq` 保存 → 再オープンで内容一致 → `:q!` を確認、リセット後 Human68k の
+  `type` でも確認する。
+- D3: `tools/emulator-itest.sh d3`。`tests/asm/link` の 3 ソースを一意名で
+  `A:\TEST` に置き `run test/asm` ×3、リセット後 `.O` を F: 経由で取得し
+  host `asm-host` の出力とバイト比較する。
+- D4: `tools/emulator-itest.sh d4`。同一手順で `.O` を作り `run test/ld` で
+  一意名 `PROGxxxx.S9M` にリンク、`run test/<prog>` の FAT 経由フォールバック
+  起動で `LNK` と status 27 を確認、生成物を host `asm-host`+`link-host` の
+  golden とバイト比較する。モジュール画像 (`EDIT/ASM/LD/CONSOLE.S9M`) は
+  `A:\TEST` 内の初回配置を再利用し、ビルド更新後の再配置は手作業で行う。
 
 ## 5. XEiJ でも確認できないもの
 

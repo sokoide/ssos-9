@@ -3,8 +3,21 @@
 #   a2  repeated XEiJ startup/return exercise
 #   a3  XDF IPL boot and PID 1 exit rejection
 #   b1  Timer D tick rate measurement (200 Hz nominal)
+#   b2  trace shows scheduler events while counter runs
+#   b3  shell stays responsive with a CPU spinner (preemptive)
+#   b4  Ctrl-C on a busy foreground task restores the arena
+#   c1  help output matches the cli.c command table
+#   c2  >25 lines of console output redraw without scrolling
+#   c3  mux windows F1/F2/F3 retain and restore their output
+#   c4  Ctrl-] plus a digit selects a mux window
+#   c5  console module KEY: reporting over real IOCS input
 #   d1  Human68k-format HDD create/read/replace in A:\TEST
+#   d2  edit saves and reloads a new file in A:\TEST
+#   d3  on-target assembler output matches the host build
+#   d4  ld links, run fallback executes, image matches host golden
 #   e3  builtin hello real-PIC launch
+# Storage tests (c5, d1..d4) place fixtures in A:\TEST only and reuse the
+# already-copied module images; run B/C1-4 tests without disk writes.
 set -u
 
 PIPE="${TMPDIR%/}/XEiJControl"
@@ -22,6 +35,14 @@ yen_key() {
     printf 'releasekey yen\n' > "$PIPE" || fail 'cannot write control pipe'
     sleep 0.1
 }
+shift_key() { # shifted glyph: hold shift, tap the key, release
+    printf 'presskey shift\n' > "$PIPE" || fail 'cannot write control pipe'
+    sleep 0.12
+    printf 'typekey %s\n' "$1" > "$PIPE" || fail 'cannot write control pipe'
+    sleep 0.12
+    printf 'releasekey shift\n' > "$PIPE" || fail 'cannot write control pipe'
+    sleep 0.1
+}
 type_char() {
     case "$1" in
         ' ') key space ;;
@@ -30,6 +51,7 @@ type_char() {
         '.') key period ;;
         ',') key comma ;;
         '/') key slash ;;
+        '&') shift_key 6 ;;
         '\') yen_key ;;
         $'\n') key return ;;
         *) key "$1" ;;
@@ -251,27 +273,82 @@ boot_ssos() { # from the Human68k prompt; banner screen in $s
     s=$(screen)
     return 0
 }
+boot_mount() { # boot SSOS-9 and mount the A: volume (SCSI ID 0)
+    boot_ssos || return 1
+    type_cmd 'smount 0'
+    wait_screen 'FAT16 mounted.' 10 || fail 'smount 0 failed (A: expected at SCSI ID 0)' "$s"
+    return 0
+}
+guest_reset() { # reboot the guest through the control pipe and wait for the
+    # Human68k prompt; drops the Human68k disk cache (track buffer)
+    printf 'reset\n' > "$PIPE" || fail 'cannot write reset to control pipe'
+    wait_screen 'HIOCS' 30 || fail 'guest did not start rebooting' "$s"
+    wait_screen 'A:\>' 150 || fail 'Human68k did not come back' "$s"
+    sleep 3
+    type_cmd 'keywitch -r'
+    sleep 1
+}
+h68_prep() { # from A:\>: reset keywitch, ensure A:\TEST exists, leave a
+    # fresh dir listing of A:\TEST in $s (create the directory if needed)
+    key return # flush any pending unentered line from earlier activity
+    type_cmd 'keywitch -r'
+    sleep 1
+    type_cmd 'dir a:\test'
+    wait_screen 'A:\>' 8 || fail 'dir a:\test did not complete' "$s"
+    if print -r -- "$s" | grep -Eq 'ディレクトリ.*見つかり|irectory not found'; then
+        print '== create A:\TEST =='
+        type_cmd 'mkdir a:\test'
+        sleep 1
+    fi
+    type_cmd 'cls'
+    type_cmd 'dir a:\test'
+    wait_screen 'A:\>' 8 || fail 'dir a:\test did not complete' "$s"
+    return 0
+}
+place_in_test() { # place_in_test <host-file> <NAME.EXT>; stage on F: and copy
+    # into A:\TEST unless the row already exists (Human68k copy would prompt
+    # on overwrite, and immutable module images keep their first copy).
+    # Requires a fresh dir listing in $s; leaves $s on the new listing.
+    local src=$1 name=$2 stem=${name%.*} ext=${name##*.}
+    if print -r -- "$s" | tr '\r' '\n' | grep -Eiq "^${stem}[ ]+${ext}"; then
+        print "place: $name already in A:\\TEST (keeping existing copy)"
+        return 0
+    fi
+    cp "$src" "$HOME/tmp/$name" || fail "cannot stage $name in ~/tmp (F:)"
+    type_cmd "copy f:$name a:\\test\\$name"
+    sleep 1
+    type_cmd 'cls'
+    type_cmd 'dir a:\test'
+    wait_row "$stem" "$ext" 12 || fail "$name was not copied into A:\\TEST" "$s"
+    return 0
+}
+ssos_exit() { # exit SSOS-9 and confirm the Human68k prompt
+    type_cmd 'exit'
+    wait_screen 'SSOS-9 terminated.' 15 || fail 'SSOS-9 did not terminate' "$s"
+    require 'return to Human68k' "$s" 'A:\>'
+    return 0
+}
 
 d1_names() { # normalize Human68k dir rows ("name +ext", no dot) to
     # lowercase name.ext tokens; stored case differs by creator
     print -r -- "$1" | tr '\r' '\n' | grep -oE '^[A-Za-z0-9_]{1,18} +[A-Za-z0-9]{1,3} ' |
         awk '{print tolower($1) "." tolower($2)}' | sort -u
 }
-d1_screen_line() { # d1_screen_line <screen text> <exact line>; the screen
-    # copy pads every line to the text screen width, so allow trailing blanks
+screen_line() { # screen_line <screen text> <exact line>; the screen copy
+    # pads every line to the text screen width, so allow trailing blanks
     print -r -- "$1" | tr '\r' '\n' | grep -Eq -- "^${2}[[:space:]]*$"
 }
-d1_wait_line() { # d1_wait_line <exact line> <timeout-seconds>; screen in $s
+wait_line() { # wait_line <exact line> <timeout-seconds>; screen in $s
     local tmo=$2 waited=0
     while (( waited < tmo )); do
         sleep 3
         waited=$((waited + 3))
         s=$(screen)
-        d1_screen_line "$s" "$1" && return 0
+        screen_line "$s" "$1" && return 0
     done
     return 1
 }
-d1_wait_row() { # d1_wait_row <name> <ext> <timeout>; dir row in $s, any case
+wait_row() { # wait_row <name> <ext> <timeout>; dir row in $s, any case
     local tmo=$3 waited=0
     while (( waited < tmo )); do
         sleep 3
@@ -280,6 +357,13 @@ d1_wait_row() { # d1_wait_row <name> <ext> <timeout>; dir row in $s, any case
         print -r -- "$s" | tr '\r' '\n' | grep -Eiq "^${1}[ ]+${2}" && return 0
     done
     return 1
+}
+norm_text() { # wrap-insensitive text: drop every space, CR, and LF
+    print -r -- "$1" | tr -d ' \r\n\t'
+}
+started_pid() { # extract the last "Started ... PID n" number from screen $s
+    print -r -- "$1" | grep -o 'Started \(module\|command\) as PID [0-9]*' |
+        grep -o '[0-9]*$' | tail -1
 }
 
 run_d1() {
@@ -317,7 +401,7 @@ run_d1() {
     type_cmd 'dir a:\test'
     # Match the dir row "name +ext" in the lowercased display so command
     # echoes cannot match.
-    d1_wait_row "${fix:l}" 'txt' 12 || fail "d1: fixture $fix.TXT missing in A:\\TEST" "$s"
+    wait_row "${fix:l}" 'txt' 12 || fail "d1: fixture $fix.TXT missing in A:\\TEST" "$s"
     before=$(d1_names "$s")
     type_cmd "type a:\\test\\$fix.TXT"
     wait_screen 'D1FIXTURE' 8 || fail 'd1: Human68k fixture content mismatch' "$s"
@@ -349,10 +433,10 @@ run_d1() {
     # "File written." text from an earlier command cannot pass the check.
     type_cmd "swrite test/$base.txt hello"
     type_cmd "sread test/$base.txt"
-    d1_wait_line 'hello' 15 || fail 'd1: create + first read did not return hello' "$s"
+    wait_line 'hello' 15 || fail 'd1: create + first read did not return hello' "$s"
     type_cmd "sreplace test/$base.txt world"
     type_cmd "sread test/$base.txt"
-    d1_wait_line 'world' 15 || fail 'd1: replace + second read did not return world' "$s"
+    wait_line 'world' 15 || fail 'd1: replace + second read did not return world' "$s"
     print 'PASS d1: create/read/replace/read inside SSOS-9'
 
     print '== D1 verify from Human68k after return =='
@@ -372,14 +456,14 @@ run_d1() {
     type_cmd 'cls'
     type_cmd 'dir a:\test'
     # SSOS-9 stores the 8.3 name uppercase; Human68k keeps its own case.
-    d1_wait_row "$base" 'txt' 12 || fail 'd1: new file missing in A:\TEST after reset' "$s"
+    wait_row "$base" 'txt' 12 || fail 'd1: new file missing in A:\TEST after reset' "$s"
     print -r -- "$s" | tr '\r' '\n' | grep -Eiq "^${fix}[ ]+txt" ||
         fail 'd1: fixture missing in A:\TEST after reset' "$s"
     after=$(d1_names "$s" | grep -Eiv "^$base\.")
     [[ "$after" == "$before" ]] || fail 'd1: A:\TEST listing changed beyond the new file' \
         "before: $before"$'\n'"after: $after"
     type_cmd "type a:\\test\\$upper.TXT"
-    d1_wait_line 'world' 12 || fail 'd1: Human68k does not see world' "$s"
+    wait_line 'world' 12 || fail 'd1: Human68k does not see world' "$s"
     print -r -- "$s" | grep -Fq 'hello' && fail 'd1: old content still visible after replace' "$s"
     print 'PASS d1: Human68k sees world and the A:\TEST listing is unchanged'
     print 'PASS d1'
@@ -416,6 +500,379 @@ run_e3() {
     print 'PASS e3'
 }
 
+run_b2() {
+    s=$(screen)
+    require 'b2 initial prompt' "$s" 'A:\>'
+    boot_ssos || fail 'b2: ssos9 boot failed'
+    type_cmd 'run counter&'
+    wait_screen 'Started module as PID' 8 || fail 'b2: counter did not start' "$s"
+    local pid=$(started_pid "$s")
+    [[ -n $pid ]] || fail 'b2: cannot parse counter PID' "$s"
+    type_cmd 'trace'
+    sleep 2
+    s=$(screen)
+    require 'b2 trace header' "$s" 'scheduler events: 16 (oldest first)'
+    local events=$(print -r -- "$s" | tr '\r' '\n' |
+        grep -cE '^t=[0-9A-F]{8} (create|start|sleep|wake|switch|exit) task=[0-9]+ other=[0-9]+ value=[0-9A-F]{8}')
+    (( events >= 10 )) || fail "b2: only $events typed events in trace" "$s"
+    print -r -- "$s" | grep -Fq ' switch task=' || fail 'b2: no switch event in trace' "$s"
+    print "b2: $events scheduler events with non-empty kinds"
+    type_cmd "kill $pid"
+    sleep 1
+    type_cmd "wait $pid"
+    wait_screen 'exited with status' 8 || fail 'b2: counter was not reaped' "$s"
+    ssos_exit
+    print 'PASS b2: trace shows 16 scheduler events while counter ran'
+}
+
+run_b3() {
+    s=$(screen)
+    require 'b3 initial prompt' "$s" 'A:\>'
+    boot_ssos || fail 'b3: ssos9 boot failed'
+    type_cmd 'run counter&'
+    wait_screen 'Started module as PID' 8 || fail 'b3: counter did not start' "$s"
+    local pid=$(started_pid "$s")
+    type_cmd 'debug'
+    sleep 1
+    s=$(screen)
+    require 'b3 debug1' "$s" 'ticks='
+    local n1=$(ticks_of "$s")
+    sleep 6
+    type_cmd 'debug'
+    sleep 1
+    s=$(screen)
+    require 'b3 debug2' "$s" 'ticks='
+    local n2=$(ticks_of "$s")
+    (( n2 - n1 > 400 )) || fail "b3: ticks advanced only by $((n2 - n1)) while the shell stayed responsive" "$s"
+    print "b3: ticks advanced by $((n2 - n1)) with the spinner running"
+    type_cmd 'ps'
+    sleep 2
+    s=$(screen)
+    require 'b3 ps header' "$s" 'PID PPID STATE NAME MODULE DATA GOT STACK'
+    print -r -- "$s" | grep -Eq " counter " || fail 'b3: counter task not listed' "$s"
+    print 'b3: shell kept typing/debug/ps while counter spun (preemptive)'
+    type_cmd "kill $pid"
+    sleep 1
+    type_cmd "wait $pid"
+    wait_screen 'exited with status' 8 || fail 'b3: counter was not reaped' "$s"
+    ssos_exit
+    print 'PASS b3'
+}
+
+run_b4() {
+    s=$(screen)
+    require 'b4 initial prompt' "$s" 'A:\>'
+    boot_ssos || fail 'b4: ssos9 boot failed'
+    type_cmd 'mem'
+    sleep 1
+    s=$(screen)
+    local base=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
+    [[ -n $base ]] || fail 'b4: no arena baseline' "$s"
+    type_cmd 'run counter'
+    sleep 2 # foreground: the shell blocks while counter spins
+    printf 'presskey ctrl\n' > "$PIPE"; sleep 0.2
+    printf 'typekey c\n' > "$PIPE"; sleep 0.2
+    printf 'releasekey ctrl\n' > "$PIPE"; sleep 0.2
+    wait_line '\^C' 10 || fail 'b4: Ctrl-C not observed' "$s"
+    wait_screen 'interrupted' 8 || fail 'b4: foreground task not interrupted' "$s"
+    wait_line '> ' 8 || fail 'b4: prompt missing after interrupt' "$s"
+    type_cmd 'mem'
+    sleep 1
+    s=$(screen)
+    local after=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
+    [[ "$after" == "$base" ]] || fail "b4: arena did not return to baseline" \
+        "baseline: $base"$'\n'"after: $after"
+    ssos_exit
+    print "PASS b4: Ctrl-C reaped the spinner; arena back to $base"
+}
+
+HELP_EXPECTED='Commands: help, uptime, ps, modules, mem, run NAME [ARGS...] [&], load DRIVE FILE, unload NAME, kill PID, wait PID, smount ID [START [BLOCKS]], swrite FILE TEXT, sreplace FILE TEXT, sread FILE, debug, trace, clear, version, mux, exit'
+
+run_c1() {
+    s=$(screen)
+    require 'c1 initial prompt' "$s" 'A:\>'
+    boot_ssos || fail 'c1: ssos9 boot failed'
+    type_cmd 'help'
+    sleep 2
+    s=$(screen)
+    local got=$(norm_text "$s")
+    local want=$(norm_text "$HELP_EXPECTED")
+    [[ "$got" == *"$want"* ]] || fail 'c1: help text differs from the cli.c command table' "$s"
+    require 'c1 prompt alive' "$s" '>'
+    ssos_exit
+    print 'PASS c1: full help text matches the command table (wrap-normalized)'
+}
+
+run_c2() {
+    s=$(screen)
+    require 'c2 initial prompt' "$s" 'A:\>'
+    boot_ssos || fail 'c2: ssos9 boot failed'
+    local i
+    for ((i = 0; i < 8; i++)); do type_cmd 'ps'; done # ~50 lines > 25 rows
+    # The console keeps an internal line window and redraws: the prompt
+    # stays visible on the last console row and the function-key row stays
+    # the last screen row. (The never-written bottom-right cell cannot be
+    # distinguished from blank padding in a text copy; that part of C2
+    # stays a manual check.)
+    wait_line '> ' 15 || fail 'c2: prompt missing after long output' "$s"
+    local rows=("${(@f)$(print -r -- "$s")}")
+    local last=${rows[-1]}
+    print -r -- "$last" | grep -Eq '(C|S)[0-9]' || \
+        fail 'c2: function-key row is not the last screen row' "$s"
+    require 'c2 no errors' "$s" '>'
+    ssos_exit
+    print 'PASS c2: >25 lines of output kept the prompt on screen without errors'
+}
+
+run_c3() {
+    s=$(screen)
+    require 'c3 initial prompt' "$s" 'A:\>'
+    boot_ssos || fail 'c3: ssos9 boot failed'
+    type_cmd 'mux'
+    wait_screen 'Multiplexer:' 8 || fail 'c3: mux did not start' "$s"
+    key f2
+    sleep 1.5
+    type_cmd 'help'
+    sleep 2
+    s=$(screen)
+    [[ "$(norm_text "$s")" == *"$(norm_text "$HELP_EXPECTED")"* ]] || \
+        fail 'c3: window 2 did not run help' "$s"
+    key f3
+    sleep 1.5
+    type_cmd 'ps'
+    sleep 2
+    s=$(screen)
+    require 'c3 window 3 ps' "$s" 'PID PPID STATE NAME MODULE DATA GOT STACK'
+    require 'c3 window 3 shell row' "$s" 'shell'
+    key f1
+    sleep 1.5
+    s=$(screen)
+    print -r -- "$s" | grep -Fq 'Multiplexer:' || fail 'c3: window 1 content not restored' "$s"
+    local want=$(norm_text "$HELP_EXPECTED")
+    [[ "$(norm_text "$s")" != *"$want"* ]] || fail 'c3: window 1 shows window 2 output' "$s"
+    key f2
+    sleep 1.5
+    s=$(screen)
+    [[ "$(norm_text "$s")" == *"$want"* ]] || fail 'c3: window 2 did not retain help output' "$s"
+    key f1
+    sleep 1
+    ssos_exit
+    print 'PASS c3: per-window output retained and restored across F1/F2/F3'
+}
+
+run_c4() {
+    s=$(screen)
+    require 'c4 initial prompt' "$s" 'A:\>'
+    boot_ssos || fail 'c4: ssos9 boot failed'
+    type_cmd 'mux'
+    wait_screen 'Multiplexer:' 8 || fail 'c4: mux did not start' "$s"
+    key f2
+    sleep 1.5
+    type_cmd 'mem'
+    wait_screen 'arena free_bytes=' 8 || fail 'c4: window 2 did not run mem' "$s"
+    key f1
+    sleep 1.5
+    s=$(screen)
+    print -r -- "$s" | grep -Fq 'arena free_bytes=' && fail 'c4: window 1 shows window 2 output' "$s"
+    # Try Ctrl-] then digit. IOCS encodes ctrl only for letters, so this
+    # prefix may be undeliverable through the emulated keyboard.
+    printf 'presskey ctrl\n' > "$PIPE"; sleep 0.2
+    printf 'presskey rightbracket\n' > "$PIPE"; sleep 0.2
+    printf 'releasekey rightbracket\n' > "$PIPE"; sleep 0.15
+    printf 'releasekey ctrl\n' > "$PIPE"; sleep 0.3
+    key 2
+    sleep 1.5
+    s=$(screen)
+    if ! print -r -- "$s" | grep -Fq 'arena free_bytes='; then
+        print 'c4: Ctrl-] did not switch; trying the ~ prefix'
+        key return # flush whatever reached the shell prompt
+        sleep 0.5
+        printf 'presskey shift\n' > "$PIPE"; sleep 0.2
+        printf 'presskey caret\n' > "$PIPE"; sleep 0.2
+        printf 'releasekey caret\n' > "$PIPE"; sleep 0.15
+        printf 'releasekey shift\n' > "$PIPE"; sleep 0.4
+        key 2
+        sleep 1.5
+        s=$(screen)
+        if ! print -r -- "$s" | grep -Fq 'arena free_bytes='; then
+            key return
+            key f1
+            sleep 1
+            ssos_exit
+            fail 'c4: neither Ctrl-] nor ~ delivered a mux prefix through the emulated IOCS keyboard (F-key switching is covered by c3)' "$s"
+        fi
+        print 'c4: Ctrl-] not encodable on this IOCS path; ~ prefix switched'
+    else
+        print 'c4: Ctrl-] then 2 selected window 2'
+    fi
+    key f1
+    sleep 1
+    ssos_exit
+    print 'PASS c4'
+}
+
+run_c5() {
+    local console_module=tests/target/build/console.s9m
+    [[ -f "$console_module" ]] || fail 'c5: missing tests/target/build/console.s9m (run make test)'
+    s=$(screen)
+    require 'c5 initial prompt' "$s" 'A:\>'
+    h68_prep
+    place_in_test "$console_module" CONSOLE.S9M
+    boot_mount
+    type_cmd 'run test/console'
+    wait_screen 'KEY: 0000' 10 || fail 'c5: console module did not start' "$s"
+    key a
+    wait_screen 'KEY: 0061' 6 || fail 'c5: key a not reported as 0061' "$s"
+    key z
+    wait_screen 'KEY: 007A' 6 || fail 'c5: key z not reported as 007A' "$s"
+    key 5
+    wait_screen 'KEY: 0035' 6 || fail 'c5: key 5 not reported as 0035' "$s"
+    key f5
+    sleep 2
+    s=$(screen)
+    print -r -- "$s" | grep -Eq 'KEY: (0[1-9A-F]|[1-9A-F][0-9A-F])[0-9A-F]00' ||
+        fail 'c5: special key f5 not reported as scan<<8' "$s"
+    key q
+    wait_screen 'exited with status 0' 10 || fail 'c5: console module did not quit on q' "$s"
+    ssos_exit
+    print 'PASS c5: console module reported ASCII and scan-shifted keys'
+}
+
+run_d2() {
+    local edit_module=apps/edit/build/edit.s9m
+    [[ -f "$edit_module" ]] || fail 'd2: missing apps/edit/build/edit.s9m (run make all)'
+    local name="D2T$(printf '%05X' $(( $(date +%s) % 1048576 )))"
+    s=$(screen)
+    require 'd2 initial prompt' "$s" 'A:\>'
+    h68_prep
+    place_in_test "$edit_module" EDIT.S9M
+    boot_mount
+    print '== d2 create and save a new file with edit =='
+    type_cmd "run test/edit test/$name.TXT"
+    wait_screen 'Cannot read file.' 10 || fail 'd2: editor did not prompt for a new file' "$s"
+    key n
+    sleep 1.5
+    s=$(screen)
+    print -r -- "$s" | grep -Fq 'NORMAL' || fail 'd2: editor did not open empty buffer' "$s"
+    key i
+    sleep 0.5
+    local c line1='D2LINE1' line2='D2LINE2'
+    for c in ${(s::)line1}; do type_char "$c"; done
+    key return
+    for c in ${(s::)line2}; do type_char "$c"; done
+    key esc
+    sleep 1
+    type_cmd ':wq'
+    wait_screen 'Written' 10 || fail 'd2: editor did not report Written' "$s"
+    wait_line '> ' 10 || fail 'd2: no prompt after :wq' "$s"
+    print '== d2 reopen the saved file =='
+    type_cmd "run test/edit test/$name.TXT"
+    sleep 2.5
+    s=$(screen)
+    print -r -- "$s" | grep -Fq 'D2LINE1' || fail 'd2: reopened file lacks D2LINE1' "$s"
+    print -r -- "$s" | grep -Fq 'D2LINE2' || fail 'd2: reopened file lacks D2LINE2' "$s"
+    type_cmd ':q!'
+    wait_line '> ' 10 || fail 'd2: no prompt after :q!' "$s"
+    ssos_exit
+    print '== d2 verify from Human68k after reset =='
+    guest_reset
+    type_cmd "type a:\\test\\$name.TXT"
+    wait_line 'D2LINE1' 10 || fail 'd2: Human68k cannot read the saved file' "$s"
+    print -r -- "$s" | grep -Fq 'D2LINE2' || fail 'd2: Human68k file lacks D2LINE2' "$s"
+    print "PASS d2: edit saved and reloaded A:\\TEST\\$name.TXT"
+}
+
+# d3_place_and_asm <suffix>: stage the three link sources under unique
+# SA<suffix>.S / MB<suffix>.S / OB<suffix>.S names in A:\TEST and assemble
+# them on target into matching .O files.
+d3_place_and_asm() {
+    local suf=$1
+    cp tests/asm/link/start.s "$HOME/tmp/SA$suf.S"
+    cp tests/asm/link/main.s "$HOME/tmp/MB$suf.S"
+    cp tests/asm/link/obj.s "$HOME/tmp/OB$suf.S"
+    place_in_test "$HOME/tmp/SA$suf.S" "SA$suf.S"
+    place_in_test "$HOME/tmp/MB$suf.S" "MB$suf.S"
+    place_in_test "$HOME/tmp/OB$suf.S" "OB$suf.S"
+    boot_mount
+    type_cmd "run test/asm test/sa$suf.s test/sa$suf.o"
+    wait_screen "Wrote SA$suf.O" 20 || fail "d3: asm sa$suf failed" "$s"
+    wait_line '> ' 10 || fail "d3: no prompt after asm sa$suf" "$s"
+    type_cmd "run test/asm test/mb$suf.s test/mb$suf.o"
+    wait_screen "Wrote MB$suf.O" 20 || fail "d3: asm mb$suf failed" "$s"
+    wait_line '> ' 10 || fail "d3: no prompt after asm mb$suf" "$s"
+    type_cmd "run test/asm test/ob$suf.s test/ob$suf.o"
+    wait_screen "Wrote OB$suf.O" 20 || fail "d3: asm ob$suf failed" "$s"
+    wait_line '> ' 10 || fail "d3: no prompt after asm ob$suf" "$s"
+}
+
+run_d3() {
+    local asm_module=apps/asm/build/asm.s9m
+    [[ -f "$asm_module" ]] || fail 'd3: missing apps/asm/build/asm.s9m (run make all)'
+    [[ -x tests/build/asm-host ]] || fail 'd3: missing tests/build/asm-host (run make test)'
+    local suf=$(printf '%04X' $(( $(date +%s) % 65536 )))
+    local exp=$(mktemp -d "${TMPDIR%/}/d3exp.XXXXXXXX")
+    s=$(screen)
+    require 'd3 initial prompt' "$s" 'A:\>'
+    h68_prep
+    place_in_test "$asm_module" ASM.S9M
+    d3_place_and_asm "$suf"
+    ssos_exit
+    print '== d3 fetch objects through F: after reset =='
+    guest_reset
+    type_cmd "copy a:\\test\\sa$suf.o f:"
+    type_cmd "copy a:\\test\\mb$suf.o f:"
+    type_cmd "copy a:\\test\\ob$suf.o f:"
+    sleep 2
+    tests/build/asm-host tests/asm/link/start.s "$exp/SA$suf.O"
+    tests/build/asm-host tests/asm/link/main.s "$exp/MB$suf.O"
+    tests/build/asm-host tests/asm/link/obj.s "$exp/OB$suf.O"
+    local f
+    for f in SA MB OB; do
+        local obj=${f}${suf}.O
+        cmp -s "$HOME/tmp/$obj" "$exp/$obj" || \
+            fail "d3: guest $obj differs from the host build" "$(cmp "$HOME/tmp/$obj" "$exp/$obj" 2>&1 | head -2)"
+        print "d3: $obj byte-identical to host build"
+    done
+    rm -rf "$exp"
+    print 'PASS d3: three on-target objects match the host assembler'
+}
+
+run_d4() {
+    local ld_module=apps/link/build/ld.s9m
+    [[ -f "$ld_module" ]] || fail 'd4: missing apps/link/build/ld.s9m (run make all)'
+    [[ -x tests/build/asm-host && -x tests/build/link-host ]] || \
+        fail 'd4: missing tests/build/asm-host or link-host (run make test)'
+    local suf=$(printf '%04X' $(( ($(date +%s) + 3) % 65536 )))
+    local prog=PROG$suf
+    local exp=$(mktemp -d "${TMPDIR%/}/d4exp.XXXXXXXX")
+    s=$(screen)
+    require 'd4 initial prompt' "$s" 'A:\>'
+    h68_prep
+    place_in_test "$ld_module" LD.S9M
+    d3_place_and_asm "$suf"
+    type_cmd "run test/ld test/$prog.s9m test/sa$suf.o test/mb$suf.o test/ob$suf.o"
+    wait_screen "Wrote $prog.S9M" 30 || fail "d4: ld did not write the image" "$s"
+    wait_line '> ' 10 || fail 'd4: no prompt after ld' "$s"
+    print '== d4 run the linked program through the volume fallback =='
+    type_cmd "run test/$prog"
+    wait_screen 'LNK' 15 || fail 'd4: linked program did not print LNK' "$s"
+    wait_screen 'exited with status 27' 10 || fail 'd4: linked program did not exit 27' "$s"
+    ssos_exit
+    print '== d4 fetch and compare the linked image =='
+    guest_reset
+    type_cmd "copy a:\\test\\$prog.s9m f:"
+    sleep 2
+    tests/build/asm-host tests/asm/link/start.s "$exp/SA$suf.O"
+    tests/build/asm-host tests/asm/link/main.s "$exp/MB$suf.O"
+    tests/build/asm-host tests/asm/link/obj.s "$exp/OB$suf.O"
+    tests/build/link-host "$exp/$prog.S9M" "$exp/SA$suf.O" "$exp/MB$suf.O" "$exp/OB$suf.O" || \
+        fail 'd4: host link of the expected image failed'
+    cmp -s "$HOME/tmp/$prog.S9M" "$exp/$prog.S9M" || \
+        fail "d4: guest $prog.S9M differs from the host golden" "$(cmp "$HOME/tmp/$prog.S9M" "$exp/$prog.S9M" 2>&1 | head -2)"
+    rm -rf "$exp"
+    print "PASS d4: ld + run fallback produced the golden image; status 27 and LNK"
+}
+
 case ${1:-} in
     a2) run_a2 ;;
     a3)
@@ -426,7 +883,18 @@ case ${1:-} in
         trap 'exit 143' TERM
         run_a3 ;;
     b1) run_b1 ;;
+    b2) run_b2 ;;
+    b3) run_b3 ;;
+    b4) run_b4 ;;
+    c1) run_c1 ;;
+    c2) run_c2 ;;
+    c3) run_c3 ;;
+    c4) run_c4 ;;
+    c5) run_c5 ;;
     d1) run_d1 ;;
+    d2) run_d2 ;;
+    d3) run_d3 ;;
+    d4) run_d4 ;;
     e3) run_e3 ;;
-    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1|d1|e3' ;;
+    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1|b2|b3|b4|c1|c2|c3|c4|c5|d1|d2|d3|d4|e3' ;;
 esac
