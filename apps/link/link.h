@@ -198,8 +198,7 @@ LinkStatus lk_obj_header(LinkReader* reader, const LinkIo* io,
                          LinkObjHeader* out);
 /* Reads and validates one relocation record: section in {1,2}, type
  * 1..4, symbol index in range, field offset within the section, and the
- * field width inside the section (4-byte fields need room; word fields
- * in text must sit on even offsets). */
+ * field width inside the section (4-byte fields need room). */
 LinkStatus lk_obj_reloc(LinkReader* reader, const LinkIo* io, LinkReloc* out,
                         const LinkObjHeader* header);
 

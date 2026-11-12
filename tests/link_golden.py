@@ -16,8 +16,12 @@ Two levels, both driven through the host build of the linker:
    extern data/text resolution and a CODE32 fixup, which GNU ld has no
    counterpart for, so this script contains an independent mini-linker for
    exactly that profile and compares link-host's S9M1 output byte for byte
-   (header fields, code, init data, fixups, CRC). badmain.s must fail with
-   an undefined-symbol diagnostic and must not produce an output file.
+   (header fields, code, init data, fixups, CRC). Two link orders are
+   checked: input order and a definition-first order (obj.s linked before
+   main.s, which references its helper/factor), so resolution cannot
+   depend on the definition preceding the reference. badmain.s must fail
+   with an undefined-symbol diagnostic and must not produce an output
+   file.
 
 link-host is the host CLI driver built by `make -C tests test-link-host`
 (tests/unit/link_host_main.c plus the apps/link core) and is invoked with
@@ -351,26 +355,32 @@ def check_self_vectors(workdir, asm_host, link_host, report):
             return 1
         objects.append(out)
 
-    parsed = [parse_s9o1(path) for path in objects]
-    try:
-        layout = mini_link(parsed)
-        expected = expected_s9m1(layout, "PROG")
-    except LinkError as error:
-        report(f"FAIL self-vector: mini-linker error: {error}")
-        return 1
+    # Link orders: input order and reverse-definition order, where obj.s
+    # defines helper/factor before main.s references them. Both must match
+    # the mini-linker byte for byte (mini_link is link-order independent).
+    orders = [("PROG", ["start.O", "main.O", "obj.O"]),
+              ("PROGREV", ["start.O", "obj.O", "main.O"])]
+    parsed = {path.name: parse_s9o1(path) for path in objects}
+    for stem, inputs in orders:
+        try:
+            layout = mini_link([parsed[name] for name in inputs])
+            expected = expected_s9m1(layout, stem)
+        except LinkError as error:
+            report(f"FAIL self-vector {stem}: mini-linker error: {error}")
+            return failures + 1
 
-    output = workdir / "PROG.S9M"
-    result = link_with_host(link_host, "PROG.S9M",
-                            [path.name for path in objects], workdir)
-    if result.returncode != 0:
-        report(f"FAIL self-vector: link-host failed: "
-               f"{(result.stdout + result.stderr).strip()}")
-        return 1
-    actual = parse_s9m1(output)
-    if actual != expected:
-        report(f"FAIL self-vector: linked PROG.S9M differs from the "
-               f"expected image:\n{describe_mismatch(expected, actual)}")
-        failures += 1
+        output = workdir / f"{stem}.S9M"
+        result = link_with_host(link_host, output.name, inputs, workdir)
+        if result.returncode != 0:
+            report(f"FAIL self-vector {stem}: link-host failed: "
+                   f"{(result.stdout + result.stderr).strip()}")
+            return failures + 1
+        actual = parse_s9m1(output)
+        if actual != expected:
+            report(f"FAIL self-vector {stem}: linked {output.name} differs "
+                   f"from the expected image:\n"
+                   f"{describe_mismatch(expected, actual)}")
+            failures += 1
 
     result = run([asm_host, LINK_CASES / "badmain.s", workdir / "badmain.O"])
     if result.returncode != 0:
@@ -388,8 +398,8 @@ def check_self_vectors(workdir, asm_host, link_host, report):
     if (workdir / "BAD.S9M").exists():
         report("FAIL negative: failed link left an output file")
         failures += 1
-    report("self-vector: linked PROG.S9M matches the mini-linker, "
-           "negative case rejected")
+    report("self-vector: PROG and PROGREV (definition-first order) match "
+           "the mini-linker, negative case rejected")
     return failures
 
 

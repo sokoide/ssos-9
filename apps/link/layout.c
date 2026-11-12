@@ -258,7 +258,11 @@ static int find_global(const LinkLayout* layout, uint32_t name_offset,
     return -1;
 }
 
-/* Resolves every symbol in place to output-space values. */
+/* Resolves every symbol in place to output-space values in two phases:
+ * first defined symbols via their owner's bases, then undefined/extern
+ * symbols by copying the already-resolved definition (adding the owner's
+ * base again would double it when the definition links earlier than the
+ * reference). */
 LinkStatus lk_layout_resolve(LinkLayout* layout) {
     uint32_t i;
     for (i = 0; i < layout->object_count; i++)
@@ -266,21 +270,6 @@ LinkStatus lk_layout_resolve(LinkLayout* layout) {
     for (i = 0; i < layout->symbol_count; i++) {
         LinkSymbol* symbol = &layout->symbols[i];
         const LinkObject* owner = &layout->objects[symbol->object];
-        if (symbol->section == LINK_SECTION_UNDEF) {
-            uint32_t length = lk_name_length(layout, symbol->name);
-            int def = find_global(layout, symbol->name, length, symbol->object);
-            if (def < 0)
-                def = find_global(layout, symbol->name, length, UINT32_MAX);
-            if (def < 0) {
-                layout->error.kind = 1;
-                layout->error.name_offset = symbol->name;
-                layout->error.name_len = length;
-                return LINK_ERR_UNDEFINED;
-            }
-            symbol->section = layout->symbols[def].section;
-            symbol->value = layout->symbols[def].value;
-            owner = &layout->objects[layout->symbols[def].object];
-        }
         switch (symbol->section) {
         case LINK_SECTION_TEXT:
             symbol->value = owner->text_base + symbol->value;
@@ -291,8 +280,29 @@ LinkStatus lk_layout_resolve(LinkLayout* layout) {
         case LINK_SECTION_BSS:
             symbol->value = owner->bss_base + symbol->value;
             break;
-        default: /* abs: keep the constant */ break;
+        default: /* abs: keep the constant; UNDEF waits below */ break;
         }
+    }
+    for (i = 0; i < layout->symbol_count; i++) {
+        LinkSymbol* symbol = &layout->symbols[i];
+        uint32_t length;
+        int def;
+        if (symbol->section != LINK_SECTION_UNDEF)
+            continue;
+        length = lk_name_length(layout, symbol->name);
+        def = find_global(layout, symbol->name, length, symbol->object);
+        if (def < 0)
+            def = find_global(layout, symbol->name, length, UINT32_MAX);
+        if (def < 0) {
+            layout->error.kind = 1;
+            layout->error.name_offset = symbol->name;
+            layout->error.name_len = length;
+            return LINK_ERR_UNDEFINED;
+        }
+        /* The definition was resolved above: copy its output-space value
+         * without touching the bases. */
+        symbol->section = layout->symbols[def].section;
+        symbol->value = layout->symbols[def].value;
     }
     return LINK_OK;
 }
