@@ -82,18 +82,22 @@ test-qemu:
 #   make test-emulator EMULATOR_TESTS=b1    # one test
 #   EMULATOR_TESTS="a2 b1" make test-emulator
 #   make test-emulator-list                 # list selectable IDs
-EMULATOR_ALL_TESTS = a2 b1
+EMULATOR_ALL_TESTS = a2 a3 b1
 EMULATOR_TESTS ?= $(EMULATOR_ALL_TESTS)
 
 .PHONY: test-emulator-list
 test-emulator-list:
 	@echo "selectable XEiJ integration tests (EMULATOR_TESTS):"
 	@echo "  a2  repeated XEiJ startup and return exercise"
+	@echo "  a3  XDF IPL boot and PID 1 exit rejection (restarts XEiJ twice)"
 	@echo "  b1  Timer D tick rate measurement (200 Hz nominal)"
-	@echo 'usage: make test-emulator [EMULATOR_TESTS="a2 b1"]'
+	@echo 'usage: make test-emulator [EMULATOR_TESTS="a2 a3 b1"]'
 
 test-emulator-a2: install
 	tools/emulator-itest.sh a2
+
+test-emulator-a3: install
+	tools/emulator-itest.sh a3
 
 test-emulator-b1: install
 	tools/emulator-itest.sh b1

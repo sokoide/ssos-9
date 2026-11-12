@@ -122,8 +122,82 @@ run_b1() {
     print 'PASS b1'
 }
 
+wait_screen() { # wait_screen <pattern> <timeout-seconds>; screen text in $s
+    local pat=$1 tmo=$2 waited=0
+    while (( waited < tmo )); do
+        sleep 3
+        waited=$((waited + 3))
+        s=$(screen)
+        print -r -- "$s" | grep -Fq -- "$pat" && return 0
+    done
+    return 1
+}
+
+xeij_stop() {
+    pkill -f XEiJ.jar
+    local i=0
+    while pgrep -f XEiJ.jar >/dev/null && (( i < 15 )); do
+        sleep 1
+        i=$((i + 1))
+    done
+    pgrep -f XEiJ.jar >/dev/null || return 0
+    pkill -9 -f XEiJ.jar
+    sleep 2
+    pgrep -f XEiJ.jar >/dev/null && fail 'cannot stop XEiJ'
+}
+
+xeij_start() {
+    "$HOME/.local/bin/xeij.sh"
+    local i=0
+    while ! [[ -p "$PIPE" ]] && (( i < 30 )); do
+        sleep 1
+        i=$((i + 1))
+    done
+    [[ -p "$PIPE" ]] || fail 'control pipe did not come back'
+}
+
+run_a3() {
+    [[ -f "$HOME/tmp/ssos9.xdf" ]] || fail 'a3: missing ~/tmp/ssos9.xdf'
+    print '== A3 insert ssos9.xdf in FD0 (ini fd0 + restart) =='
+    xeij_stop
+    sed -i '' '/^fd0=/d' "$HOME/XEiJ.ini"
+    printf 'fd0=%s\n' "$HOME/tmp/ssos9.xdf" >> "$HOME/XEiJ.ini"
+
+    a3_restore() {
+        print '== A3 eject FD0 and restore HDD boot =='
+        xeij_stop
+        sed -i '' '/^fd0=/d' "$HOME/XEiJ.ini"
+        xeij_start
+        wait_screen 'A:\>' 90 || fail 'a3: Human68k did not come back' "$s"
+        print 'PASS a3: FD ejected, HDD boot restored'
+    }
+
+    xeij_start
+    print '== A3 wait for XDF IPL boot =='
+    wait_screen 'SSOS-9: minimal X68000 CLI' 60 || { a3_restore; fail 'a3: XDF boot banner missing' "$s"; }
+    sleep 2
+    s=$(screen)
+    require 'a3 prompt' "$s" '>'
+
+    print '== A3 exit must be rejected (PID 1) =='
+    type_cmd 'exit'
+    sleep 2
+    s=$(screen)
+    if ! print -r -- "$s" | grep -Fq 'Cannot exit the initial SSOS-9 process (PID 1).'; then
+        a3_restore
+        fail 'a3: exit was not rejected' "$s"
+    fi
+    print -r -- "$s" | grep -F 'Cannot exit the initial SSOS-9 process (PID 1).'
+    s2=$(screen)
+    require 'a3 prompt alive' "$s2" '>'
+
+    a3_restore
+    print 'PASS a3'
+}
+
 case ${1:-} in
     a2) run_a2 ;;
+    a3) run_a3 ;;
     b1) run_b1 ;;
-    *) fail 'usage: tools/emulator-itest.sh a2|b1' ;;
+    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1' ;;
 esac

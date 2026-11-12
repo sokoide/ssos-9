@@ -183,3 +183,17 @@ consecutive runs reported `delta=1790` against `expected~1800` over 9 seconds
 The measurement samples two instants seconds apart; it does not establish
 cycle-accurate MFP timing, the XEiJ load-factor configuration, or real
 hardware behavior.
+
+On 2026-11-12, `tools/emulator-itest.sh a3` (also `make test-emulator-a3`)
+verified the XDF IPL boot path and the PID 1 exit protection in XEiJ. Because
+XEiJ's Java menus are not accessible to UI scripting, the test assigns the
+disk by writing `fd0=~/tmp/ssos9.xdf` into `~/XEiJ.ini` and restarting the
+emulator app (STD boot order: floppy when inserted, HDD otherwise). It
+confirmed the `SSOS-9: minimal X68000 CLI` banner after the IPL boot, that
+`exit` prints `Cannot exit the initial SSOS-9 process (PID 1).` and leaves
+the prompt alive, and — after removing `fd0` and restarting again — that
+Human68k boots back to `A:\>`. Three consecutive runs passed. The XDF
+SHA-256 was
+`e8bf92ec95c40a26d599a17a224a1210e66fcf05a18774b06f2466a5730aac5f`.
+This exercises the emulator's floppy boot path through the ini assignment,
+not XEiJ's FD menu, physical media, or real hardware.
