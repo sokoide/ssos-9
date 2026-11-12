@@ -176,7 +176,7 @@ int32_t ss_syscall_dispatch(uint32_t number, uint32_t request) {
         if (!valid_buffer(request, sizeof(SS9FileRequest), 0))
             return SS9_ERR_PARAM;
         SS9FileRequest req = *(const SS9FileRequest*)(uintptr_t)request;
-        char name[13];
+        char name[64];
         if (!copy_string(req.name, name, sizeof(name)) ||
             req.size > SS9_FILE_MAX ||
             (number == SS9_SYS_FILE_LOAD && req.flags != 0) ||
@@ -193,7 +193,7 @@ int32_t ss_syscall_dispatch(uint32_t number, uint32_t request) {
     case SS9_SYS_OPEN: {
         if (!valid_buffer(request, sizeof(SS9OpenRequest), 0)) return SS9_ERR_PARAM;
         SS9OpenRequest req = *(const SS9OpenRequest*)(uintptr_t)request;
-        char name[13];
+        char name[64];
         if (req.flags > SS9_OPEN_REPLACE || !copy_string(req.name, name, sizeof(name)))
             return SS9_ERR_PARAM;
         if (req.flags == SS9_OPEN_READ)

@@ -31,9 +31,12 @@ assembler. The root Makefile exposes:
 - `make verify-check`: reports target artifacts affected by the current changes.
 
 The native suite exercises scheduler queue and lifecycle logic with host mocks.
-The Human68k SCSI volume probe has a synthetic host fixture and QEMU t16
-covering partition and BPB validation. It is not yet connected to `smount`;
-these tests do not exercise Human68k file reads or writes.
+The Human68k SCSI volume path has synthetic host fixtures and QEMU t16.
+They exercise partition/BPB validation, 512-byte SCSI blocks combined into
+1024-byte sectors, directory lookup, and file creation and reading. Host
+tests also cover replacement, incremental writes, both FAT byte orders,
+1024-byte physical blocks, and write-error fencing. These fixtures do not
+establish compatibility with a real Human68k HDD or XEiJ IOCS.
 The FAT16 storage integrity test covers 512- and 1024-byte sectors, 2 GiB sparse
 images with external FAT tools, incremental reads/writes, abort and replacement,
 rejection of unequal FAT copies and read errors at mount, and fencing later

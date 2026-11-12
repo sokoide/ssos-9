@@ -23,6 +23,8 @@ typedef struct {
     uint8_t sectors_per_cluster;
     uint8_t fat_bits; /* 12 or 16; determined by the BPB cluster count. */
     uint8_t fat_count;
+    uint8_t human68k;
+    uint8_t fat_big_endian;
 } SSFat12;
 
 typedef struct {
@@ -37,6 +39,19 @@ int ss_fat12_mount(SSFat12* volume, SSFat12ReadSector read_sector,
                    void* context, uint32_t available_sectors);
 int ss_fat12_open(SSFat12* volume, const char* name, SSFat12File* file);
 int32_t ss_fat12_read(void* context, uint8_t* out, uint32_t size);
+
+/* Resolve an ASCII 8.3 path; location denotes a matching or free entry. */
+typedef struct {
+    uint32_t sector;
+    uint16_t offset;
+    uint8_t found;
+    uint8_t was_end;
+    uint8_t entry[32];
+    uint8_t name[11];
+    uint32_t next_sector;
+    uint8_t has_next_sector;
+} SSFatLocation;
+int ss_fat_locate(SSFat12* volume, const char* path, SSFatLocation* location);
 
 /* Create a new root-directory 8.3 file on FAT16. The caller serializes all
  * access to the volume. Existing names are rejected. A failed metadata write
@@ -57,6 +72,10 @@ typedef struct {
     uint16_t first;
     uint16_t last;
     uint16_t old_cluster;
+    uint32_t human_sector;
+    uint16_t human_offset;
+    uint32_t human_next_sector;
+    uint8_t human_has_next_sector;
     uint8_t name[11];
     uint8_t slot_was_end;
     uint8_t replacing;

@@ -66,6 +66,11 @@ int main(void) {
     assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
     init(&f); be32(f.table + 24, 0x01000020);
     assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
+    init(&f); be32(f.table + 24, 3);
+    assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
+    init(&f); memcpy(f.table + 32, "Other   ", 8);
+    be32(f.table + 40, 100); be32(f.table + 44, 100);
+    assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
     init(&f); f.ipl[0x1d] = 1;
     assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
     init(&f); be16(f.ipl + 0x12, 512);

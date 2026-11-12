@@ -1,6 +1,8 @@
 # XEiJ で確認すべき統合テスト計画
 
 更新日: 2026-11-12。状態: **A1〜A3・B1・E3実装・実行済み、その他は計画**。
+Human68k 形式 SCSI HDD の対応は実装途中で、D 系・E1・E2 は未実装・未実行。
+現在の `smount` はまだ MS-DOS 型 FAT16 用であり、既接続 A: に対して使用しない。
 
 ## 1. 目的と位置づけ
 
@@ -27,10 +29,17 @@ T1〜T5、6判定 PASS 済み) を土台にする。実行環境と制約は
   ドライバのリマップを冒頭 `keywitch -r` で解除。画面は Option-Shift-C
   (osascript keystroke、要アクセシビリティ権限) → `pbpaste`。
 - 成果物: `make install` の `~/tmp/ssos9.x` / `ssos9.xdf`。SHA-256 を記録。
-- ゲスト構成 (現状): Human68k 3.02 フロッピー起動、`~/tmp` = F: (HFS)。
+- ゲスト構成: 起動済み Human68k の A: は既接続の HDD、`~/tmp` = F: (HFS)。
+  A: と SCSI ID・Human68k パーティションの対応は読み取り専用で確認し、推測しない。
 - 追加構成が必要なテスト:
-  - **D 系 (FAT16)**: 32 MiB FAT16 イメージをホストで作成し
-    `~/XEiJ.ini` に `scsi1=<パス>` を設定のうえ XEiJ を再起動 (1 回の手構成)。
+  - **C5・D 系・E1/E2**: 既接続 A: の Human68k 形式 HDD を使用し、
+    テスト対象のファイルは `A:\TEST` 内に限る。既存内容を事前確認し、衝突しない
+    新しい名前を使用する。既存ファイルは上書き・削除せず、A: のその他のファイル、
+    ini、ディスク構成を変更しない。`A:\TEST` の新規作成には親ディレクトリ項目、
+    内部ファイルの更新には共通 FAT・割当管理情報の変更が必要。
+    Human68k 側で必要な fixture を F: から `A:\TEST` へ配置する際も、同名ファイルを
+    上書きしない。Human68k と SSOS-9 の同時書込みを避け、キャッシュの可視性と
+    再読込手順を確立してから検証する。
   - **A3 (.xdf IPL)**: `ssos9.xdf` を FDD 0 へ挿入してリセット
     (XEiJ UI 操作または ini `fd0=`、要再起動)。
 - 測定の注意: `debug` の tick は Timer D 200 Hz (5 ms) 基準。XEiJ の MPU 負荷率
@@ -70,23 +79,27 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 | C2 | 25 行を超える出力の再描画 | `ps` を反復 or 長出力で 25 行超 → 画面取得 | 物理スクロールせず行が折り返わる。既知の右下セル制限 (空白のまま) も確認 | P0 | ○ |
 | C3 | mux 画面切替と保持 (F1〜F3) | `mux` → F2 で `help`、F3 で `ps`、F1 に戻る。各画面をコピー | 画面ごとの出力が保持され、戻った画面が復元される (t15 の実機相当) | P0 | ○ |
 | C4 | Ctrl-]+数字 による切替 | `presskey ctrl` → `typekey ]` → `releasekey ctrl` → `typekey 2` | 画面 2 に切替わる | P1 | ○ |
-| C5 | 対話コンソールモジュール (CONSOLE_KEY) | `tests/target` の CONSOLE.S9M を FAT16 へ配置 → `smount` → `load`/`run console` → 各種キー送信 | `KEY: xxxx` 表示がキーごとに一致 (ASCII は下位 8 bit、特殊キーは scan<<8)。`q` で終了 | P2 | △ (モジュール配置) |
+| C5 | 対話コンソールモジュール (CONSOLE_KEY) | `tests/target` の CONSOLE.S9M を `A:\TEST` に配置し、Human68k 形式 HDD をマウント → module 起動 → 各種キー送信 | `KEY: xxxx` 表示がキーごとに一致 (ASCII は下位 8 bit、特殊キーは scan<<8)。`q` で終了 | P2 | △ (モジュール配置) |
 
-### D. SCSI FAT16 実 IOCS 読み書き (前提: `scsi1=` 構成)
+### D. Human68k 形式 SCSI HDD の実 IOCS 読み書き
+
+以下は実装後の計画。対象は既接続 A: の `A:\TEST` のみ。コマンドのパス構文や
+パーティション指定は実装確定後に記載する。読み取り専用調査で対象ディスクを特定し、
+識別できなければ書込みを開始しない。
 
 | ID | 概要 | 手順 | 合格基準 | 優先度 | 自動化 |
 | --- | --- | --- | --- | --- | --- |
-| D1 | smount/swrite/sread/sreplace | `smount 1` → `swrite XTEST.TXT hello` → `sread` → `sreplace XTEST.TXT world` → `sread` → `exit` → ホストで `mtype` と `fsck.fat -n` | 画面に各コマンドの成功出力。停止後 `mtype` = `world`、fsck エラーなし (2026-11-11 手動実績の全自動化) | P0 | △ (冒頭構成) |
-| D2 | エディタの保存・再読込 | `run edit NEW.S` (FAT16 上) → テキスト入力 → `:wq` → 再度 `run edit NEW.S` | 再読込内容が入力と一致。停止後 `mtype` でも一致 | P1 | △ |
-| D3 | `asm` の実 IOCS on-target | `START.S`/`MAIN.S`/`OBJ.S` をホストからイメージへ mtools で配置 → `run asm` ×3 → `exit` → `.O` を mtools で吸い出し host 期待値とバイト比較 | 3 個の `.O` が host ビルドとバイト一致 (t13 の実 IOCS 版) | P1 | △ |
-| D4 | `ld` + `run` フォールバック通し | D3 の `.O` から `run ld PROG.S9M …` → `run PROG` | 画面に `Wrote PROG.S9M`、`LNK` 出力、exit status 表示。停止後イメージ内の `PROG.S9M` が host golden (180 byte) と一致。registry 未登録からの FAT16 フォールバック経路を通る | P1 | △ |
+| D1 | 作成・読取り・置換 | すでにマウントされている Human68k 形式 HDD を利用し、`A:\TEST` 内の新規名へ `hello` を作成、読取り、`world` に置換して再読取り。Human68k 復帰後にも確認 | 各操作が成功し、双方の読取りで期待値と一致。対象外ファイルに変更なし | P0 | △ |
+| D2 | エディタの保存・再読込 | `A:\TEST` 内の新規ソースを edit で作成・保存し、再度開く | 内容が入力と一致し、Human68k 復帰後にも確認できる | P1 | △ |
+| D3 | `asm` の実 IOCS on-target | `A:\TEST` に 3 個の入力を配置し、asm ×3 を実行。生成物のバイト列を取得して host 期待値と比較 | 3 個の `.O` が host ビルドとバイト一致。取得方法は Human68k 形式対応の検証手段として実装する | P1 | △ |
+| D4 | `ld` + `run` フォールバック通し | `A:\TEST` の D3 出力からリンクし、未登録の実行ファイルを起動 | `Wrote`、`LNK`、終了状態を確認し、生成物を host golden と比較。Human68k 形式の fallback を通る | P1 | △ |
 
 ### E. 開発ツールチェーン通し (Phase 4 完了条件の実機相当)
 
 | ID | 概要 | 手順 | 合格基準 | 優先度 | 自動化 |
 | --- | --- | --- | --- | --- | --- |
-| E1 | mux 3 画面で edit→asm→ld→run | F1: `run edit START.S` をパイプ入力で作成・`:wq`。F2: `asm`×3+`ld`。F3: `run PROG` | t15 と同等の結果 (exit status・`LNK`・回収・arena 復帰) を実 IOCS/実キー経路で得る | P1 | △ |
-| E2 | リンカ負例 | `run ld BAD.S9M BADMAIN.O` | 画面に `Undefined symbol missing`。`BAD.S9M` が未作成 (`sread` 失敗) | P2 | △ |
+| E1 | mux 3 画面で edit→asm→ld→run | `A:\TEST` 内で F1: edit により新規ソース作成・`:wq`、F2: asm ×3 + ld、F3: 生成プログラムを起動 | exit status・`LNK`・回収・arena 復帰を実 IOCS/実キー経路で確認 | P1 | △ |
+| E2 | リンカ負例 | `A:\TEST` 内の未定義シンボルを含むオブジェクトをリンク | `Undefined symbol missing` と非 0 終了を確認し、Human68k 側でも出力ファイルが未作成と確認 | P2 | △ |
 | E3 | builtin hello の実 PIC 起動 | `run hello` | `Hello` 表示と exit status 0、shell 復帰 (実割り込みで切替えられた証跡として `trace` も) | P1 | ○ |
 
 ### F. 背景 builtin と IOCS ロック
@@ -130,8 +143,8 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
   共通化し、`tools/emulator-itest.sh <area>` の形で領域ごとに実行できるようにする。
 - 待ち時間は画面コピー前に一定の settle を置き、失敗時は取得画面をそのまま
   ログへ出力する (失敗診断は画面テキストが全て)。
-- ホスト側検証 (mtype/fsck.fat/mtools/バイト比較) は XEiJ 停止後に python で
-  行い、合否をスクリプトの最後に集計する。
+- Human68k 形式のファイル比較・整合性確認には、当該形式に対応すると確認した手段を
+  使用する。PC 用 mtools / fsck.fat がそのまま使用可能とは仮定しない。
 
 ## 5. XEiJ でも確認できないもの
 
@@ -144,7 +157,7 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 ## 6. 実行順序の提案
 
 1. **P0 一式** (A1, A2, B1〜B3, C2, C3, D1): 実 MFP・実 IOCS・実ストレージの
-   核心を最初に固める。D1 だけ冒頭に `scsi1=` 構成が要る。
+   核心を最初に固める。D1 は Human68k 形式 HDD 対応の完成後に実施する。
 2. **P1** (A3, B4, C1, C4, D2〜D4, E1, E3): ツールチェーン通しまで拡張。
 3. **P2** (C5, E2, F1, F2, G1): 回帰網羅。
 

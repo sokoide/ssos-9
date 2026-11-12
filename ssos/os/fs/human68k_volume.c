@@ -27,9 +27,18 @@ int ss_human68k_probe(SSHuman68kVolume* out, SSHuman68kReadSector read,
     uint8_t flags = (uint8_t)(encoded >> 24);
     v.start = encoded & 0x00ffffffu;
     v.sectors = be32(entry + 12);
-    if ((flags != 0 && flags != 2) || v.start < 3 || !v.sectors ||
-        v.start >= disk_sectors || v.sectors > disk_sectors - v.start ||
-        read(context, v.start, block)) return -1;
+    if ((flags != 0 && flags != 2) || v.start < 32 || !v.sectors ||
+        v.start >= disk_sectors || v.sectors > disk_sectors - v.start) return -1;
+    for (unsigned i = 0; i < 15; i++) {
+        if (i == partition) continue;
+        const uint8_t* other = block + 16u + i * 16u;
+        if (!other[0]) continue;
+        uint32_t first = be32(other + 8) & 0x00ffffffu;
+        uint32_t count = be32(other + 12);
+        if (!count || first < 32 || first >= disk_sectors || count > disk_sectors - first ||
+            (first < v.start + v.sectors && v.start < first + count)) return -1;
+    }
+    if (read(context, v.start, block)) return -1;
     v.sector_size = be16(block + 0x12);
     v.sectors_per_cluster = block[0x14];
     v.fat_count = block[0x15] & 0x7f;
@@ -42,14 +51,15 @@ int ss_human68k_probe(SSHuman68kVolume* out, SSHuman68kReadSector read,
     uint32_t spc = v.sectors_per_cluster;
     if (v.sector_size != 1024 || !spc || (spc & (spc - 1)) ||
         !v.fat_count || !v.fat_start || !v.fat_sectors || !v.root_entries ||
-        !total || total > v.sectors || be32(block + 0x22) != v.start)
+        !total || total > v.sectors || block[0x1c] != 0xf7 ||
+        be32(block + 0x22) != v.start)
         return -1;
     v.sectors = total;
     v.root_start = v.fat_start + (uint32_t)v.fat_count * v.fat_sectors;
     v.data_start = v.root_start + ((uint32_t)v.root_entries * 32u + 1023u) / 1024u;
     if (v.data_start >= total) return -1;
     v.clusters = (total - v.data_start) / spc;
-    if (v.clusters < 4085 || v.clusters >= 65525 ||
+    if (v.clusters < 4085 || v.clusters > 0xffeeu ||
         (v.clusters + 2u) * 2u > (uint32_t)v.fat_sectors * 1024u)
         return -1;
     *out = v;

@@ -283,8 +283,12 @@ static int16_t load_disk_module(const char* name, SSModuleId* module_id) {
     int result = ss_storage_open_reader(storage, name, &file);
     if (result != 0) {
         size_t length = strlen(name);
-        char with_ext[13];
-        if (length > 0 && length <= 8) {
+        char with_ext[64];
+        const char* base = name;
+        for (const char* p = name; *p; p++)
+            if (*p == '/' || *p == '\\' || *p == ':') base = p + 1;
+        size_t base_length = strlen(base);
+        if (base_length > 0 && base_length <= 8 && length + 5u <= sizeof(with_ext)) {
             memcpy(with_ext, name, length);
             memcpy(with_ext + length, ".S9M", 5u);
             result = ss_storage_open_reader(storage, with_ext, &file);

@@ -211,14 +211,7 @@ int main(int argc, char** argv) {
     ss_storage_unmount(&storage);
     assert(ss_storage_read(&storage, "DATA", scsi_output, 4) != 0);
     SSScsiVolume attached = {0};
-    assert(ss_scsi_volume_attach(&attached, &scsi) == 0);
-    assert(attached.storage.volume.context == &attached.device);
-    assert(ss_scsi_volume_attach(&attached, &scsi) != 0);
-    assert(ss_storage_read(&attached.storage, "DATA", scsi_output, 4) == 4);
-    assert(memcmp(scsi_output, "new!", 4) == 0);
-    assert(ss_storage_store(&attached.storage, "MORE", (const uint8_t*)"more", 4, 0) == 0);
-    assert(ss_storage_read(&attached.storage, "MORE", scsi_output, 4) == 4);
-    assert(memcmp(scsi_output, "more", 4) == 0);
+    assert(ss_scsi_volume_attach(&attached, &scsi) != 0); /* MS-DOS volume rejected */
     free(scsi_disk);
     scsi_disk = NULL;
     int cycle = 0;

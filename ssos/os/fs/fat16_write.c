@@ -36,6 +36,7 @@ static int fat_get(SSFat12* v, uint16_t cluster, uint16_t* value) {
         return -1;
     pos %= v->sector_size;
     *value = (uint16_t)(sector[pos] | ((uint16_t)sector[pos + 1] << 8));
+    if (v->fat_big_endian) *value = (uint16_t)((*value << 8) | (*value >> 8));
     return 0;
 }
 
@@ -46,11 +47,11 @@ static int fat_set(SSFat12* v, SSFatWriteSector write, uint16_t cluster,
     uint32_t index = pos / v->sector_size;
     if (index >= v->fat_sectors) return -1;
     pos %= v->sector_size;
-    for (uint32_t copy = 0; copy < v->fat_count; copy++) {
+    for (uint32_t copy = 0; copy < (v->human68k ? 1u : v->fat_count); copy++) {
         uint32_t at = v->fat_start + copy * v->fat_sectors + index;
         if (v->read_sector(v->context, at, sector)) return -1;
-        sector[pos] = (uint8_t)value;
-        sector[pos + 1] = (uint8_t)(value >> 8);
+        sector[pos] = (uint8_t)(v->fat_big_endian ? value >> 8 : value);
+        sector[pos + 1] = (uint8_t)(v->fat_big_endian ? value : value >> 8);
         if (write(v->context, at, sector)) return -1;
     }
     return 0;
@@ -84,7 +85,8 @@ static int has_free_clusters(SSFat12* v, uint32_t needed, uint8_t* sector) {
     return needed ? -1 : 0;
 }
 
-static int write_file(SSFat12* v, SSFatWriteSector write, const char* name,
+/* These legacy buffers must not share the 4 KiB task stack with Human68k lookup. */
+static __attribute__((noinline)) int write_file_legacy(SSFat12* v, SSFatWriteSector write, const char* name,
                       const uint8_t* data, uint32_t size, int replace) {
     uint8_t sector[1024] __attribute__((aligned(4)));
     uint8_t short_name[11];
@@ -179,6 +181,20 @@ fail:
     return -1;
 }
 
+static int write_file(SSFat12* v, SSFatWriteSector write, const char* name,
+                      const uint8_t* data, uint32_t size, int replace) {
+    if (v && v->human68k) {
+        SSFat16Writer writer;
+        if (ss_fat16_writer_begin(v, name, replace, &writer)) return -1;
+        if (ss_fat16_writer_write(v, write, &writer, data, size) != (int32_t)size) {
+            (void)ss_fat16_writer_abort(v, write, &writer);
+            return -1;
+        }
+        return ss_fat16_writer_commit(v, write, &writer);
+    }
+    return write_file_legacy(v, write, name, data, size, replace);
+}
+
 int ss_fat16_create(SSFat12* v, SSFatWriteSector write, const char* name,
                     const uint8_t* data, uint32_t size) {
     return write_file(v, write, name, data, size, 0);
@@ -189,7 +205,7 @@ int ss_fat16_replace(SSFat12* v, SSFatWriteSector write, const char* name,
     return write_file(v, write, name, data, size, 1);
 }
 
-int ss_fat16_writer_begin(SSFat12* v, const char* name, int replace,
+static __attribute__((noinline)) int writer_begin_legacy(SSFat12* v, const char* name, int replace,
                           SSFat16Writer* writer) {
     uint8_t sector[1024] __attribute__((aligned(4)));
     uint8_t short_name[11];
@@ -230,6 +246,29 @@ int ss_fat16_writer_begin(SSFat12* v, const char* name, int replace,
     result.active = 1;
     *writer = result;
     return 0;
+}
+
+int ss_fat16_writer_begin(SSFat12* v, const char* name, int replace,
+                          SSFat16Writer* writer) {
+    if (v && v->human68k) {
+        SSFatLocation loc;
+        SSFat16Writer result = {0};
+        if (!writer || (replace != 0 && replace != 1) || ss_fat_locate(v, name, &loc) ||
+            !!loc.found != !!replace || (loc.found && (loc.entry[11] & 0x19u))) return -1;
+        if (loc.found) {
+            SSFat12File existing;
+            if (ss_fat12_open(v, name, &existing)) return -1;
+            result.old_cluster = existing.cursor_cluster;
+        }
+        result.human_sector = loc.sector; result.human_offset = loc.offset;
+        result.human_next_sector = loc.next_sector;
+        result.human_has_next_sector = loc.has_next_sector;
+        result.slot_was_end = loc.was_end; result.replacing = (uint8_t)replace;
+        for (unsigned i = 0; i < 11; i++) result.name[i] = loc.name[i];
+        result.active = 1; *writer = result;
+        return 0;
+    }
+    return writer_begin_legacy(v, name, replace, writer);
 }
 
 static int writer_allocate(SSFat12* v, SSFatWriteSector write,
@@ -298,6 +337,28 @@ int ss_fat16_writer_commit(SSFat12* v, SSFatWriteSector write,
                            SSFat16Writer* writer) {
     uint8_t sector[1024] __attribute__((aligned(4)));
     if (!v || !write || !writer || !writer->active) return -1;
+    if (v->human68k) {
+        if (!writer->first && writer_allocate(v, write, writer)) return -1;
+        if (writer->slot_was_end && writer->human_has_next_sector) {
+            if (v->read_sector(v->context, writer->human_next_sector, sector)) return -1;
+            sector[0] = 0;
+            if (write(v->context, writer->human_next_sector, sector)) return -1;
+        }
+        if (v->read_sector(v->context, writer->human_sector, sector)) return -1;
+        uint8_t* entry = sector + writer->human_offset;
+        if (writer->slot_was_end && writer->human_offset + 32u < v->sector_size) entry[32] = 0;
+        if (!writer->replacing) {
+            for (unsigned i = 0; i < 32; i++) entry[i] = 0;
+            for (unsigned i = 0; i < 11; i++) entry[i] = writer->name[i];
+        }
+        entry[11] |= 0x20;
+        entry[26] = (uint8_t)writer->first;
+        entry[27] = (uint8_t)(writer->first >> 8);
+        for (unsigned i = 0; i < 4; i++) entry[28 + i] = (uint8_t)(writer->size >> (i * 8));
+        writer->active = 0;
+        if (write(v->context, writer->human_sector, sector)) return -1;
+        return writer->replacing ? free_chain(v, write, writer->old_cluster) : 0;
+    }
     uint32_t per_sector = v->sector_size / 32u;
     uint32_t at = v->root_start + writer->slot / per_sector;
     if (writer->slot_was_end && writer->slot + 1u < v->root_entries &&
