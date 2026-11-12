@@ -1,7 +1,8 @@
 # XEiJ で確認すべき統合テスト計画
 
-更新日: 2026-11-13。状態: **A1〜A3・B1〜B4・C1〜C3・D1・E3実装・実行済み (C4を除きPASS)。
-C4は実行済み・エミュレータキー経路の制限でFAIL (下記)。C5・D2〜D4実装済み・未実行**。
+更新日: 2026-11-13。状態: **A1〜A3・B1〜B4・C1〜C3・D1・E3・F1・F2・G1実装・実行済み
+(C4を除きPASS)。C4は実行済み・エミュレータキー経路の制限でFAIL (下記)。
+C5・D2〜D4実装済み・未実行**。
 `smount` は Human68k 形式の先頭パーティションのみを受け付け、MS-DOS 型 FAT16 は拒否される。
 パスの 8.3 名照合は大文字小文字を区別しない (Human68k 側の作成・検索の挙動に合わせている)。
 
@@ -199,6 +200,16 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
   起動で `LNK` と status 27 を確認、生成物を host `asm-host`+`link-host` の
   golden とバイト比較する。モジュール画像 (`EDIT/ASM/LD/CONSOLE.S9M`) は
   `A:\TEST` 内の初回配置を再利用し、ビルド更新後の再配置は手作業で行う。
+- F1: `tools/emulator-itest.sh f1`。`help&` `ps&` `mem&` を投入し、3 出力が
+  行単位で崩れず揃うこと、`wait PID` で回収し `mem` が baseline に戻ることを
+  確認する (`wait` は PID 必須で引数なしには対応しない)。
+- F2: `tools/emulator-itest.sh f2`。ビルトイン counter は出力を持たないため、
+  2026-11-11 の手動実績と同じ `tests/target/build/BG.S9M` (番号付き record を
+  約 30 秒出力) を `A:\TEST` に配置して `run test/bg&` で起動し、F2/F1 切替えを
+  3 往復して非表示中も record 番号が前進し続けること、最後まで走り切って
+  status 0 で終了することを確認する。
+- G1: `tools/emulator-itest.sh g1`。`run counter&` → `kill` → `wait` を 5 サイクル
+  反復し、`mem` が起動直後の baseline に一致することを確認する。
 
 ## 5. XEiJ でも確認できないもの
 

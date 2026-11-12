@@ -16,6 +16,9 @@
 #   d3  on-target assembler output matches the host build
 #   d4  ld links, run fallback executes, image matches host golden
 #   e3  builtin hello real-PIC launch
+#   f1  background builtins (help&, ps&, mem&) interleave cleanly and reap
+#   f2  background module output continues across mux window switches
+#   g1  five spawn/kill/wait cycles return the arena to baseline
 # Storage tests (c5, d1..d4) place fixtures in A:\TEST only and reuse the
 # already-copied module images; run B/C1-4 tests without disk writes.
 set -u
@@ -309,7 +312,8 @@ place_in_test() { # place_in_test <host-file> <NAME.EXT>; stage on F: and copy
     # into A:\TEST unless the row already exists (Human68k copy would prompt
     # on overwrite, and immutable module images keep their first copy).
     # Requires a fresh dir listing in $s; leaves $s on the new listing.
-    local src=$1 name=$2 stem=${name%.*} ext=${name##*.}
+    local src=$1 name=$2
+    local stem=${name%.*} ext=${name##*.}
     if print -r -- "$s" | tr '\r' '\n' | grep -Eiq "^${stem}[ ]+${ext}"; then
         print "place: $name already in A:\\TEST (keeping existing copy)"
         return 0
@@ -873,6 +877,128 @@ run_d4() {
     print "PASS d4: ld + run fallback produced the golden image; status 27 and LNK"
 }
 
+run_f1() {
+    s=$(screen)
+    require 'f1 initial prompt' "$s" 'A:\>'
+    boot_ssos || fail 'f1: ssos9 boot failed'
+    type_cmd 'mem'
+    sleep 1
+    s=$(screen)
+    local base=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
+    [[ -n $base ]] || fail 'f1: no arena baseline' "$s"
+    # Each trailing-& builtin runs in an isolated kernel-entry child whose
+    # output interleaves on the same console; the IOCS lock keeps lines whole.
+    type_cmd 'help&'
+    wait_screen 'Started command as PID' 8 || fail 'f1: help& did not start' "$s"
+    local p1=$(started_pid "$s")
+    type_cmd 'ps&'
+    sleep 2
+    s=$(screen)
+    local p2=$(started_pid "$s")
+    [[ -n $p2 ]] || fail 'f1: ps& did not start' "$s"
+    type_cmd 'mem&'
+    sleep 2
+    s=$(screen)
+    local p3=$(started_pid "$s")
+    [[ -n $p3 ]] || fail 'f1: mem& did not start' "$s"
+    [[ "$(norm_text "$s")" == *"$(norm_text "$HELP_EXPECTED")"* ]] || \
+        fail 'f1: help output missing or garbled' "$s"
+    print -r -- "$s" | grep -Fq 'PID PPID STATE NAME MODULE DATA GOT STACK' || \
+        fail 'f1: ps output missing or garbled' "$s"
+    print -r -- "$s" | grep -Fq 'arena free_bytes=' || \
+        fail 'f1: mem output missing or garbled' "$s"
+    print 'f1: help/ps/mem outputs all present and line-intact'
+    local pid
+    for pid in $p1 $p2 $p3; do
+        type_cmd "wait $pid"
+        wait_screen 'exited with status' 8 || fail "f1: PID $pid was not reaped" "$s"
+    done
+    type_cmd 'mem'
+    sleep 1
+    s=$(screen)
+    local after=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
+    [[ "$after" == "$base" ]] || fail 'f1: arena did not return to baseline' \
+        "baseline: $base"$'\n'"after: $after"
+    ssos_exit
+    print 'PASS f1: background builtins interleaved cleanly and reaped'
+}
+
+bg_max_record() { # highest "BG nn" number visible on the screen
+    print -r -- "$1" | tr '\r' '\n' | grep -oE 'BG [0-9]{2}' |
+        grep -oE '[0-9]{2}' | sort -n | tail -1
+}
+
+run_f2() {
+    local bg_module=tests/target/build/BG.S9M
+    [[ -f "$bg_module" ]] || fail 'f2: missing tests/target/build/BG.S9M (run make test)'
+    s=$(screen)
+    require 'f2 initial prompt' "$s" 'A:\>'
+    h68_prep
+    place_in_test "$bg_module" BG.S9M
+    boot_mount
+    type_cmd 'mux'
+    wait_screen 'Multiplexer:' 8 || fail 'f2: mux did not start' "$s"
+    # The builtin counter emits nothing; BG emits numbered records for ~30 s,
+    # matching the 2026-11-11 manual observation this area automates.
+    type_cmd 'run test/bg&'
+    wait_screen 'Started module as PID' 8 || fail 'f2: bg did not start' "$s"
+    local pid=$(started_pid "$s")
+    wait_screen 'BG 0' 10 || fail 'f2: no BG records on window 1' "$s"
+    local round max1 max2 max3
+    for ((round = 1; round <= 3; round++)); do
+        max1=$(bg_max_record "$s")
+        [[ -n $max1 ]] || fail "f2: no BG record visible before switch $round" "$s"
+        key f2
+        sleep 3
+        s=$(screen)
+        print -r -- "$s" | grep -Fq 'SSOS-9 shell' || \
+            fail "f2: window 2 not shown after switch $round" "$s"
+        key f1
+        sleep 2
+        if ! wait_screen 'BG ' 8; then fail "f2: BG output gone after switch $round" "$s"; fi
+        max2=$(bg_max_record "$s")
+        (( max2 > max1 )) || fail "f2: BG did not advance while window 1 was hidden (round $round: $max1 -> $max2)" "$s"
+        print "f2: round $round: BG advanced $max1 -> $max2 across F2/F1"
+    done
+    max3=$max2
+    type_cmd "wait $pid"
+    wait_screen 'exited with status 0' 45 || fail 'f2: bg module did not finish cleanly' "$s"
+    (( max3 >= 30 )) || fail 'f2: too few records survived the switches' "$s"
+    ssos_exit
+    print 'PASS f2: background output continued across window switches'
+}
+
+run_g1() {
+    s=$(screen)
+    require 'g1 initial prompt' "$s" 'A:\>'
+    boot_ssos || fail 'g1: ssos9 boot failed'
+    type_cmd 'mem'
+    sleep 1
+    s=$(screen)
+    local base=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
+    [[ -n $base ]] || fail 'g1: no arena baseline' "$s"
+    local i pid
+    for ((i = 1; i <= 5; i++)); do
+        type_cmd 'run counter&'
+        wait_screen 'Started module as PID' 8 || fail "g1: cycle $i spawn failed" "$s"
+        pid=$(started_pid "$s")
+        [[ -n $pid ]] || fail "g1: cycle $i PID parse failed" "$s"
+        type_cmd "kill $pid"
+        wait_screen 'Kill requested.' 8 || fail "g1: cycle $i kill failed" "$s"
+        type_cmd "wait $pid"
+        wait_screen 'exited with status' 8 || fail "g1: cycle $i reap failed" "$s"
+        print "g1: cycle $i spawn/kill/wait reaped PID $pid"
+    done
+    type_cmd 'mem'
+    sleep 1
+    s=$(screen)
+    local after=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
+    [[ "$after" == "$base" ]] || fail 'g1: arena did not return to baseline' \
+        "baseline: $base"$'\n'"after: $after"
+    ssos_exit
+    print "PASS g1: five spawn/kill/wait cycles; arena back to $base"
+}
+
 case ${1:-} in
     a2) run_a2 ;;
     a3)
@@ -896,5 +1022,8 @@ case ${1:-} in
     d3) run_d3 ;;
     d4) run_d4 ;;
     e3) run_e3 ;;
-    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1|b2|b3|b4|c1|c2|c3|c4|c5|d1|d2|d3|d4|e3' ;;
+    f1) run_f1 ;;
+    f2) run_f2 ;;
+    g1) run_g1 ;;
+    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1|b2|b3|b4|c1|c2|c3|c4|c5|d1|d2|d3|d4|e3|f1|f2|g1' ;;
 esac

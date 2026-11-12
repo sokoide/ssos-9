@@ -265,3 +265,23 @@ this, verifies the stray input harmlessly errors, and exits via F1. F-key
 switching itself is covered by C3. XEiJ `typekey &` also drops the
 ampersand, so the script sends it as shift+6. C5 and D2-D4 are implemented
 but not yet executed. Physical hardware was not tested.
+
+On 2026-11-13, `tools/emulator-itest.sh` gained the F1, F2, and G1 areas,
+all passing against the same standalone SHA-256
+`6c6cf6c5cd7389d337e3a02cb224aa22d87c02b4dfff50c84e419e6e31cc7058`.
+F1: `help&`/`ps&`/`mem&` kernel-entry children interleaved on one console
+with all three outputs line-intact, `wait PID` reaped each, and the arena
+returned to its exact baseline. F2: since the builtin counter emits nothing,
+the test places `tests/target/build/BG.S9M` in `A:\TEST` (first copy kept,
+never overwritten) and runs `run test/bg&` under the multiplexer; BG record
+numbers advanced across three F2/F1 round trips (12->34->54->59) while
+window 1 was hidden and the module finished with status 0. G1: five
+spawn/kill/wait cycles reaped PIDs 2..6 and the arena matched the boot
+baseline exactly. The CLI's `wait` requires a PID argument (no bare wait),
+which the tests follow. Two operational notes: `place_in_test` failed on
+its first execution because zsh expands later assignments in the same
+`local` statement before earlier ones take effect under `set -u` (fixed by
+splitting the declaration), and System Events transiently refused to
+activate the java process once (-10006); a manual retry cleared it. This
+run wrote only the immutable `BG.S9M` into `A:\TEST`. Physical hardware
+was not tested.
