@@ -39,11 +39,11 @@ run asm SRC [DST]
 
 ## 検証
 
-- ホスト単体試験: `make -C tests test-asm-host` (構文 315 checks、エンコード
-  263 checks、オブジェクト出力、既定出力名の 8.3 上限)。`tests/build/asm-host`
+- ホスト単体試験: `make -C tests test-asm-host` (構文 341 checks、エンコード
+  266 checks、オブジェクト出力、既定出力名の 8.3 上限)。`tests/build/asm-host`
   も生成し、ゴールデン試験と QEMU 試験で共用する。
 - クロス比較: `make -C tests test-asm-golden`。`tests/asm/cases` の同一ソース
-  を `m68k-xelf-as` とアセンブルし text バイト列を比較する (正例 7・負例 5)。
+  を `m68k-xelf-as` とアセンブルし text バイト列を比較する (正例 8・負例 7)。
   GAS 側の定義済みシンボル再配置を契約のフィールド規則へ折り畳んで比較する。
   binutils 2.46 の GAS は `$` 16 進定数を未定義シンボル化し、前方参照の
   `.s`/`.b` 分岐を受理しないため、正例は `0x` 表記と後方短分岐のみを使う。

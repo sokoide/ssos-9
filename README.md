@@ -30,6 +30,7 @@ MS-DOS 型 FAT12 に限る。実機・Human68K 形式との互換性は未検証
 - `run hello`: クロスビルドして組み込んだ S9M1 サンプルを起動し、`Hello` を表示して終了する
 - `unload hello`: 実行後に保持している Hello のイメージを解放する。実行中は解放できない
 - `load 1 HELLO.S9M`: ドライブ 1 の別 2HD データディスクから S9M1 を読み込む
+- `run NAME`: registry と内蔵コマンドに `NAME` がない場合、マウント済み FAT16 ルートの `NAME` または `NAME.S9M` を登録してから起動する
 - `smount ID [START [BLOCKS]]`: SCSI target の指定ブロック（省略時 0）にある FAT16 をマウント。`BLOCKS` を指定するとそのブロック数を上限とし、ボリュームが範囲を超える場合は拒否する。
 - `swrite FILE TEXT` / `sreplace FILE TEXT`: FAT16 ルートに短い文字列を新規作成／置換
 - `sread FILE`: FAT16 ルートのファイルを表示（最大 256 byte）
@@ -57,7 +58,7 @@ SCSI/FAT16 は ASCII 8.3 のルートファイルに限定し、マウント時�
 マウント境界と障害後の扱いは [ストレージの契約](docs/storage-contract.md)を参照してください。
 アプリは `ss9_file_load` / `ss9_file_store` で最大 65536 byte のファイル全体を読み書きできます。
 保存は新規作成または既存ファイル置換を明示し、置換には新しいクラスタを使います。
-XEiJ 0.26.10.08（MC68000、12 MiB、Human68k 3.02 から起動）では、SCSI ID 1 の 32 MiB FAT16 イメージに対する `smount`、新規作成、置換、読み戻しを確認しました。終了後に `mtype` と `fsck.fat -n` でも内容と整合性を確認しています。実機・実媒体と障害時の整合性は未検証です。ファイル記述子を用いる汎用 I/O は未実装です。
+XEiJ 0.26.10.08（MC68000、12 MiB、Human68k 3.02 から起動）では、SCSI ID 1 の 32 MiB FAT16 イメージに対する `smount`、新規作成、置換、読み戻しを確認しました。終了後に `mtype` と `fsck.fat -n` でも内容と整合性を確認しています。実機・実媒体と障害時の整合性は未検証です。ファイル記述子による逐次読み書きは実装済みで、redirect は未実装です。
 行途中の `&`、`&&`、`&` だけの入力は構文エラーです。
 
 開発状況、残る制約、エディタ・アセンブラ・リンカまでの順序は [開発状況と今後のプラン](docs/status-and-plan.md)を参照してください。
@@ -134,7 +135,7 @@ Human68K の他の MFP source の enable/mask 状態を変更しません。MFP 
 
 ## 現在の実装範囲
 
-現在は CLI、kernel task、S9M1 validator/registry、private data/fixup、spawn/kill/wait、内蔵 PIC counter を実装しています。`run counter &`で共有 code と process ごとの A5/GOT、data、stack を観察できます。限定的な C Hello と write wrapper、2HD の読み取り専用 FAT12 からの S9M1 load も追加しています。packer は code-only ELF に限定し、一般的な C runtime、汎用 file I/O、redirect は未実装です。QEMU のディスク・IOCS は代役であり、実機での動作は未検証です。kernel worker task は独立 process ではありません。
+現在は CLI、kernel task、S9M1 validator/registry、private data/fixup、spawn/kill/wait、内蔵 PIC counter を実装しています。`run counter &`で共有 code と process ごとの A5/GOT、data、stack を観察できます。限定的な C Hello と write wrapper、2HD の読み取り専用 FAT12 からの S9M1 load も追加しています。packer は code-only ELF に限定し、一般的な C runtime と redirect は未実装です。QEMU のディスク・IOCS は代役であり、実機での動作は未検証です。kernel worker task は独立 process ではありません。
 
 [全体設計](docs/design.md)は責務境界と ABI 変更方針を定めます。[マルチプロセス・ローダー実装計画](docs/multiprocess-loader-plan.md)に、共有 PIC、process lifecycle、background 起動、syscall、将来の FAT と stdout の`>`/`>>` redirect の設計と実装順序をまとめています。
 
@@ -145,7 +146,8 @@ Human68K の他の MFP source の enable/mask 状態を変更しません。MFP 
 - SSOS-9 の機能変更では、基本的に `make test` と `make test-qemu` を変更・実行します。変更箇所に合わせて native と統合テストへケースを追加してください。
 - `make test`: host 上の native C unit test。scheduler の純粋な状態遷移を速く検証し、68000 命令や割り込み経路は実行しません。
 - `make test-asm`: QEMU で独立した 68000 assembly の基本例を実行します。主に例題と実行環境の確認用で、通常の OS 機能変更では対象にしません。assembly 例題やその実行環境を変更した場合に実行します。OS の scheduler/process 統合は検証しません。
+- `make test-link`: host 上のリンカ unit test とゴールデン試験を実行します。独立 mini-linker とのバイト比較と、限定 profile の `m68k-xelf-ld` クロス比較を含みます。事前に `source ~/.elf2x68k` が必要です。
 - `make test-qemu`: QEMU `m68000` 上で実際の scheduler/process C code と context-switch assembly を検証します。Timer D の代替は同期 trap のため、実 MFP 非同期割り込みや Human68K/IOCS 実機動作は検証しません。
-- `make verify`: native、assembly、QEMU の全テストと `.x`/`.xdf` クロスビルドを実行します。
+- `make verify`: native、assembly、link ゴールデン、QEMU の全テストと `.x`/`.xdf` クロスビルドを実行します。
 
 クロスビルド成功は、コンパイル・リンク・XDF 生成の確認です。Timer D/MFP 割り込み、IOCS コンソール、Human68K 上での起動、実機・エミュレータ動作は別途確認が必要です。

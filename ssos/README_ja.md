@@ -20,7 +20,8 @@ make -C ssos
 現在は PID 1 の CLI、heartbeat/idle/reaper の kernel task、S9M1 validator/registry、
 private data/GOT/fixup、Process Table と内蔵 PIC counter の複数プロセス実行を実装しています。
 `ps` / `modules` / `mem` で private 領域、共有コード、参照数、空き arena を観察できます。
-外部 `.s9m` file loader、GCC C module runtime、fd/redirect は未実装です。
+外部 `.s9m` の読み込みは FAT12 の `load` と FAT16 への `run` フォールバックで実装済みで、
+ファイル記述子による逐次読み書きも実装済みです。GCC C module runtime と redirect は未実装です。
 
 機能と学習手順は [ルート README](../README.md)、責務と ABI 方針は
 [全体設計](../docs/design.md)、拡張順序は [ローダー計画](../docs/multiprocess-loader-plan.md)を参照してください。

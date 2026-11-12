@@ -13,6 +13,7 @@ usage:
 	@echo "  make install          Build and copy preemptive .x/.xdf files to ~/tmp"
 	@echo "  make test             Run native tests"
 	@echo "  make test-asm         Run m68k assembly samples under QEMU"
+	@echo "  make test-link        Run linker host and golden tests"
 	@echo "  make test-qemu        Run scheduler tests under QEMU"
 	@echo "  make verify           Run automated verification and report hardware checks"
 	@echo "  make clean            Remove build outputs"
