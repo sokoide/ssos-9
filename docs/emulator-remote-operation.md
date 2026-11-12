@@ -38,15 +38,33 @@ MPX68K (`/Applications/MPX68K.app`、fork ソース `/Volumes/IO512GB/repo/oss/M
      権限付与 (システム設定 → プライバシーとセキュリティ → 補助アクセス等) で解決見込み。
      付与されれば XEiJ を前面に出してゲストキーも Option-Shift-C も全て送れる
      (ini 変更・再起動不要)。
-   - XEiJ 制御パイプ: 現在 **OFF** (`pastepipe` が ini に無し、`/tmp/XEiJControl` 不在)。
-     `~/XEiJ.ini` に `pastepipe=on` を追記して再起動 (または「パイプ設定」メニューで ON)
-     すれば `echo typekey ... > /tmp/XEiJControl` でキー送信できる (macOS 権限不要)。
+   - XEiJ 制御パイプ: `~/XEiJ.ini` に `pastepipe=on` を追記して再起動 (または「パイプ設定」
+     メニューで ON) で有効化。**macOS では FIFO は `$TMPDIR/XEiJControl` に作られる**
+     (Java の `java.io.tmpdir`。`/tmp` は WSL の場合のドキュメント記載)。
+     `echo 'typekey colon' > "$TMPDIR/XEiJControl"` でキー送信できる (macOS 権限不要)。
    - メニュー UI スクリプティング: エラー -1728 (補助アクセス不可) に加え、XEiJ は
      Java/AWT 製でメニューが AX に露出しない可能性が高く、この経路は期待しない。
 4. **SSOS-9 と F: の関係**: HFS は Human68k のデバイスドライブであり、SSOS-9 の
    ストレージ層 (FAT12 2HD / SCSI FAT16) からは直接見えない。SSOS-9 の結果は
    (a) 画面テキスト (pbpaste)、(b) SCSI FAT16 イメージファイルを `~/tmp` に置いて
    `smount` し、停止後にホストで検証 — の 2 経路で取り出す (後者は 2026-11-11 実績どおり)。
+
+### スモークテスト実装済み (2026-11-12、`tools/emulator-smoke.sh`)
+
+実測で判明した制約を織り込んだ最简の通しテスト。**4/4 PASS** を確認済み:
+T1 Human68k プロンプト表示 → T2 `keywitch -r` 後に `f:ssos9` で SSOS-9 CLI 起動 →
+T3 `mem` の arena 統計 → T4 `exit` で Human68k 復帰 (`SSOS-9 terminated.`)。
+
+実測で判明した追加制約:
+
+- **ゲストの keywitch ドライバがキーをリマップする** (X68000 `:` が `'` に化ける)。
+  テスト前にゲストで `keywitch -r` を実行してリセットする。
+- **`typekey` に複数キー名を渡すと壊れる** (実装は全キー press → 全キー release のため
+  make/break が干渉する)。**1 キー 1 コマンド**で送り、0.1 秒程度間隔を空ける。
+- `typekey` のキー名は X68000 スキャン名 (`colon` `semicolon` `return` `minus` `space`
+  等、小文字可)。ホストのキーボードレイアウトに依存しない。
+- 画面コピー (Option-Shift-C) だけはホストキーイベントが必要で、アクセシビリティ権限の
+  あるターミナルから osascript keystroke で送る。
 
 ### XEiJ で可能になる統合テスト像
 
@@ -87,28 +105,32 @@ repo 記録にはパイプへの書き込み実行者が明記されていない
 Bash から書き込めるため ZCode から送信可能だが、「ZCode が書いた」との明示的な記録はない。
 `mtype` / `fsck.fat -n` はイメージファイルへのホスト側操作で、ZCode が Bash で実行できる。
 
-### 制御パイプの仕様 (XEiJ 付属 `feature.htm`「Control pipe」より)
+### 制御パイプの仕様 (XEiJ 付属 `feature.htm` と同梱ソースより)
 
-- **有効化**: メニュー「パイプ設定」の「貼り付けおよび制御パイプ」チェックボックスを ON
-  (パラメータ `pipeencoding` に保存)。
-- **パイプ名**: Windows は `\\.\pipe\XEiJControl`、WSL (Ubuntu) は `/tmp/XEiJControl`。
-  **公式文書に macOS の記載はない**が、上記の実績環境 (macOS) で機能した。
+- **有効化**: メニュー「パイプ設定」の「貼り付けおよび制御パイプ」チェックボックスを ON、
+  または `~/XEiJ.ini` に `pastepipe=on` を追記して再起動 (パラメータ `pastepipe`)。
+- **パイプ名**: Windows は `\\.\pipe\XEiJControl`。UNIX 系 (含 macOS) は
+  **`$java.io.tmpdir/XEiJControl`** — macOS では `TMPDIR` 下の
+  `/var/folders/.../T/XEiJControl` (mkfifo で作成、貼り付けパイプは同ディレクトリの
+  `XEiJPaste`)。ドキュメントの `/tmp` 記載は WSL (Ubuntu) の場合。
 - **文字コード**: パイプ設定で SJIS (デフォルト) / UTF-8 を選択。
-- **コマンド** (1 行をパイプに書き込む。例: `echo interrupt > /tmp/XEiJControl`):
+- **コマンド** (1 行をパイプに書き込む。例: `echo interrupt > "$TMPDIR/XEiJControl"`):
 
   | コマンド | 機能 |
   | --- | --- |
   | `interrupt` | インタラプトスイッチを押す |
   | `reset` | リセットスイッチを押す |
+  | `opt1reset` | OPT.1 を押しながらリセット |
   | `presskey keyname ...` | キーを押す |
   | `releasekey keyname ...` | キーを離す |
-  | `typekey keyname ...` | キーを押して離す |
+  | `typekey keyname ...` | キーを押して離す (複数キーは press 全→release 全。1 キー 1 コマンド推奨) |
 
-- **キー名**: XEiJ 固有のテーブル (例: `ESC` `1`..`0` `MINUS` `CARET` `YEN` `BS` `TAB`、
-  文字 `A`..`Z`、`RETURN` `SPACE` `HOME` `DEL` `ROLLUP` `ROLLDOWN` `UNDO` `LEFT` `UP`
-  `RIGHT` `DOWN`、テンキー `TENKEY7` 等、`HELP` `XF1`..`XF5` `F6`..`F10` `SHIFT` `CTRL`
-  `OPT1` `OPT2` `NUM` `KANA` `ROMA` `CODE` `CAPS` `INS` など。スキャンコードとの対応表が
-  `feature.htm` にある)。
+- **キー名**: X68000 スキャン名の小文字 (`esc` `1`..`0` `minus` `caret` `yen` `bs` `tab`、
+  文字 `a`..`z`、`return` `space` `del` `rollup` `rolldown` `undo` `left` `up` `right`
+  `down` `clr`、テンキー `tenkey7` 等、`help` `xf1`..`xf5` `f1`..`f10` `shift` `ctrl`
+  `opt1` `opt2` `num` `kana` `roma` `code` `caps` `ins` `kigou` `touroku` `break` `copy`
+  `hiragana` `zenkaku` など。`colon` `semicolon` `comma` `period` `slash` `at`
+  `leftbracket` `rightbracket` もある)。ホストのキーボードレイアウトに依存しない。
 - パイプは **送信専用**。XEiJ の状態や画面を返す機能はない。
 
 ### ZCode からの操作手順 (XEiJ)
@@ -120,18 +142,17 @@ Bash から書き込めるため ZCode から送信可能だが、「ZCode が�
    /Users/scott/NoBackup/Emu/emulators/x68000/XEiJ_0261008/XEiJ.jar` を ZCode が Bash で
    起動できる (GUI がユーザーのデスクトップに開く)。HDD/FDD/SCSI 構成とパイプ設定 ON を
    ユーザーに依頼する。
-3. **キー送信**: パイプへ書き込む。例:
+3. **キー送信**: パイプへ書き込む。例 (1 キー 1 コマンド、間隔を空ける):
 
    ```sh
-   echo typekey XF2 > /tmp/XEiJControl      # 画面 2 へ切替 (SSOS-9 の mux は F1-F3 相当キー)
-   printf 'typekey h e l p RETURN\n' > /tmp/XEiJControl
-   echo interrupt > /tmp/XEiJControl
+   PIPE="${TMPDIR%/}/XEiJControl"
+   echo typekey f2 > "$PIPE"                # 画面 2 へ切替 (SSOS-9 の mux は F1-F3 相当キー)
+   for k in h e l p return; do echo "typekey $k" > "$PIPE"; sleep 0.1; done
+   echo interrupt > "$PIPE"
    ```
 
-   ※ 実際のキー名 (F 系は `XF1`..`F10` 表記) と SSOS-9 の mux が受けるスキャンコードの
-   対応は `feature.htm` の表で確認してから使うこと。
-4. **結果確認**: 画面は読めないため、ユーザーに画面コピー (XEiJ の画面コピー機能) を
-   依頼し、貼り付けられたテキストを ZCode が判定する。
+4. **結果確認**: 画面テキストは Option-Shift-C (osascript keystroke、要アクセシビリティ
+   権限) → `pbpaste` で ZCode が直接読める。ユーザー経由は不要。
 5. **停止後の検証** (ホスト、ZCode が実行):
    `mtype` (`/opt/homebrew/bin/mtype`)、`fsck.fat -n` (`/opt/homebrew/sbin/fsck.fat`)、
    python での直接パースでディスクイメージの内容と整合性を確認。
