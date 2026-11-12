@@ -143,9 +143,9 @@ xeij_stop() {
     pgrep -f XEiJ.jar >/dev/null || return 0
     pkill -9 -f XEiJ.jar
     sleep 2
-    pgrep -f XEiJ.jar >/dev/null && fail 'cannot stop XEiJ'
+    pgrep -f XEiJ.jar >/dev/null && { print -u2 'FAIL: cannot stop XEiJ'; return 1; }
+    return 0
 }
-
 xeij_start() {
     "$HOME/.local/bin/xeij.sh"
     local i=0
@@ -153,28 +153,46 @@ xeij_start() {
         sleep 1
         i=$((i + 1))
     done
-    [[ -p "$PIPE" ]] || fail 'control pipe did not come back'
+    [[ -p "$PIPE" ]] || { print -u2 'FAIL: control pipe did not come back'; return 1; }
+}
+
+a3_cleanup() {
+    local result=$1
+    [[ -n $A3_BACKUP ]] || return $result
+    print '== A3 restore XEiJ configuration =='
+    if ! xeij_stop; then
+        print -u2 -- "FAIL: a3: XEiJ still running; backup retained at $A3_BACKUP"
+        return 1
+    fi
+    if cp -p "$A3_BACKUP" "$HOME/XEiJ.ini"; then
+        rm -f "$A3_BACKUP"
+        A3_BACKUP=''
+    else
+        print -u2 -- "FAIL: a3: restore failed; backup retained at $A3_BACKUP"
+        return 1
+    fi
+    xeij_start || result=1
+    return $result
 }
 
 run_a3() {
+    local backup
     [[ -f "$HOME/tmp/ssos9.xdf" ]] || fail 'a3: missing ~/tmp/ssos9.xdf'
+    [[ -f "$HOME/XEiJ.ini" ]] || fail 'a3: missing ~/XEiJ.ini'
+    backup=$(mktemp "${TMPDIR%/}/ssos9-xeij-ini.XXXXXXXX") || fail 'a3: cannot create backup'
+    if ! cp -p "$HOME/XEiJ.ini" "$backup"; then
+        rm -f "$backup"
+        fail 'a3: cannot back up ~/XEiJ.ini'
+    fi
+    A3_BACKUP=$backup
     print '== A3 insert ssos9.xdf in FD0 (ini fd0 + restart) =='
-    xeij_stop
-    sed -i '' '/^fd0=/d' "$HOME/XEiJ.ini"
-    printf 'fd0=%s\n' "$HOME/tmp/ssos9.xdf" >> "$HOME/XEiJ.ini"
+    xeij_stop || fail 'a3: cannot stop XEiJ'
+    sed -i '' '/^fd0=/d' "$HOME/XEiJ.ini" || fail 'a3: cannot remove fd0'
+    printf 'fd0=%s\n' "$HOME/tmp/ssos9.xdf" >> "$HOME/XEiJ.ini" || fail 'a3: cannot set fd0'
 
-    a3_restore() {
-        print '== A3 eject FD0 and restore HDD boot =='
-        xeij_stop
-        sed -i '' '/^fd0=/d' "$HOME/XEiJ.ini"
-        xeij_start
-        wait_screen 'A:\>' 90 || fail 'a3: Human68k did not come back' "$s"
-        print 'PASS a3: FD ejected, HDD boot restored'
-    }
-
-    xeij_start
+    xeij_start || fail 'a3: cannot start XEiJ'
     print '== A3 wait for XDF IPL boot =='
-    wait_screen 'SSOS-9: minimal X68000 CLI' 60 || { a3_restore; fail 'a3: XDF boot banner missing' "$s"; }
+    wait_screen 'SSOS-9: minimal X68000 CLI' 60 || fail 'a3: XDF boot banner missing' "$s"
     sleep 2
     s=$(screen)
     require 'a3 prompt' "$s" '>'
@@ -184,20 +202,28 @@ run_a3() {
     sleep 2
     s=$(screen)
     if ! print -r -- "$s" | grep -Fq 'Cannot exit the initial SSOS-9 process (PID 1).'; then
-        a3_restore
         fail 'a3: exit was not rejected' "$s"
     fi
     print -r -- "$s" | grep -F 'Cannot exit the initial SSOS-9 process (PID 1).'
     s2=$(screen)
     require 'a3 prompt alive' "$s2" '>'
 
-    a3_restore
+    trap - EXIT HUP INT TERM
+    a3_cleanup 0 || fail 'a3: configuration restore failed'
+    wait_screen 'A:\>' 90 || fail 'a3: Human68k did not come back' "$s"
+    print 'PASS a3: configuration restored and Human68k returned'
     print 'PASS a3'
 }
 
 case ${1:-} in
     a2) run_a2 ;;
-    a3) run_a3 ;;
+    a3)
+        A3_BACKUP=''
+        trap 'a3_cleanup $?; exit $?' EXIT
+        trap 'exit 129' HUP
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        run_a3 ;;
     b1) run_b1 ;;
     *) fail 'usage: tools/emulator-itest.sh a2|a3|b1' ;;
 esac

@@ -197,3 +197,8 @@ SHA-256 was
 `e8bf92ec95c40a26d599a17a224a1210e66fcf05a18774b06f2466a5730aac5f`.
 This exercises the emulator's floppy boot path through the ini assignment,
 not XEiJ's FD menu, physical media, or real hardware.
+
+The A3 script now backs up the entire `~/XEiJ.ini` before stopping XEiJ and
+restores it before restarting XEiJ, including on errors and HUP, INT, or TERM.
+If XEiJ cannot be stopped or the restore fails, the backup is retained and its
+path is reported. SIGKILL or a system failure cannot run shell cleanup.
