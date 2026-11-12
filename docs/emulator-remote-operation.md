@@ -84,6 +84,29 @@ Option-Shift-C → pbpaste      ←   画面テキスト
 
 ## XEiJ
 
+### Codexからの実行 (2026-11-12)
+
+Codexのサンドボックス内では `pgrep` が sysmon 接続エラーとなり、
+`osascript` による前面化もエラー `-10827` で失敗した。同じ操作を
+サンドボックス外で実行すると、プロセス名 `java` の検出、画面コピー、
+制御パイプへのキー送信が成功した。この環境ではCodexのコマンド実行に
+サンドボックス外の実行許可を指定して `tools/emulator-smoke.sh` を実行する。
+エラー番号だけからmacOSの許可不足とは断定しない。
+
+実測時はXEiJが起動済みで `pastepipe=on`、FIFOは `${TMPDIR%/}/XEiJControl`、
+`~/tmp` はゲストの F: に接続されていた。Ghosttyには System Events の
+オートメーションと「デバイスの制御とデータへのアクセス」が許可されていた。
+スクリプトはHuman68kの `A:\>` から実行し、`keywitch -r`、`f:ssos9`、
+`mem`、`exit`、`dir a:` を順に送る。画面取得はXEiJを前面にして
+Option-Shift-Cを送り、`pbpaste` から読む。A1の判定はAドライブの一覧に
+`<dir>` が表示されることを前提とする。クリップボードと前面アプリは変化する。
+
+2026-11-12にCodexがこの経路で実行し、6判定すべて成功した。実行した
+`~/tmp/ssos9.x` のSHA-256は
+`4330cc1df45e8b7442baf37b4e8bb9484e4836d8122c34fbb531575dd757aa85`。
+実行中のXEiJの正確なバージョン、CPU、RAM構成は今回確認していない。
+物理X68000の検証ではない。
+
 ### 実績 (2026-11-11、commit `18e136b` の記録)
 
 出典: `tests/README.md`(On 2026-11-11 〜 の 2 段落)、`docs/status-and-plan.md` 検証状況。

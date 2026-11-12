@@ -151,3 +151,12 @@ Using the XEiJ control pipe, F2 selected window 2 and ran `help`; F3 selected
 window 3 and ran `ps`. The user copied the screen text after returning with F2
 and F1, confirming the separate output was retained and the original window
 was restored. This does not establish physical keyboard or MPX68K F-key behavior.
+
+On 2026-11-12, Codex ran `tools/emulator-smoke.sh` against a running XEiJ
+instance outside the sandbox. Six checks passed: Human68k prompt, standalone
+startup, `mem`, return to Human68k, and the `dir a:` listing and prompt.
+The standalone image SHA-256 was
+`4330cc1df45e8b7442baf37b4e8bb9484e4836d8122c34fbb531575dd757aa85`.
+The XEiJ version, CPU and RAM configuration were not independently confirmed
+for this run; physical hardware was not tested. T5 requires a visible `<dir>`
+entry on A: and does not verify all DOS functionality.

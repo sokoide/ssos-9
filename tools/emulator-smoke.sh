@@ -9,6 +9,7 @@
 #   T2  `keywitch -r` then `f:ssos9` boots the SSOS-9 standalone CLI
 #   T3  `mem` prints arena statistics
 #   T4  `exit` returns to Human68k
+#   T5  `dir a:` works after SSOS-9 returns (integration-plan case A1)
 #
 # Notes
 # - The control pipe FIFO is at ${TMPDIR}/XEiJControl (java.io.tmpdir), not
@@ -20,6 +21,7 @@
 # - Requires: accessibility/keystroke permission for the calling terminal,
 #   XEiJ running with the HFS drive mapped to ~/tmp (hf0 in ~/XEiJ.ini), and
 #   ssos9.x installed in ~/tmp (make install).
+# - T5 expects at least one directory entry visible in the A: listing.
 #
 # Usage: tools/emulator-smoke.sh
 set -u
@@ -105,6 +107,13 @@ type_cmd "exit"
 sleep 3
 s4=$(screen)
 check "T4 Human68k return" "$s4" 'A:\\>'
+
+echo "== T5 Human68k command after return (A1) =="
+type_cmd "dir a:"
+sleep 1
+s5=$(screen)
+check "T5 Human68k directory listing" "$s5" '<dir>'
+check "T5 Human68k prompt after dir a:" "$s5" 'A:\\>'
 
 echo "== result: $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]
