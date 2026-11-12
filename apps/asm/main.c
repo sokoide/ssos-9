@@ -97,8 +97,12 @@ static int run_pass(AsmCtx* ctx, const char* source) {
     char line[ASM_LINE_MAX + 1u];
     int32_t fd = ss9_open_read(source);
     int status;
-    if (fd < 0)
+    if (fd < 0) {
+        /* same message as the host driver: "SRC: cannot open" */
+        (void)write_text(source);
+        (void)write_text(": cannot open\r\n");
         return -1;
+    }
     reader.fd = fd;
     reader.fill = 0;
     reader.position = 0;

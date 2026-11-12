@@ -489,6 +489,39 @@ static AsmStatus parse_reglist(Tokens* ts, AsmOperand* op) {
     return ASM_OK;
 }
 
+/* Strips a trailing absolute-size suffix from a collected absolute
+ * expression: an identifier whose last dotted component is ".w" or ".l"
+ * selects absolute short/long (contract: only the trailing component is
+ * a suffix, so "a.b" keeps its whole name). The suffix travels as part
+ * of the identifier for names ("lbl.w" is one token) and as a separate
+ * ".w"/".l" identifier for expressions ("4.w"); both collapse here into
+ * op->abs_size. */
+static AsmStatus strip_abs_suffix(AsmOperand* op) {
+    AsmToken* last;
+    char c;
+    if (op->expr.count == 0)
+        return ASM_OK;
+    last = &op->expr.ops[op->expr.count - 1];
+    if (last->kind != ASM_TOK_IDENT || last->length < 2 ||
+        last->text[last->length - 2] != '.')
+        return ASM_OK;
+    c = lower(last->text[last->length - 1]);
+    if (c != 'w' && c != 'l')
+        return ASM_OK;
+    if (last->length == 2) {
+        /* the whole token is the suffix ("4.w" lexes as 4 + ".w"); a
+         * bare ".w" leaves no expression behind */
+        if (op->expr.count == 1)
+            return ASM_ERR_SYNTAX;
+        op->expr.count--;
+    } else {
+        /* "lbl.w" lexes as one identifier: keep the name part only */
+        last->length -= 2;
+    }
+    op->abs_size = c == 'w' ? ASM_SIZE_W : ASM_SIZE_L;
+    return ASM_OK;
+}
+
 static AsmStatus parse_operand(Tokens* ts, AsmOperand* op) {
     const AsmToken* first = tk(ts, 0);
     op->mode = ASM_OP_NONE;
@@ -536,6 +569,9 @@ static AsmStatus parse_operand(Tokens* ts, AsmOperand* op) {
         }
         if (op->expr.count == 0)
             return ASM_ERR_SYNTAX;
+        status = strip_abs_suffix(op);
+        if (status != ASM_OK)
+            return status;
         op->mode = ASM_OP_ABS; /* plain "(expr)" is an absolute expression */
         return ASM_OK;
     }
@@ -568,6 +604,9 @@ static AsmStatus parse_operand(Tokens* ts, AsmOperand* op) {
             return parse_mem_tail(ts, op->expr.count > 0, op, 0);
         if (op->expr.count == 0)
             return ASM_ERR_SYNTAX;
+        status = strip_abs_suffix(op);
+        if (status != ASM_OK)
+            return status;
         op->mode = ASM_OP_ABS;
         return ASM_OK;
     }
@@ -938,7 +977,9 @@ static AsmValue ev_binop(Eval* ev, uint8_t kind, const AsmValue* a,
     x = (int32_t)a->value;
     y = (int32_t)b->value;
     if (kind == ASM_TOK_STAR)
-        return make_abs(x * y);
+        /* unsigned multiply: wraps to the same two's-complement result
+         * as GAS without the signed-overflow UB */
+        return make_abs((int32_t)((uint32_t)x * (uint32_t)y));
     if (kind == ASM_TOK_SLASH) {
         if (y == 0) {
             ev->status = ASM_ERR_RANGE;

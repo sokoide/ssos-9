@@ -331,6 +331,55 @@ static void test_parse_operands(void) {
     CHECK(parse_line("move.l ,%d0", &stmt) == ASM_ERR_SYNTAX);
 }
 
+static void test_parse_abs_size(void) {
+    AsmStmt stmt;
+    /* "4.w" lexes as NUMBER + ".w": the suffix leaves the expression */
+    CHECK(parse_line("move.l 4.w,%d0", &stmt) == ASM_OK);
+    CHECK(stmt.ops[0].mode == ASM_OP_ABS && stmt.ops[0].abs_size == ASM_SIZE_W);
+    CHECK(stmt.ops[0].expr.count == 1 &&
+          stmt.ops[0].expr.ops[0].kind == ASM_TOK_NUMBER &&
+          stmt.ops[0].expr.ops[0].number == 4);
+    CHECK(parse_line("move.l 4.l,%d0", &stmt) == ASM_OK);
+    CHECK(stmt.ops[0].abs_size == ASM_SIZE_L && stmt.ops[0].expr.count == 1);
+    /* omitted suffix: abs_size 0 (encodes as .l per contract) */
+    CHECK(parse_line("move.l 4,%d0", &stmt) == ASM_OK);
+    CHECK(stmt.ops[0].mode == ASM_OP_ABS && stmt.ops[0].abs_size == 0);
+    /* "lbl.w" lexes as one identifier; only the name part is kept */
+    CHECK(parse_line("move.l lbl.w,%d0", &stmt) == ASM_OK);
+    CHECK(stmt.ops[0].abs_size == ASM_SIZE_W);
+    CHECK(stmt.ops[0].expr.count == 1 &&
+          stmt.ops[0].expr.ops[0].kind == ASM_TOK_IDENT &&
+          stmt.ops[0].expr.ops[0].length == 3);
+    CHECK(parse_line("move.l lbl.l,%d0", &stmt) == ASM_OK);
+    CHECK(stmt.ops[0].abs_size == ASM_SIZE_L &&
+          stmt.ops[0].expr.ops[0].length == 3);
+    /* only the trailing component is a suffix: "a.b" stays one name */
+    CHECK(parse_line("move.l a.b,%d0", &stmt) == ASM_OK);
+    CHECK(stmt.ops[0].abs_size == 0 && stmt.ops[0].expr.ops[0].length == 3);
+    CHECK(parse_line("move.l a.b.w,%d0", &stmt) == ASM_OK);
+    CHECK(stmt.ops[0].abs_size == ASM_SIZE_W &&
+          stmt.ops[0].expr.ops[0].length == 3);
+    /* source and destination operands carry their own suffix */
+    CHECK(parse_line("move.w %d0,0x1234.w", &stmt) == ASM_OK);
+    CHECK(stmt.ops[1].mode == ASM_OP_ABS && stmt.ops[1].abs_size == ASM_SIZE_W);
+    /* control-mode and one-operand forms */
+    CHECK(parse_line("jsr foo.w", &stmt) == ASM_OK &&
+          stmt.ops[0].abs_size == ASM_SIZE_W);
+    CHECK(parse_line("lea foo.w,%a0", &stmt) == ASM_OK &&
+          stmt.ops[0].abs_size == ASM_SIZE_W);
+    CHECK(parse_line("pea 4.l", &stmt) == ASM_OK &&
+          stmt.ops[0].abs_size == ASM_SIZE_L);
+    /* parenthesized absolute form ending the operand list */
+    CHECK(parse_line("jmp (4).w", &stmt) == ASM_OK);
+    CHECK(stmt.ops[0].mode == ASM_OP_ABS && stmt.ops[0].abs_size == ASM_SIZE_W);
+    /* a bare ".w"/".l" leaves no expression: syntax error */
+    CHECK(parse_line("move.l .w,%d0", &stmt) == ASM_ERR_SYNTAX);
+    CHECK(parse_line("move.l .l,%d0", &stmt) == ASM_ERR_SYNTAX);
+    /* branch targets are absolute operands too */
+    CHECK(parse_line("bra.w lbl.w", &stmt) == ASM_OK &&
+          stmt.ops[0].mode == ASM_OP_ABS && stmt.ops[0].abs_size == ASM_SIZE_W);
+}
+
 static void test_parse_reglist(void) {
     AsmStmt stmt;
     CHECK(parse_line("movem.l %d0-%d3/%a0,-(%sp)", &stmt) == ASM_OK);
@@ -570,6 +619,7 @@ int main(void) {
     test_parse_labels();
     test_parse_sizes();
     test_parse_operands();
+    test_parse_abs_size();
     test_parse_reglist();
     test_parse_directives();
     test_parse_ascii();

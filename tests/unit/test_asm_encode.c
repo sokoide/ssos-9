@@ -463,6 +463,14 @@ int main(void) {
     s = insn(ASM_MN_MOVE, ASM_SIZE_L);
     ops2(&s, op_abs(0x12345678u), op_dn(2));
     ok("move.l 0x12345678,%d2", &s, B(0x24, 0x39, 0x12, 0x34, 0x56, 0x78), 6);
+    /* absolute .w/.l suffix vectors, verified against m68k-xelf-as
+     * -m68000: move.l 4.w encodes 2038 0004, move.l 4.l 2039 00000004 */
+    s = insn(ASM_MN_MOVE, ASM_SIZE_L);
+    ops2(&s, op_abs_w(4), op_dn(0));
+    ok("move.l 4.w,%d0", &s, B(0x20, 0x38, 0x00, 0x04), 4);
+    s = insn(ASM_MN_MOVE, ASM_SIZE_L);
+    ops2(&s, op_abs(4), op_dn(0));
+    ok("move.l 4.l,%d0", &s, B(0x20, 0x39, 0x00, 0x00, 0x00, 0x04), 6);
     s = insn(ASM_MN_MOVE, ASM_SIZE_W);
     ops2(&s, op_imm(0x1234), op_dn(2));
     ok("move.w #0x1234,%d2", &s, B(0x34, 0x3C, 0x12, 0x34), 4);
@@ -1199,6 +1207,10 @@ int main(void) {
     ops2(&s, op_abs_w_expr(ex_id("dlbl")), op_dn(0));
     ok_reloc("move.w dlbl.w,%d0 -> ABS16", &s, B(0x30, 0x38, 0x00, 0x20), 4,
              ASM_RELOC_ABS16, 2, "\001data", 0x20);
+    s = insn(ASM_MN_MOVE, ASM_SIZE_L);
+    ops2(&s, op_abs_w_expr(ex_id("xtrn")), op_dn(0));
+    ok_reloc("move.l xtrn.w,%d0 -> ABS16", &s, B(0x20, 0x38, 0x00, 0x00), 4,
+             ASM_RELOC_ABS16, 2, "xtrn", 0);
     s = insn(ASM_MN_MOVE, ASM_SIZE_L);
     ops2(&s, op_imm_expr(ex_id("xtrn")), op_dn(0));
     ok_reloc("move.l #xtrn,%d0 -> ABS32", &s,
