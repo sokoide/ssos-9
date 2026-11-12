@@ -577,7 +577,7 @@ static void* background_builtin(void* argument) {
 }
 
 int ss_cli_execute_line(char* line) {
-    char command_copy[64];
+    char command_copy[SS_CLI_LINE_MAX];
     size_t length = strlen(line);
     if (length >= sizeof(command_copy)) {
         print("Command too long.\r\n");
@@ -666,7 +666,7 @@ int ss_cli_execute_line(char* line) {
 }
 
 static int shell_loop(void) {
-    char line[64];
+    char line[SS_CLI_LINE_MAX];
     unsigned used = 0;
     for (;;) {
         if (ss_process_kill_pending())

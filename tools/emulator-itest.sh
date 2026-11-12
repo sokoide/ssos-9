@@ -67,19 +67,31 @@ type_cmd() {
     key return
 }
 screen() {
+    # Runs inside a command-substitution subshell, so fail() here would only
+    # exit the subshell and the script would continue on a dead capture. On
+    # an unrecoverable copy failure, emit the pending marker: the caller's
+    # content checks then fail in the main shell with a real diagnostic.
     local out tries=0
-    frontmost
+    osascript -e 'tell application "System Events" to set frontmost of process "java" to true' >/dev/null 2>&1
     printf '%s' 'SSOS9_SCREEN_COPY_PENDING' | pbcopy
-    osascript -e 'tell application "System Events" to keystroke "c" using {option down, shift down}' >/dev/null || fail 'screen copy failed'
+    if ! osascript -e 'tell application "System Events" to keystroke "c" using {option down, shift down}' >/dev/null 2>&1; then
+        print -u2 'WARN: screen copy keystroke failed'
+        print -r -- 'SSOS9_SCREEN_COPY_PENDING'
+        return 0
+    fi
     sleep 1.2
     out=$(pbpaste)
     while [[ "$out" == 'SSOS9_SCREEN_COPY_PENDING' && $tries -lt 3 ]]; do
-        osascript -e 'tell application "System Events" to keystroke "c" using {option down, shift down}' >/dev/null
+        osascript -e 'tell application "System Events" to keystroke "c" using {option down, shift down}' >/dev/null 2>&1
         sleep $((1 + tries))
         out=$(pbpaste)
         tries=$((tries + 1))
     done
-    [[ "$out" == 'SSOS9_SCREEN_COPY_PENDING' ]] && fail 'screen copy did not complete'
+    if [[ "$out" == 'SSOS9_SCREEN_COPY_PENDING' ]]; then
+        print -u2 'WARN: screen copy did not complete'
+        print -r -- 'SSOS9_SCREEN_COPY_PENDING'
+        return 0
+    fi
     print -r -- "$out"
 }
 require() {
@@ -318,7 +330,8 @@ place_in_test() { # place_in_test <host-file> <NAME.EXT>; stage on F: and copy
         print "place: $name already in A:\\TEST (keeping existing copy)"
         return 0
     fi
-    cp "$src" "$HOME/tmp/$name" || fail "cannot stage $name in ~/tmp (F:)"
+    [[ "$src" == "$HOME/tmp/$name" ]] || cp "$src" "$HOME/tmp/$name" ||
+        fail "cannot stage $name in ~/tmp (F:)"
     type_cmd "copy f:$name a:\\test\\$name"
     sleep 1
     type_cmd 'cls'
@@ -719,14 +732,18 @@ run_c5() {
     local console_module=tests/target/build/console.s9m
     [[ -f "$console_module" ]] || fail 'c5: missing tests/target/build/console.s9m (run make test)'
     s=$(screen)
-    require 'c5 initial prompt' "$s" 'A:\>'
+    print -r -- "$s" | grep -Fq 'A:\>' || fail 'c5: initial Human68k prompt missing' "$s"
     h68_prep
     place_in_test "$console_module" CONSOLE.S9M
     boot_mount
     type_cmd 'run test/console'
-    wait_screen 'KEY: 0000' 10 || fail 'c5: console module did not start' "$s"
+    sleep 2
+    s=$(screen)
+    print -r -- "$s" | grep -Fq 'Unable to start' && fail 'c5: console module failed to spawn' "$s"
+    # The module clears the screen and draws KEY: xxxx only after a key
+    # arrives, so drive it with keys instead of waiting for initial output.
     key a
-    wait_screen 'KEY: 0061' 6 || fail 'c5: key a not reported as 0061' "$s"
+    wait_screen 'KEY: 0061' 8 || fail 'c5: key a not reported as 0061' "$s"
     key z
     wait_screen 'KEY: 007A' 6 || fail 'c5: key z not reported as 007A' "$s"
     key 5
@@ -734,7 +751,7 @@ run_c5() {
     key f5
     sleep 2
     s=$(screen)
-    print -r -- "$s" | grep -Eq 'KEY: (0[1-9A-F]|[1-9A-F][0-9A-F])[0-9A-F]00' ||
+    print -r -- "$s" | grep -Eq 'KEY: (0[1-9A-F]|[1-9A-F][0-9A-F])00' ||
         fail 'c5: special key f5 not reported as scan<<8' "$s"
     key q
     wait_screen 'exited with status 0' 10 || fail 'c5: console module did not quit on q' "$s"
@@ -747,7 +764,7 @@ run_d2() {
     [[ -f "$edit_module" ]] || fail 'd2: missing apps/edit/build/edit.s9m (run make all)'
     local name="D2T$(printf '%05X' $(( $(date +%s) % 1048576 )))"
     s=$(screen)
-    require 'd2 initial prompt' "$s" 'A:\>'
+    print -r -- "$s" | grep -Fq 'A:\>' || fail 'd2: initial Human68k prompt missing' "$s"
     h68_prep
     place_in_test "$edit_module" EDIT.S9M
     boot_mount
@@ -760,30 +777,50 @@ run_d2() {
     print -r -- "$s" | grep -Fq 'NORMAL' || fail 'd2: editor did not open empty buffer' "$s"
     key i
     sleep 0.5
-    local c line1='D2LINE1' line2='D2LINE2'
+    # typekey sends unshifted scans, so everything the script types arrives
+    # lowercase; the editor content and all waits follow that.
+    local c line1='d2line1' line2='d2line2'
     for c in ${(s::)line1}; do type_char "$c"; done
     key return
     for c in ${(s::)line2}; do type_char "$c"; done
     key esc
     sleep 1
     type_cmd ':wq'
-    wait_screen 'Written' 10 || fail 'd2: editor did not report Written' "$s"
+    # "Written" appears only between the save and the editor's exit clear, so
+    # assert on the outcome: :wq exits 0 only when the save succeeded.
+    wait_screen 'exited with status 0' 25 || fail 'd2: editor did not save and exit' "$s"
     wait_line '> ' 10 || fail 'd2: no prompt after :wq' "$s"
     print '== d2 reopen the saved file =='
     type_cmd "run test/edit test/$name.TXT"
-    sleep 2.5
+    sleep 3
     s=$(screen)
-    print -r -- "$s" | grep -Fq 'D2LINE1' || fail 'd2: reopened file lacks D2LINE1' "$s"
-    print -r -- "$s" | grep -Fq 'D2LINE2' || fail 'd2: reopened file lacks D2LINE2' "$s"
+    print -r -- "$s" | grep -Fq 'd2line1' || fail 'd2: reopened file lacks d2line1' "$s"
+    print -r -- "$s" | grep -Fq 'd2line2' || fail 'd2: reopened file lacks d2line2' "$s"
     type_cmd ':q!'
     wait_line '> ' 10 || fail 'd2: no prompt after :q!' "$s"
     ssos_exit
     print '== d2 verify from Human68k after reset =='
     guest_reset
     type_cmd "type a:\\test\\$name.TXT"
-    wait_line 'D2LINE1' 10 || fail 'd2: Human68k cannot read the saved file' "$s"
-    print -r -- "$s" | grep -Fq 'D2LINE2' || fail 'd2: Human68k file lacks D2LINE2' "$s"
+    wait_line 'd2line1' 10 || fail 'd2: Human68k cannot read the saved file' "$s"
+    print -r -- "$s" | grep -Fq 'd2line2' || fail 'd2: Human68k file lacks d2line2' "$s"
     print "PASS d2: edit saved and reloaded A:\\TEST\\$name.TXT"
+}
+
+wait_host_file() { # wait_host_file <case-insensitive NAME.EXT> <timeout>; sets $host_file
+    local want=${1:l} tmo=$2 waited=0 name
+    while (( waited < tmo )); do
+        host_file=''
+        for name in "$HOME"/tmp/*(N); do
+            if [[ "${name:t:l}" == "$want" ]]; then
+                host_file=$name
+                return 0
+            fi
+        done
+        sleep 2
+        waited=$((waited + 2))
+    done
+    return 1
 }
 
 # d3_place_and_asm <suffix>: stage the three link sources under unique
@@ -799,13 +836,13 @@ d3_place_and_asm() {
     place_in_test "$HOME/tmp/OB$suf.S" "OB$suf.S"
     boot_mount
     type_cmd "run test/asm test/sa$suf.s test/sa$suf.o"
-    wait_screen "Wrote SA$suf.O" 20 || fail "d3: asm sa$suf failed" "$s"
+    wait_screen "Wrote test/sa$suf.o" 25 || fail "d3: asm sa$suf failed" "$s"
     wait_line '> ' 10 || fail "d3: no prompt after asm sa$suf" "$s"
     type_cmd "run test/asm test/mb$suf.s test/mb$suf.o"
-    wait_screen "Wrote MB$suf.O" 20 || fail "d3: asm mb$suf failed" "$s"
+    wait_screen "Wrote test/mb$suf.o" 25 || fail "d3: asm mb$suf failed" "$s"
     wait_line '> ' 10 || fail "d3: no prompt after asm mb$suf" "$s"
     type_cmd "run test/asm test/ob$suf.s test/ob$suf.o"
-    wait_screen "Wrote OB$suf.O" 20 || fail "d3: asm ob$suf failed" "$s"
+    wait_screen "Wrote test/ob$suf.o" 25 || fail "d3: asm ob$suf failed" "$s"
     wait_line '> ' 10 || fail "d3: no prompt after asm ob$suf" "$s"
 }
 
@@ -813,10 +850,10 @@ run_d3() {
     local asm_module=apps/asm/build/asm.s9m
     [[ -f "$asm_module" ]] || fail 'd3: missing apps/asm/build/asm.s9m (run make all)'
     [[ -x tests/build/asm-host ]] || fail 'd3: missing tests/build/asm-host (run make test)'
-    local suf=$(printf '%04X' $(( $(date +%s) % 65536 )))
+    local suf=$(printf '%04x' $(( $(date +%s) % 65536 )))
     local exp=$(mktemp -d "${TMPDIR%/}/d3exp.XXXXXXXX")
     s=$(screen)
-    require 'd3 initial prompt' "$s" 'A:\>'
+    print -r -- "$s" | grep -Fq 'A:\>' || fail 'd3: initial Human68k prompt missing' "$s"
     h68_prep
     place_in_test "$asm_module" ASM.S9M
     d3_place_and_asm "$suf"
@@ -831,11 +868,13 @@ run_d3() {
     tests/build/asm-host tests/asm/link/main.s "$exp/MB$suf.O"
     tests/build/asm-host tests/asm/link/obj.s "$exp/OB$suf.O"
     local f
-    for f in SA MB OB; do
-        local obj=${f}${suf}.O
-        cmp -s "$HOME/tmp/$obj" "$exp/$obj" || \
-            fail "d3: guest $obj differs from the host build" "$(cmp "$HOME/tmp/$obj" "$exp/$obj" 2>&1 | head -2)"
-        print "d3: $obj byte-identical to host build"
+    for f in sa mb ob; do
+        local stem="${f}${suf}"
+        wait_host_file "$stem.o" 20 || fail "d3: $stem.O not copied to F: (~/tmp)"
+        cmp -s "$host_file" "$exp/${(U)stem}.O" || \
+            fail "d3: guest ${host_file:t} differs from the host build" \
+                "$(cmp "$host_file" "$exp/${(U)stem}.O" 2>&1 | head -2)"
+        print "d3: ${host_file:t} byte-identical to host build"
     done
     rm -rf "$exp"
     print 'PASS d3: three on-target objects match the host assembler'
@@ -846,16 +885,16 @@ run_d4() {
     [[ -f "$ld_module" ]] || fail 'd4: missing apps/link/build/ld.s9m (run make all)'
     [[ -x tests/build/asm-host && -x tests/build/link-host ]] || \
         fail 'd4: missing tests/build/asm-host or link-host (run make test)'
-    local suf=$(printf '%04X' $(( ($(date +%s) + 3) % 65536 )))
+    local suf=$(printf '%04x' $(( ($(date +%s) + 3) % 65536 )))
     local prog=PROG$suf
     local exp=$(mktemp -d "${TMPDIR%/}/d4exp.XXXXXXXX")
     s=$(screen)
-    require 'd4 initial prompt' "$s" 'A:\>'
+    print -r -- "$s" | grep -Fq 'A:\>' || fail 'd4: initial Human68k prompt missing' "$s"
     h68_prep
     place_in_test "$ld_module" LD.S9M
     d3_place_and_asm "$suf"
     type_cmd "run test/ld test/$prog.s9m test/sa$suf.o test/mb$suf.o test/ob$suf.o"
-    wait_screen "Wrote $prog.S9M" 30 || fail "d4: ld did not write the image" "$s"
+    wait_screen "Wrote test/${prog:l}.s9m" 30 || fail "d4: ld did not write the image" "$s"
     wait_line '> ' 10 || fail 'd4: no prompt after ld' "$s"
     print '== d4 run the linked program through the volume fallback =='
     type_cmd "run test/$prog"
@@ -871,8 +910,10 @@ run_d4() {
     tests/build/asm-host tests/asm/link/obj.s "$exp/OB$suf.O"
     tests/build/link-host "$exp/$prog.S9M" "$exp/SA$suf.O" "$exp/MB$suf.O" "$exp/OB$suf.O" || \
         fail 'd4: host link of the expected image failed'
-    cmp -s "$HOME/tmp/$prog.S9M" "$exp/$prog.S9M" || \
-        fail "d4: guest $prog.S9M differs from the host golden" "$(cmp "$HOME/tmp/$prog.S9M" "$exp/$prog.S9M" 2>&1 | head -2)"
+    wait_host_file "$prog.s9m" 20 || fail "d4: $prog.S9M not copied to F: (~/tmp)"
+    cmp -s "$host_file" "$exp/$prog.S9M" || \
+        fail "d4: guest ${host_file:t} differs from the host golden" \
+            "$(cmp "$host_file" "$exp/$prog.S9M" 2>&1 | head -2)"
     rm -rf "$exp"
     print "PASS d4: ld + run fallback produced the golden image; status 27 and LNK"
 }

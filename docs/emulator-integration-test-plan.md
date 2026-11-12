@@ -1,8 +1,8 @@
 # XEiJ で確認すべき統合テスト計画
 
-更新日: 2026-11-13。状態: **A1〜A3・B1〜B4・C1〜C3・D1・E3・F1・F2・G1実装・実行済み
+更新日: 2026-11-13。状態: **A1〜A3・B1〜B4・C1〜C3・C5・D1〜D3・E3・F1・F2・G1実装・実行済み
 (C4を除きPASS)。C4は実行済み・エミュレータキー経路の制限でFAIL (下記)。
-C5・D2〜D4実装済み・未実行**。
+D4は実装済み・ゴールデン比較の文字ケース不一致で修正中**。
 `smount` は Human68k 形式の先頭パーティションのみを受け付け、MS-DOS 型 FAT16 は拒否される。
 パスの 8.3 名照合は大文字小文字を区別しない (Human68k 側の作成・検索の挙動に合わせている)。
 
@@ -188,13 +188,17 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 - C5: `tools/emulator-itest.sh c5`。`tests/target/build/console.s9m` を `A:\TEST` の
   `CONSOLE.S9M` として配置し (既存なら再配置しない)、`smount 0` 後 `run
   test/console` で実キー入力が `KEY: xxxx` と一致することを確認する。
+  モジュールは最初のキーまで `KEY:` を描画しないため、キー送信で駆動する。
+  typekey はシフトを送れないため入力はすべて小文字として届く。
+  実行済み (2026-11-13、a/z/5/F5/q を確認)。
 - D2: `tools/emulator-itest.sh d2`。`apps/edit/build/edit.s9m` を `EDIT.S9M` として
   配置し、`run test/edit test/<新規名>` で新規作成 (`n`) → 挿入 (`i` … ESC) →
   `:wq` 保存 → 再オープンで内容一致 → `:q!` を確認、リセット後 Human68k の
-  `type` でも確認する。
+  `type` でも確認する。`Written` 表示は保存から退出までの一瞬のため、
+  `:wq` の成功は終了ステータス 0 で判定する。実行済み (2026-11-13)。
 - D3: `tools/emulator-itest.sh d3`。`tests/asm/link` の 3 ソースを一意名で
   `A:\TEST` に置き `run test/asm` ×3、リセット後 `.O` を F: 経由で取得し
-  host `asm-host` の出力とバイト比較する。
+  host `asm-host` の出力とバイト比較する。実行済み (2026-11-13、3 個とも一致)。
 - D4: `tools/emulator-itest.sh d4`。同一手順で `.O` を作り `run test/ld` で
   一意名 `PROGxxxx.S9M` にリンク、`run test/<prog>` の FAT 経由フォールバック
   起動で `LNK` と status 27 を確認、生成物を host `asm-host`+`link-host` の

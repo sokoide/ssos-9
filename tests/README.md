@@ -285,3 +285,36 @@ splitting the declaration), and System Events transiently refused to
 activate the java process once (-10006); a manual retry cleared it. This
 run wrote only the immutable `BG.S9M` into `A:\TEST`. Physical hardware
 was not tested.
+
+On 2026-11-13, the implemented-but-unexecuted storage areas ran in XEiJ.
+C5 passed: the console module (`tests/target/build/console.s9m`, first copy
+in `A:\TEST` kept) reported `KEY: 0061`/`007A`/`0035` for a/z/5 and
+`KEY: 6700` for F5 (scan<<8), and quit on `q` with status 0. The module
+clears the screen and draws `KEY: xxxx` only after the first key, so the
+test drives it with keys instead of waiting for initial output. D2 passed:
+`run test/edit test/<new>.TXT` created the file (`n`, insert two lines,
+`:wq`), the reopen showed both lines, and after a guest reset Human68k
+`type` showed them; `typekey` sends unshifted scans so typed text is
+lowercase, and the transient `Written` status line is asserted indirectly
+through the exit status. D3 passed: three `tests/asm/link` sources were
+placed under unique lowercase names in `A:\TEST`, assembled on target with
+`run test/asm`, copied to F: after a reset, and each object was
+byte-identical to `tests/build/asm-host` output. The standalone SHA-256 for
+these runs was
+`5f6bfc832778f1d9964d357f16ea8f5feb438722b541035aa81cf9f2658faf4d`.
+
+Two product fixes came out of these runs: the on-target `ld` rejected
+path-qualified output names such as `test/prog4e07.s9m` because the module
+name rule was applied to the whole argument instead of the base name
+(apps/link/main.c now strips the directory like the host driver), and the
+CLI line buffer was 64 bytes, which truncated the ld invocation mid-path
+(apps now accept SS_CLI_LINE_MAX 96). The QEMU suites (18 cases) and host
+suites pass with both changes. D4 reached the final image comparison; the
+guest image differed from the host golden only in the embedded module-name
+case and its CRC (guest `prog4e07`, host golden built as `PROG4e07`),
+because typekey cannot send shifted letters. Script fixes in the same
+round: place_in_test no longer copies a staged file onto itself, waits for
+F: copies to appear (wait_host_file), never hard-fails inside the screen
+capture subshell (a fail() there only exited the subshell and the script
+continued on a dead capture), and the C5/D2-D4 preconditions only require
+the Human68k prompt. Physical hardware was not tested.

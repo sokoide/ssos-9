@@ -85,6 +85,18 @@ static int name_ci_equal(const char* a, const char* b) {
     return *a == 0 && *b == 0;
 }
 
+/* Storage paths may include directories; the module name rule applies to
+ * the base name, matching the host driver. */
+static const char* base_name(const char* path) {
+    const char* base = path;
+    const char* p;
+    for (p = path; *p != 0; p++) {
+        if (*p == '/' || *p == '\\')
+            base = p + 1;
+    }
+    return base;
+}
+
 int main(int argc, char** argv) {
     LinkImage image;
     LinkLayout layout;
@@ -110,7 +122,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    if (lk_module_name(argv[1], module_name) != LINK_OK) {
+    if (lk_module_name(base_name(argv[1]), module_name) != LINK_OK) {
         (void)write_text("ld: Invalid module name: ");
         (void)write_text(argv[1]);
         (void)write_text("\r\n");
