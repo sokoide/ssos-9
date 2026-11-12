@@ -1,8 +1,7 @@
 # XEiJ で確認すべき統合テスト計画
 
-更新日: 2026-11-13。状態: **A1〜A3・B1〜B4・C1〜C3・C5・D1〜D3・E3・F1・F2・G1実装・実行済み
-(C4を除きPASS)。C4は実行済み・エミュレータキー経路の制限でFAIL (下記)。
-D4は実装済み・ゴールデン比較の文字ケース不一致で修正中**。
+更新日: 2026-11-13。状態: **A1〜A3・B1〜B4・C1〜C3・C5・D1〜D4・E3・F1・F2・G1実装・実行済み
+(C4を除きPASS)。C4は実行済み・エミュレータキー経路の制限でFAIL (下記)。E1・E2は未実装**。
 `smount` は Human68k 形式の先頭パーティションのみを受け付け、MS-DOS 型 FAT16 は拒否される。
 パスの 8.3 名照合は大文字小文字を区別しない (Human68k 側の作成・検索の挙動に合わせている)。
 
@@ -200,10 +199,12 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
   `A:\TEST` に置き `run test/asm` ×3、リセット後 `.O` を F: 経由で取得し
   host `asm-host` の出力とバイト比較する。実行済み (2026-11-13、3 個とも一致)。
 - D4: `tools/emulator-itest.sh d4`。同一手順で `.O` を作り `run test/ld` で
-  一意名 `PROGxxxx.S9M` にリンク、`run test/<prog>` の FAT 経由フォールバック
+  一意名 `progxxxx.s9m` にリンク、`run test/<prog>` の FAT 経由フォールバック
   起動で `LNK` と status 27 を確認、生成物を host `asm-host`+`link-host` の
-  golden とバイト比較する。モジュール画像 (`EDIT/ASM/LD/CONSOLE.S9M`) は
-  `A:\TEST` 内の初回配置を再利用し、ビルド更新後の再配置は手作業で行う。
+  golden とバイト比較する。ld はモジュール名をイメージに埋め込むため、golden の
+  出力名はゲストが typekey で入力できる小文字に合わせる。モジュール画像
+  (`EDIT/ASM/LD/CONSOLE.S9M`) は `A:\TEST` 内の初回配置を再利用し、ビルド更新後の
+  再配置は手作業で行う。実行済み (2026-11-13、golden バイト一致)。
 - F1: `tools/emulator-itest.sh f1`。`help&` `ps&` `mem&` を投入し、3 出力が
   行単位で崩れず揃うこと、`wait PID` で回収し `mem` が baseline に戻ることを
   確認する (`wait` は PID 必須で引数なしには対応しない)。

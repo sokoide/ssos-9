@@ -908,12 +908,14 @@ run_d4() {
     tests/build/asm-host tests/asm/link/start.s "$exp/SA$suf.O"
     tests/build/asm-host tests/asm/link/main.s "$exp/MB$suf.O"
     tests/build/asm-host tests/asm/link/obj.s "$exp/OB$suf.O"
-    tests/build/link-host "$exp/$prog.S9M" "$exp/SA$suf.O" "$exp/MB$suf.O" "$exp/OB$suf.O" || \
+    # The guest types the output name unshifted (lowercase), and ld embeds
+    # the module name in the image, so the golden must use the same case.
+    tests/build/link-host "$exp/${prog:l}.s9m" "$exp/SA$suf.O" "$exp/MB$suf.O" "$exp/OB$suf.O" || \
         fail 'd4: host link of the expected image failed'
     wait_host_file "$prog.s9m" 20 || fail "d4: $prog.S9M not copied to F: (~/tmp)"
-    cmp -s "$host_file" "$exp/$prog.S9M" || \
+    cmp -s "$host_file" "$exp/${prog:l}.s9m" || \
         fail "d4: guest ${host_file:t} differs from the host golden" \
-            "$(cmp "$host_file" "$exp/$prog.S9M" 2>&1 | head -2)"
+            "$(cmp "$host_file" "$exp/${prog:l}.s9m" 2>&1 | head -2)"
     rm -rf "$exp"
     print "PASS d4: ld + run fallback produced the golden image; status 27 and LNK"
 }

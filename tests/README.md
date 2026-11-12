@@ -318,3 +318,17 @@ F: copies to appear (wait_host_file), never hard-fails inside the screen
 capture subshell (a fail() there only exited the subshell and the script
 continued on a dead capture), and the C5/D2-D4 preconditions only require
 the Human68k prompt. Physical hardware was not tested.
+
+On 2026-11-13, D4 passed. The test placed the ld module and three
+`tests/asm/link` sources in `A:\TEST`, assembled them on target, linked
+`test/prog<id>.s9m` with `run test/ld`, executed it through the CLI volume
+fallback (`run test/<prog>`), and observed `LNK` plus exit status 27. After
+a guest reset the image was copied to F: and was byte-identical to the host
+`asm-host` + `link-host` golden (184 bytes). The golden is built with the
+same lowercase output name the guest types, because ld embeds the module
+name in the image and `typekey` cannot send shifted letters; the previous
+run differed from the golden only in those name bytes and their CRC, with
+code, data, and fixups identical. The standalone SHA-256 for this run was
+`5f6bfc832778f1d9964d357f16ea8f5feb438722b541035aa81cf9f2658faf4d`.
+This verifies the Human68k-format storage path through the real assembler,
+linker, and run fallback in XEiJ; physical hardware was not tested.
