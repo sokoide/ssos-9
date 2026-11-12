@@ -1,26 +1,33 @@
 #!/bin/zsh
 # XEiJ integration tests. See docs/emulator-integration-test-plan.md.
 #   a2  repeated XEiJ startup/return exercise
+#   a3  XDF IPL boot and PID 1 exit rejection
 #   b1  Timer D tick rate measurement (200 Hz nominal)
+#   e3  builtin hello real-PIC launch
 set -u
 
 PIPE="${TMPDIR%/}/XEiJControl"
+
 fail() { print -u2 -- "FAIL: $1"; [[ $# -lt 2 ]] || print -u2 -r -- "$2"; exit 1; }
 frontmost() {
     osascript -e 'tell application "System Events" to set frontmost of process "java" to true' >/dev/null || fail 'cannot activate XEiJ'
 }
 key() { printf 'typekey %s\n' "$1" > "$PIPE" || fail 'cannot write control pipe'; sleep 0.1; }
+type_char() {
+    case "$1" in
+        ' ') key space ;;
+        '-') key minus ;;
+        ':') key colon ;;
+        '.') key period ;;
+        ',') key comma ;;
+        $'\n') key return ;;
+        *) key "$1" ;;
+    esac
+}
 type_cmd() {
     local c
     frontmost
-    for c in ${(s::)1}; do
-        case "$c" in
-            ' ') key space ;;
-            '-') key minus ;;
-            ':') key colon ;;
-            *) key "$c" ;;
-        esac
-    done
+    for c in ${(s::)1}; do type_char "$c"; done
     key return
 }
 screen() {
@@ -39,6 +46,38 @@ ticks_of() {
     local v=$(print -r -- "$1" | grep -o 'ticks=[0-9A-F]\{8\}' | tail -1)
     [[ -n $v ]] || fail 'b1: no ticks= on screen' "$1"
     print -- $((16#${v#ticks=}))
+}
+wait_screen() { # wait_screen <pattern> <timeout-seconds>; screen text in $s
+    local pat=$1 tmo=$2 waited=0
+    while (( waited < tmo )); do
+        sleep 3
+        waited=$((waited + 3))
+        s=$(screen)
+        print -r -- "$s" | grep -Fq -- "$pat" && return 0
+    done
+    return 1
+}
+xeij_stop() {
+    pkill -f XEiJ.jar
+    local i=0
+    while pgrep -f XEiJ.jar >/dev/null && (( i < 15 )); do
+        sleep 1
+        i=$((i + 1))
+    done
+    pgrep -f XEiJ.jar >/dev/null || return 0
+    pkill -9 -f XEiJ.jar
+    sleep 2
+    pgrep -f XEiJ.jar >/dev/null && { print -u2 'FAIL: cannot stop XEiJ'; return 1; }
+    return 0
+}
+xeij_start() {
+    "$HOME/.local/bin/xeij.sh"
+    local i=0
+    while ! [[ -p "$PIPE" ]] && (( i < 30 )); do
+        sleep 1
+        i=$((i + 1))
+    done
+    [[ -p "$PIPE" ]] || { print -u2 'FAIL: control pipe did not come back'; return 1; }
 }
 
 run_a2() {
@@ -72,88 +111,6 @@ run_a2() {
         print "PASS A2 iteration $i"
     done
     print 'PASS A2: 5 iterations'
-}
-
-run_b1() {
-    s=$(screen)
-    require 'b1 initial prompt' "$s" 'A:\>'
-    type_cmd 'keywitch -r'
-    sleep 1
-    type_cmd 'cls'
-    type_cmd 'f:ssos9'
-    sleep 3
-    s=$(screen)
-    require 'b1 startup' "$s" 'SSOS-9: minimal X68000 CLI'
-
-    # Measure ticks across a wall-clock window. Both samples are taken the
-    # same delay after their `debug` typing, so the typing/copy overhead
-    # cancels and ticks delta ~= 200 Hz x elapsed seconds.
-    type_cmd 'debug'
-    sleep 1
-    t1=$(date +%s)
-    s=$(screen)
-    require 'b1 debug1' "$s" 'ticks='
-    n1=$(ticks_of "$s")
-
-    sleep 6
-    type_cmd 'debug'
-    sleep 1
-    t2=$(date +%s)
-    s=$(screen)
-    require 'b1 debug2' "$s" 'ticks='
-    n2=$(ticks_of "$s")
-
-    elapsed=$((t2 - t1))
-    (( elapsed >= 1 )) || elapsed=1
-    expected=$((elapsed * 200))
-    tol=$((expected / 5))
-    delta=$((n2 - n1))
-    print "b1 ticks delta=$delta expected~$expected +/- $tol over ${elapsed}s"
-    if (( delta >= expected - tol && delta <= expected + tol )); then
-        print 'PASS b1: tick rate within 200 Hz +/- 20%'
-    else
-        fail 'b1: tick rate out of range' "delta=$delta expected=$expected +/-$tol"
-    fi
-
-    type_cmd 'exit'
-    sleep 3
-    s=$(screen)
-    require 'b1 exit' "$s" 'SSOS-9 terminated.'
-    print 'PASS b1'
-}
-
-wait_screen() { # wait_screen <pattern> <timeout-seconds>; screen text in $s
-    local pat=$1 tmo=$2 waited=0
-    while (( waited < tmo )); do
-        sleep 3
-        waited=$((waited + 3))
-        s=$(screen)
-        print -r -- "$s" | grep -Fq -- "$pat" && return 0
-    done
-    return 1
-}
-
-xeij_stop() {
-    pkill -f XEiJ.jar
-    local i=0
-    while pgrep -f XEiJ.jar >/dev/null && (( i < 15 )); do
-        sleep 1
-        i=$((i + 1))
-    done
-    pgrep -f XEiJ.jar >/dev/null || return 0
-    pkill -9 -f XEiJ.jar
-    sleep 2
-    pgrep -f XEiJ.jar >/dev/null && { print -u2 'FAIL: cannot stop XEiJ'; return 1; }
-    return 0
-}
-xeij_start() {
-    "$HOME/.local/bin/xeij.sh"
-    local i=0
-    while ! [[ -p "$PIPE" ]] && (( i < 30 )); do
-        sleep 1
-        i=$((i + 1))
-    done
-    [[ -p "$PIPE" ]] || { print -u2 'FAIL: control pipe did not come back'; return 1; }
 }
 
 a3_cleanup() {
@@ -215,6 +172,96 @@ run_a3() {
     print 'PASS a3'
 }
 
+run_b1() {
+    s=$(screen)
+    require 'b1 initial prompt' "$s" 'A:\>'
+    type_cmd 'keywitch -r'
+    sleep 1
+    type_cmd 'cls'
+    type_cmd 'f:ssos9'
+    sleep 3
+    s=$(screen)
+    require 'b1 startup' "$s" 'SSOS-9: minimal X68000 CLI'
+
+    # Measure ticks across a wall-clock window. Both samples are taken the
+    # same delay after their `debug` typing, so the typing/copy overhead
+    # cancels and ticks delta ~= 200 Hz x elapsed seconds.
+    type_cmd 'debug'
+    sleep 1
+    t1=$(date +%s)
+    s=$(screen)
+    require 'b1 debug1' "$s" 'ticks='
+    n1=$(ticks_of "$s")
+
+    sleep 6
+    type_cmd 'debug'
+    sleep 1
+    t2=$(date +%s)
+    s=$(screen)
+    require 'b1 debug2' "$s" 'ticks='
+    n2=$(ticks_of "$s")
+
+    elapsed=$((t2 - t1))
+    (( elapsed >= 1 )) || elapsed=1
+    expected=$((elapsed * 200))
+    tol=$((expected / 5))
+    delta=$((n2 - n1))
+    print "b1 ticks delta=$delta expected~$expected +/- $tol over ${elapsed}s"
+    if (( delta >= expected - tol && delta <= expected + tol )); then
+        print 'PASS b1: tick rate within 200 Hz +/- 20%'
+    else
+        fail 'b1: tick rate out of range' "delta=$delta expected=$expected +/-$tol"
+    fi
+
+    type_cmd 'exit'
+    sleep 3
+    s=$(screen)
+    require 'b1 exit' "$s" 'SSOS-9 terminated.'
+    print 'PASS b1'
+}
+
+boot_ssos() { # from the Human68k prompt; banner screen in $s
+    type_cmd 'keywitch -r'
+    sleep 1
+    type_cmd 'cls'
+    type_cmd 'f:ssos9'
+    wait_screen 'SSOS-9: minimal X68000 CLI' 30 || return 1
+    wait_screen '> ' 15 || return 1
+    sleep 1
+    s=$(screen)
+    return 0
+}
+
+run_e3() {
+    s=$(screen)
+    require 'e3 initial prompt' "$s" 'A:\>'
+    boot_ssos || fail 'e3: ssos9 boot failed'
+    require 'e3 banner' "$s" 'SSOS-9: minimal X68000 CLI'
+
+    print '== E3 run builtin hello =='
+    type_cmd 'run hello'
+    wait_screen 'exited with status 0' 20 || fail 'e3: exit status not 0' "$s"
+    require 'e3 hello output' "$s" 'Hello'
+    print -r -- "$s" | awk '/PID [0-9]+ exited with status 0/ { exited=1; next } exited && /^> / { found=1 } END { exit !found }' || fail 'e3: shell prompt missing after exit' "$s"
+    print -r -- "$s" | grep -E 'Hello|PID [0-9]+ exited with status 0|^> '
+    print 'PASS e3: hello printed and exited 0'
+
+    print '== E3 trace shows scheduler events =='
+    type_cmd 'trace'
+    sleep 2
+    s=$(screen)
+    print -r -- "$s" | grep -Eq 'switch task=[0-9]+ other=[0-9]+ value=000000[0-9A-F]{2}' || fail 'e3: no Timer D switch in trace' "$s"
+    print -r -- "$s" | grep -E 'switch task=[0-9]+ other=[0-9]+ value=000000[0-9A-F]{2}'
+    print 'PASS e3: trace has a Timer D switch'
+
+    type_cmd 'exit'
+    sleep 3
+    s=$(screen)
+    require 'e3 exit' "$s" 'SSOS-9 terminated.'
+    require 'e3 return' "$s" 'A:\>'
+    print 'PASS e3'
+}
+
 case ${1:-} in
     a2) run_a2 ;;
     a3)
@@ -225,5 +272,6 @@ case ${1:-} in
         trap 'exit 143' TERM
         run_a3 ;;
     b1) run_b1 ;;
-    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1' ;;
+    e3) run_e3 ;;
+    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1|e3' ;;
 esac

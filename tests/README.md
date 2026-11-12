@@ -202,3 +202,13 @@ The A3 script now backs up the entire `~/XEiJ.ini` before stopping XEiJ and
 restores it before restarting XEiJ, including on errors and HUP, INT, or TERM.
 If XEiJ cannot be stopped or the restore fails, the backup is retained and its
 path is reported. SIGKILL or a system failure cannot run shell cleanup.
+
+On 2026-11-12, `make test-emulator EMULATOR_TESTS=e3` passed twice against a
+running XEiJ instance. The final run showed `Hello`, `PID 2 exited with status
+0`, and the subsequent SSOS-9 prompt. The `trace` output contained Timer D
+switches (for example, `task=1 other=3 value=00000002`), and `exit` returned
+to the Human68k `A:\>` prompt. The standalone SHA-256 was
+`4330cc1df45e8b7442baf37b4e8bb9484e4836d8122c34fbb531575dd757aa85`.
+The running emulator's exact version, CPU and RAM were not independently
+confirmed. The trace confirms timer-driven switches in the captured interval,
+not necessarily during the short hello process. Physical hardware was not tested.
