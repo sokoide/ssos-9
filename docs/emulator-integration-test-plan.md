@@ -1,6 +1,6 @@
 # XEiJ で確認すべき統合テスト計画
 
-更新日: 2026-11-12。状態: **A1実装・実行済み、その他は計画**。
+更新日: 2026-11-12。状態: **A1・A2実装・実行済み、その他は計画**。
 
 ## 1. 目的と位置づけ
 
@@ -102,7 +102,11 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 | --- | --- | --- | --- | --- | --- |
 | G1 | spawn/kill/wait 反復と baseline 復帰 | `run counter` → Ctrl-C → `wait` ×5 → `mem` | free_bytes/largest_free が起動直後と一致 | P2 | ○ |
 
-## 4. スクリプト運用 (実装時の指針、未実装)
+## 4. スクリプト運用
+
+- A2: `tools/emulator-itest.sh a2`。各回の画面とMFP表示を確認し、
+  Human68k復帰後に `dir a:` を実行する。A: の一覧に `<dir>` が必要。
+  終了前後のMFP値を直接比較するB5は未実装。
 
 - `tools/emulator-smoke.sh` のヘルパ (`key` / `type_cmd` / `screen` / `check`) を
   共通化し、`tools/emulator-itest.sh <area>` の形で領域ごとに実行できるようにする。

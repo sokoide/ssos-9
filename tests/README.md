@@ -160,3 +160,15 @@ The standalone image SHA-256 was
 The XEiJ version, CPU and RAM configuration were not independently confirmed
 for this run; physical hardware was not tested. T5 requires a visible `<dir>`
 entry on A: and does not verify all DOS functionality.
+
+On 2026-11-12, `tools/emulator-itest.sh a2` completed five standalone
+start/debug/exit cycles in the running XEiJ instance. Each cycle displayed the
+startup banner, MFP debug values, termination message, Human68k prompt, and
+an A: directory listing after `dir a:`. The sampled screens contained no
+`$004F` or error text. The displayed IERB/IMRB/TCDCR/TDDR values were
+`3E3E770C`, `3E3E7719`, `3E3E7717`, `3E3E7715`, and `3E3E770B`.
+The standalone SHA-256 was
+`4330cc1df45e8b7442baf37b4e8bb9484e4836d8122c34fbb531575dd757aa85`.
+XEiJ version, CPU and RAM were not independently confirmed for this run.
+Screens were sampled rather than continuously monitored; MFP state before and
+after execution was not compared, and physical hardware was not tested.
