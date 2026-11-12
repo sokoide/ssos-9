@@ -5,7 +5,7 @@ SUBDIRS := tools/makedisk
 ASM_FORMATTER ?= asmfmt
 CLANG_FORMAT ?= clang-format
 
-.PHONY: $(TOPTARGETS) all debug format loc test test-asm test-link test-qemu verify verify-check
+.PHONY: $(TOPTARGETS) all debug format loc test test-asm test-link test-qemu test-emulator test-emulator-a2 test-emulator-b1 test-emulator-list verify verify-check
 
 usage:
 	@echo "SSOS-9 build targets (preemptive only):"
@@ -15,6 +15,8 @@ usage:
 	@echo "  make test-asm         Run m68k assembly samples under QEMU"
 	@echo "  make test-link        Run linker host and golden tests"
 	@echo "  make test-qemu        Run scheduler tests under QEMU"
+	@echo "  make test-emulator    Run XEiJ integration tests against a running emulator"
+	@echo "                        (select with EMULATOR_TESTS=\"a2 b1\", list with make test-emulator-list)"
 	@echo "  make verify           Run automated verification and report hardware checks"
 	@echo "  make clean            Remove build outputs"
 	@echo "  make format           Format Markdown, C, and assembly sources"
@@ -68,6 +70,46 @@ test-link:
 
 test-qemu:
 	$(MAKE) -C tests test-qemu
+
+# XEiJ integration tests against a running emulator instance. They rebuild and
+# install ssos9.x to ~/tmp first, then drive the guest through the control
+# pipe. Needs the accessibility permission for the calling terminal, XEiJ with
+# the paste and control pipe enabled, and the guest idle at the Human68k
+# prompt. See docs/emulator-integration-test-plan.md.
+#
+# Select tests with EMULATOR_TESTS (space-separated IDs):
+#   make test-emulator                      # run all
+#   make test-emulator EMULATOR_TESTS=b1    # one test
+#   EMULATOR_TESTS="a2 b1" make test-emulator
+#   make test-emulator-list                 # list selectable IDs
+EMULATOR_ALL_TESTS = a2 b1
+EMULATOR_TESTS ?= $(EMULATOR_ALL_TESTS)
+
+.PHONY: test-emulator-list
+test-emulator-list:
+	@echo "selectable XEiJ integration tests (EMULATOR_TESTS):"
+	@echo "  a2  repeated XEiJ startup and return exercise"
+	@echo "  b1  Timer D tick rate measurement (200 Hz nominal)"
+	@echo 'usage: make test-emulator [EMULATOR_TESTS="a2 b1"]'
+
+test-emulator-a2: install
+	tools/emulator-itest.sh a2
+
+test-emulator-b1: install
+	tools/emulator-itest.sh b1
+
+test-emulator: check-emulator-tests install
+	@for t in $(EMULATOR_TESTS); do \
+		tools/emulator-itest.sh $$t || exit 1 ; \
+	done
+
+check-emulator-tests:
+	@for t in $(EMULATOR_TESTS); do \
+		case " $(EMULATOR_ALL_TESTS) " in \
+			*" $$t "*) ;; \
+			*) echo "unknown emulator test: $$t (see: make test-emulator-list)"; exit 2 ;; \
+		esac ; \
+	done
 
 # Report which build targets need hardware verification for the current change
 # set. REF selects the diff target (default: working tree vs HEAD; use HEAD~1
