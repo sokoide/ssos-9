@@ -218,3 +218,28 @@ to the Human68k `A:\>` prompt. The standalone SHA-256 was
 The running emulator's exact version, CPU and RAM were not independently
 confirmed. The trace confirms timer-driven switches in the captured interval,
 not necessarily during the short hello process. Physical hardware was not tested.
+
+On 2026-11-13, `tools/emulator-itest.sh d1` verified the Human68k-format SCSI
+HDD create/read/replace path against the real A: HDD in XEiJ. The script
+copies a unique fixture from F: into `A:\TEST` with Human68k, boots the
+standalone image, identifies A: by scanning `smount 0..7` read-only until
+`sread` returns the fixture content, then writes `swrite/sread/sreplace/sread`
+on a unique new name and verifies the result from Human68k after a guest
+reset. A: was identified as SCSI ID 0. The run passed with standalone
+SHA-256
+`6c6cf6c5cd7389d337e3a02cb224aa22d87c02b4dfff50c84e419e6e31cc7058`.
+The verification needed two fixes that only real media expose: SSOS-9's path
+lookup now compares 8.3 names case-insensitively (Human68k `copy` stores
+lowercase names, matching its own case-insensitive DOS semantics), and the
+script resets the guest after `exit` because Human68k's track-buffer disk
+cache hides directory entries written behind it (the pre-reset `dir` showed
+an SSOS-9-created file only after a reset). The Human68k-side checks are
+screen-text based, so 18.3 names, Shift-JIS names, and subdirectory changes
+inside `A:\TEST` are not compared. Physical hardware was not tested.
+
+Operational notes from the same session: XEiJ's `typekey yen` delivers no
+key press to the guest (presskey, a 0.15 s hold, releasekey works and is
+what the script uses for `\`); after many in-guest SSOS-9 start/exit cycles
+the guest once stopped echoing keys entirely and a full XEiJ restart
+(restart the app, not just the guest) restored input, after which the same
+binary worked unchanged.

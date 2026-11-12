@@ -81,6 +81,13 @@ static int short_name(const char* name, uint8_t out[11]) {
 
 static int next_cluster(SSFat12* v, uint16_t cluster, uint16_t* next);
 
+/* Human68k preserves the case a file was created with and its own lookups
+ * are case-insensitive, so match stored 8.3 names case-insensitively.
+ * SSOS-9 always stores names it creates uppercase. */
+static uint8_t up_ascii(uint8_t c) {
+    return (c >= 'a' && c <= 'z') ? (uint8_t)(c - ('a' - 'A')) : c;
+}
+
 int ss_fat_locate(SSFat12* v, const char* path, SSFatLocation* loc) {
     uint8_t sector[1024] __attribute__((aligned(4)));
     uint16_t directory = 0;
@@ -141,7 +148,7 @@ int ss_fat_locate(SSFat12* v, const char* path, SSFatLocation* loc) {
                     }
                     if (e[11] & 0x08) continue;
                     unsigned j = 0;
-                    while (j < 11 && e[j] == wanted[j]) j++;
+                    while (j < 11 && up_ascii(e[j]) == wanted[j]) j++;
                     if (j != 11) continue;
                     if (v->human68k) {
                         for (j = 12; j < 22 && !e[j]; j++) {}

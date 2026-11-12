@@ -91,6 +91,22 @@ int main(void) {
     assert(ss_storage_read(&volume.storage, "TEST/STREAM", out, 8) == 5 && !memcmp(out, msg, 5));
     assert(ss_storage_store(&volume.storage, "TEST/INTEL", msg, 5, 0) == 0);
     assert(ss_storage_read(&volume.storage, "TEST/INTEL", out, 8) == 5 && !memcmp(out, msg, 5));
+    /* Human68k stores the case a file was created with (files copied in from
+     * another drive commonly end up lowercase on a real disk); lookup must
+     * match names case-insensitively like Human68k DOS does. */
+    for (unsigned i = 0; i < 1024; i += 32)
+        if (!memcmp(dir + i, "INTEL      ", 11)) {
+            for (unsigned k = 0; k < 11; k++)
+                if (dir[i + k] >= 'A' && dir[i + k] <= 'Z')
+                    dir[i + k] = (uint8_t)(dir[i + k] - 'A' + 'a');
+            break;
+        }
+    assert(ss_storage_read(&volume.storage, "TEST/INTEL", out, 8) == 5 &&
+           !memcmp(out, msg, 5));
+    assert(ss_storage_store(&volume.storage, "TEST/intel",
+                            (const uint8_t*)"WORLD", 5, 1) == 0);
+    assert(ss_storage_read(&volume.storage, "TEST/INTEL", out, 8) == 5 &&
+           !memcmp(out, "WORLD", 5));
     memset(dir, ' ', 1024);
     for (unsigned i = 0; i < 31; i++) dir[i * 32u] = 'Q';
     dir[31u * 32u] = 0;

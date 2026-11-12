@@ -1,8 +1,8 @@
 # XEiJ で確認すべき統合テスト計画
 
-更新日: 2026-11-12。状態: **A1〜A3・B1・E3実装・実行済み、その他は計画**。
-Human68k 形式 SCSI HDD の対応は実装途中で、D 系・E1・E2 は未実装・未実行。
-現在の `smount` はまだ MS-DOS 型 FAT16 用であり、既接続 A: に対して使用しない。
+更新日: 2026-11-13。状態: **A1〜A3・B1・D1・E3実装・実行済み、その他は計画**。
+`smount` は Human68k 形式の先頭パーティションのみを受け付け、MS-DOS 型 FAT16 は拒否される。
+パスの 8.3 名照合は大文字小文字を区別しない (Human68k 側の作成・検索の挙動に合わせている)。
 
 ## 1. 目的と位置づけ
 
@@ -28,6 +28,10 @@ T1〜T5、6判定 PASS 済み) を土台にする。実行環境と制約は
   `typekey <key>` を **1 キー 1 コマンド・0.1 秒間隔**で送る。ゲストの keywitch
   ドライバのリマップを冒頭 `keywitch -r` で解除。画面は Option-Shift-C
   (osascript keystroke、要アクセシビリティ権限) → `pbpaste`。
+  `typekey yen` はゲストに何も届かないため `\` は `presskey yen` → 0.15 秒保持 →
+  `releasekey yen` で送る (0.5 秒以上保持するとリピートで複数文字になる)。
+  画面コピーは直前の状態を返すことがあるため、マーカー文字列を仕込んで
+  更新を確認し、出力の確認はポーリングで行う。
 - 成果物: `make install` の `~/tmp/ssos9.x` / `ssos9.xdf`。SHA-256 を記録。
 - ゲスト構成: 起動済み Human68k の A: は既接続の HDD、`~/tmp` = F: (HFS)。
   A: と SCSI ID・Human68k パーティションの対応は読み取り専用で確認し、推測しない。
@@ -83,9 +87,10 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 
 ### D. Human68k 形式 SCSI HDD の実 IOCS 読み書き
 
-以下は実装後の計画。対象は既接続 A: の `A:\TEST` のみ。コマンドのパス構文や
-パーティション指定は実装確定後に記載する。読み取り専用調査で対象ディスクを特定し、
-識別できなければ書込みを開始しない。
+`smount ID` は SCSI ターゲットの先頭 Human68k パーティションを読み書き可で
+マウントし、`swrite` / `sreplace` / `sread` は `TEST/NAME.EXT` と
+`A:\TEST\NAME.EXT` 形式のパスを受け付ける。対象は既接続 A: の `A:\TEST` のみ。
+書込み前に読み取り専用で対象ディスクを特定し、識別できなければ書込みを開始しない。
 
 | ID | 概要 | 手順 | 合格基準 | 優先度 | 自動化 |
 | --- | --- | --- | --- | --- | --- |
@@ -138,6 +143,20 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
   その後の shell プロンプトを確認し、`trace` の Timer D による
   `switch` (`value` の resume_type が 0) を確認して Human68k に復帰する。
   trace は直近 16 件であり、その switch が hello 自身の実行中だったとは限らない。
+- D1: `tools/emulator-itest.sh d1`。実行前に `make install`、実行時点で XEiJ が
+  Human68k プロンプトで待機していること。一意名の fixture (内容 `D1FIXTURE`) を
+  F: から Human68k 側で `A:\TEST` に copy し (ディレクトリがなければ Human68k 側で
+  `mkdir`)、SSOS-9 内で SCSI ID 0〜7 を `smount` して fixture を `sread` できた
+  ID だけを A: の対象とする。一致する ID がなければ書込みを行わず失敗する。
+  対象 ID 上で一意名に `swrite … hello` → `sread` → `sreplace … world` →
+  `sread` を行う。`exit` 後、Human68k のディスクキャッシュ (トラックバッファ) が
+  SSOS-9 が書いたディレクトリ項目を隠すため、制御パイプの `reset` でゲストを
+  再起動してから `dir a:\test` (新規名の存在と対象外の 8.3 名集合が不変) と
+  `type` (`world`、`hello` 残留なし) を確認する。SSOS-9 が作る名前は大文字で
+  格納・表示され、Human68k が作る名前は入力時のケースのまま保存されるため、
+  行比較は両ケースを受け付ける。検証は画面テキスト経由のため、18.3 名や
+  `A:\TEST` 内サブディレクトリの変化は比較できない。
+  実行済み (2026-11-13、A: = SCSI ID 0)。
 
 - `tools/emulator-smoke.sh` のヘルパ (`key` / `type_cmd` / `screen` / `check`) を
   共通化し、`tools/emulator-itest.sh <area>` の形で領域ごとに実行できるようにする。
