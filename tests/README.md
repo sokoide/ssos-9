@@ -172,3 +172,14 @@ The standalone SHA-256 was
 XEiJ version, CPU and RAM were not independently confirmed for this run.
 Screens were sampled rather than continuously monitored; MFP state before and
 after execution was not compared, and physical hardware was not tested.
+
+On 2026-11-12, `tools/emulator-itest.sh b1` measured the Timer D tick rate in
+the running XEiJ instance. It launched the standalone image, read `ticks=`
+from `debug`, waited, read it again, and compared the delta against
+200 Hz times the measured wall-clock interval with a 20% tolerance. Three
+consecutive runs reported `delta=1790` against `expected~1800` over 9 seconds
+(0.6% below nominal). The standalone SHA-256 was
+`4330cc1df45e8b7442baf37b4e8bb9484e4836d8122c34fbb531575dd757aa85`.
+The measurement samples two instants seconds apart; it does not establish
+cycle-accurate MFP timing, the XEiJ load-factor configuration, or real
+hardware behavior.

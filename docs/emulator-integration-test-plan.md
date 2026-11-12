@@ -1,6 +1,6 @@
 # XEiJ で確認すべき統合テスト計画
 
-更新日: 2026-11-12。状態: **A1・A2実装・実行済み、その他は計画**。
+更新日: 2026-11-12。状態: **A1・A2・B1実装・実行済み、その他は計画**。
 
 ## 1. 目的と位置づけ
 
@@ -107,6 +107,11 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 - A2: `tools/emulator-itest.sh a2`。各回の画面とMFP表示を確認し、
   Human68k復帰後に `dir a:` を実行する。A: の一覧に `<dir>` が必要。
   終了前後のMFP値を直接比較するB5は未実装。
+- B1: `tools/emulator-itest.sh b1`。SSOS-9 を起動し、`debug` の `ticks=`
+  (8 桁大文字 HEX) を 2 回取得。2 回の typing 間隔を実測し、
+  `delta ≈ 200 Hz × elapsed` (±20%) を判定する。typing と画面コピーの
+  オーバーヘッドは 2 回のサンプルで等しいので相殺される。合格後に `exit` で
+  Human68k へ戻る。
 
 - `tools/emulator-smoke.sh` のヘルパ (`key` / `type_cmd` / `screen` / `check`) を
   共通化し、`tools/emulator-itest.sh <area>` の形で領域ごとに実行できるようにする。
