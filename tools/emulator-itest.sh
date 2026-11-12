@@ -94,6 +94,16 @@ screen() {
     fi
     print -r -- "$out"
 }
+snap() { # snap [var]; capture the screen into $s (default) or $var. screen()
+    # runs in a command-substitution subshell where fail() cannot stop the
+    # script, so the dead-capture marker is checked here in the main shell.
+    local var=${1:-s} out
+    out=$(screen)
+    if [[ "$out" == 'SSOS9_SCREEN_COPY_PENDING' ]]; then
+        fail 'screen copy did not complete (XEiJ or clipboard unresponsive)'
+    fi
+    typeset -g "$var"="$out"
+}
 require() {
     print -r -- "$2" | grep -Fq -- "$3" || fail "$1: missing $3" "$2"
     print -r -- "$2" | grep -Eiq '\$004[fF]|error|エラー' && fail "$1: error on screen" "$2"
@@ -138,7 +148,7 @@ xeij_start() {
 }
 
 run_a2() {
-    s=$(screen)
+    snap
     require 'initial prompt' "$s" 'A:\>'
     type_cmd 'keywitch -r'
     sleep 1
@@ -148,21 +158,21 @@ run_a2() {
         type_cmd 'cls'
         type_cmd 'f:ssos9'
         sleep 3
-        s=$(screen)
+        snap
         require "iteration $i startup" "$s" 'SSOS-9: minimal X68000 CLI'
         type_cmd 'debug'
         sleep 1
-        s=$(screen)
+        snap
         require "iteration $i debug" "$s" 'MFP IERB/IMRB/TCDCR/TDDR='
         print -r -- "$s" | grep -F 'MFP IERB/IMRB/TCDCR/TDDR='
         type_cmd 'exit'
         sleep 3
-        s=$(screen)
+        snap
         require "iteration $i exit" "$s" 'SSOS-9 terminated.'
         require "iteration $i return" "$s" 'A:\>'
         type_cmd 'dir a:'
         sleep 1
-        s=$(screen)
+        snap
         require "iteration $i DOS listing" "$s" '<dir>'
         require "iteration $i DOS prompt" "$s" 'A:\>'
         print "PASS A2 iteration $i"
@@ -208,18 +218,18 @@ run_a3() {
     print '== A3 wait for XDF IPL boot =='
     wait_screen 'SSOS-9: minimal X68000 CLI' 60 || fail 'a3: XDF boot banner missing' "$s"
     sleep 2
-    s=$(screen)
+    snap
     require 'a3 prompt' "$s" '>'
 
     print '== A3 exit must be rejected (PID 1) =='
     type_cmd 'exit'
     sleep 2
-    s=$(screen)
+    snap
     if ! print -r -- "$s" | grep -Fq 'Cannot exit the initial SSOS-9 process (PID 1).'; then
         fail 'a3: exit was not rejected' "$s"
     fi
     print -r -- "$s" | grep -F 'Cannot exit the initial SSOS-9 process (PID 1).'
-    s2=$(screen)
+    snap s2
     require 'a3 prompt alive' "$s2" '>'
 
     trap - EXIT HUP INT TERM
@@ -230,14 +240,14 @@ run_a3() {
 }
 
 run_b1() {
-    s=$(screen)
+    snap
     require 'b1 initial prompt' "$s" 'A:\>'
     type_cmd 'keywitch -r'
     sleep 1
     type_cmd 'cls'
     type_cmd 'f:ssos9'
     sleep 3
-    s=$(screen)
+    snap
     require 'b1 startup' "$s" 'SSOS-9: minimal X68000 CLI'
 
     # Measure ticks across a wall-clock window. Both samples are taken the
@@ -246,7 +256,7 @@ run_b1() {
     type_cmd 'debug'
     sleep 1
     t1=$(date +%s)
-    s=$(screen)
+    snap
     require 'b1 debug1' "$s" 'ticks='
     n1=$(ticks_of "$s")
 
@@ -254,7 +264,7 @@ run_b1() {
     type_cmd 'debug'
     sleep 1
     t2=$(date +%s)
-    s=$(screen)
+    snap
     require 'b1 debug2' "$s" 'ticks='
     n2=$(ticks_of "$s")
 
@@ -272,7 +282,7 @@ run_b1() {
 
     type_cmd 'exit'
     sleep 3
-    s=$(screen)
+    snap
     require 'b1 exit' "$s" 'SSOS-9 terminated.'
     print 'PASS b1'
 }
@@ -285,7 +295,7 @@ boot_ssos() { # from the Human68k prompt; banner screen in $s
     wait_screen 'SSOS-9: minimal X68000 CLI' 30 || return 1
     wait_screen '> ' 15 || return 1
     sleep 1
-    s=$(screen)
+    snap
     return 0
 }
 boot_mount() { # boot SSOS-9 and mount the A: volume (SCSI ID 0)
@@ -392,7 +402,7 @@ run_d1() {
     print "d1 test file: $upper.TXT  fixture: $fix.TXT"
     print "d1 ssos9.x sha256: $(shasum -a 256 "$HOME/tmp/ssos9.x" | awk '{print $1}')"
 
-    s=$(screen)
+    snap
     require 'd1 initial prompt' "$s" 'A:\>'
     key return # flush any pending unentered line from earlier activity
     type_cmd 'keywitch -r'
@@ -488,7 +498,7 @@ run_d1() {
 }
 
 run_e3() {
-    s=$(screen)
+    snap
     require 'e3 initial prompt' "$s" 'A:\>'
     boot_ssos || fail 'e3: ssos9 boot failed'
     require 'e3 banner' "$s" 'SSOS-9: minimal X68000 CLI'
@@ -504,21 +514,21 @@ run_e3() {
     print '== E3 trace shows scheduler events =='
     type_cmd 'trace'
     sleep 2
-    s=$(screen)
+    snap
     print -r -- "$s" | grep -Eq 'switch task=[0-9]+ other=[0-9]+ value=000000[0-9A-F]{2}' || fail 'e3: no Timer D switch in trace' "$s"
     print -r -- "$s" | grep -E 'switch task=[0-9]+ other=[0-9]+ value=000000[0-9A-F]{2}'
     print 'PASS e3: trace has a Timer D switch'
 
     type_cmd 'exit'
     sleep 3
-    s=$(screen)
+    snap
     require 'e3 exit' "$s" 'SSOS-9 terminated.'
     require 'e3 return' "$s" 'A:\>'
     print 'PASS e3'
 }
 
 run_b2() {
-    s=$(screen)
+    snap
     require 'b2 initial prompt' "$s" 'A:\>'
     boot_ssos || fail 'b2: ssos9 boot failed'
     type_cmd 'run counter&'
@@ -527,7 +537,7 @@ run_b2() {
     [[ -n $pid ]] || fail 'b2: cannot parse counter PID' "$s"
     type_cmd 'trace'
     sleep 2
-    s=$(screen)
+    snap
     require 'b2 trace header' "$s" 'scheduler events: 16 (oldest first)'
     local events=$(print -r -- "$s" | tr '\r' '\n' |
         grep -cE '^t=[0-9A-F]{8} (create|start|sleep|wake|switch|exit) task=[0-9]+ other=[0-9]+ value=[0-9A-F]{8}')
@@ -543,7 +553,7 @@ run_b2() {
 }
 
 run_b3() {
-    s=$(screen)
+    snap
     require 'b3 initial prompt' "$s" 'A:\>'
     boot_ssos || fail 'b3: ssos9 boot failed'
     type_cmd 'run counter&'
@@ -551,20 +561,20 @@ run_b3() {
     local pid=$(started_pid "$s")
     type_cmd 'debug'
     sleep 1
-    s=$(screen)
+    snap
     require 'b3 debug1' "$s" 'ticks='
     local n1=$(ticks_of "$s")
     sleep 6
     type_cmd 'debug'
     sleep 1
-    s=$(screen)
+    snap
     require 'b3 debug2' "$s" 'ticks='
     local n2=$(ticks_of "$s")
     (( n2 - n1 > 400 )) || fail "b3: ticks advanced only by $((n2 - n1)) while the shell stayed responsive" "$s"
     print "b3: ticks advanced by $((n2 - n1)) with the spinner running"
     type_cmd 'ps'
     sleep 2
-    s=$(screen)
+    snap
     require 'b3 ps header' "$s" 'PID PPID STATE NAME MODULE DATA GOT STACK'
     print -r -- "$s" | grep -Eq " counter " || fail 'b3: counter task not listed' "$s"
     print 'b3: shell kept typing/debug/ps while counter spun (preemptive)'
@@ -577,12 +587,12 @@ run_b3() {
 }
 
 run_b4() {
-    s=$(screen)
+    snap
     require 'b4 initial prompt' "$s" 'A:\>'
     boot_ssos || fail 'b4: ssos9 boot failed'
     type_cmd 'mem'
     sleep 1
-    s=$(screen)
+    snap
     local base=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
     [[ -n $base ]] || fail 'b4: no arena baseline' "$s"
     type_cmd 'run counter'
@@ -595,7 +605,7 @@ run_b4() {
     wait_line '> ' 8 || fail 'b4: prompt missing after interrupt' "$s"
     type_cmd 'mem'
     sleep 1
-    s=$(screen)
+    snap
     local after=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
     [[ "$after" == "$base" ]] || fail "b4: arena did not return to baseline" \
         "baseline: $base"$'\n'"after: $after"
@@ -606,12 +616,12 @@ run_b4() {
 HELP_EXPECTED='Commands: help, uptime, ps, modules, mem, run NAME [ARGS...] [&], load DRIVE FILE, unload NAME, kill PID, wait PID, smount ID [START [BLOCKS]], swrite FILE TEXT, sreplace FILE TEXT, sread FILE, debug, trace, clear, version, mux, exit'
 
 run_c1() {
-    s=$(screen)
+    snap
     require 'c1 initial prompt' "$s" 'A:\>'
     boot_ssos || fail 'c1: ssos9 boot failed'
     type_cmd 'help'
     sleep 2
-    s=$(screen)
+    snap
     local got=$(norm_text "$s")
     local want=$(norm_text "$HELP_EXPECTED")
     [[ "$got" == *"$want"* ]] || fail 'c1: help text differs from the cli.c command table' "$s"
@@ -621,7 +631,7 @@ run_c1() {
 }
 
 run_c2() {
-    s=$(screen)
+    snap
     require 'c2 initial prompt' "$s" 'A:\>'
     boot_ssos || fail 'c2: ssos9 boot failed'
     local i
@@ -642,7 +652,7 @@ run_c2() {
 }
 
 run_c3() {
-    s=$(screen)
+    snap
     require 'c3 initial prompt' "$s" 'A:\>'
     boot_ssos || fail 'c3: ssos9 boot failed'
     type_cmd 'mux'
@@ -651,25 +661,25 @@ run_c3() {
     sleep 1.5
     type_cmd 'help'
     sleep 2
-    s=$(screen)
+    snap
     [[ "$(norm_text "$s")" == *"$(norm_text "$HELP_EXPECTED")"* ]] || \
         fail 'c3: window 2 did not run help' "$s"
     key f3
     sleep 1.5
     type_cmd 'ps'
     sleep 2
-    s=$(screen)
+    snap
     require 'c3 window 3 ps' "$s" 'PID PPID STATE NAME MODULE DATA GOT STACK'
     require 'c3 window 3 shell row' "$s" 'shell'
     key f1
     sleep 1.5
-    s=$(screen)
+    snap
     print -r -- "$s" | grep -Fq 'Multiplexer:' || fail 'c3: window 1 content not restored' "$s"
     local want=$(norm_text "$HELP_EXPECTED")
     [[ "$(norm_text "$s")" != *"$want"* ]] || fail 'c3: window 1 shows window 2 output' "$s"
     key f2
     sleep 1.5
-    s=$(screen)
+    snap
     [[ "$(norm_text "$s")" == *"$want"* ]] || fail 'c3: window 2 did not retain help output' "$s"
     key f1
     sleep 1
@@ -678,7 +688,7 @@ run_c3() {
 }
 
 run_c4() {
-    s=$(screen)
+    snap
     require 'c4 initial prompt' "$s" 'A:\>'
     boot_ssos || fail 'c4: ssos9 boot failed'
     type_cmd 'mux'
@@ -689,7 +699,7 @@ run_c4() {
     wait_screen 'arena free_bytes=' 8 || fail 'c4: window 2 did not run mem' "$s"
     key f1
     sleep 1.5
-    s=$(screen)
+    snap
     print -r -- "$s" | grep -Fq 'arena free_bytes=' && fail 'c4: window 1 shows window 2 output' "$s"
     # Try Ctrl-] then digit. IOCS encodes ctrl only for letters, so this
     # prefix may be undeliverable through the emulated keyboard.
@@ -699,7 +709,7 @@ run_c4() {
     printf 'releasekey ctrl\n' > "$PIPE"; sleep 0.3
     key 2
     sleep 1.5
-    s=$(screen)
+    snap
     if ! print -r -- "$s" | grep -Fq 'arena free_bytes='; then
         print 'c4: Ctrl-] did not switch; trying the ~ prefix'
         key return # flush whatever reached the shell prompt
@@ -710,7 +720,7 @@ run_c4() {
         printf 'releasekey shift\n' > "$PIPE"; sleep 0.4
         key 2
         sleep 1.5
-        s=$(screen)
+        snap
         if ! print -r -- "$s" | grep -Fq 'arena free_bytes='; then
             key return
             key f1
@@ -731,14 +741,14 @@ run_c4() {
 run_c5() {
     local console_module=tests/target/build/console.s9m
     [[ -f "$console_module" ]] || fail 'c5: missing tests/target/build/console.s9m (run make test)'
-    s=$(screen)
+    snap
     print -r -- "$s" | grep -Fq 'A:\>' || fail 'c5: initial Human68k prompt missing' "$s"
     h68_prep
     place_in_test "$console_module" CONSOLE.S9M
     boot_mount
     type_cmd 'run test/console'
     sleep 2
-    s=$(screen)
+    snap
     print -r -- "$s" | grep -Fq 'Unable to start' && fail 'c5: console module failed to spawn' "$s"
     # The module clears the screen and draws KEY: xxxx only after a key
     # arrives, so drive it with keys instead of waiting for initial output.
@@ -750,7 +760,7 @@ run_c5() {
     wait_screen 'KEY: 0035' 6 || fail 'c5: key 5 not reported as 0035' "$s"
     key f5
     sleep 2
-    s=$(screen)
+    snap
     print -r -- "$s" | grep -Eq 'KEY: (0[1-9A-F]|[1-9A-F][0-9A-F])00' ||
         fail 'c5: special key f5 not reported as scan<<8' "$s"
     key q
@@ -763,7 +773,7 @@ run_d2() {
     local edit_module=apps/edit/build/edit.s9m
     [[ -f "$edit_module" ]] || fail 'd2: missing apps/edit/build/edit.s9m (run make all)'
     local name="D2T$(printf '%05X' $(( $(date +%s) % 1048576 )))"
-    s=$(screen)
+    snap
     print -r -- "$s" | grep -Fq 'A:\>' || fail 'd2: initial Human68k prompt missing' "$s"
     h68_prep
     place_in_test "$edit_module" EDIT.S9M
@@ -773,7 +783,7 @@ run_d2() {
     wait_screen 'Cannot read file.' 10 || fail 'd2: editor did not prompt for a new file' "$s"
     key n
     sleep 1.5
-    s=$(screen)
+    snap
     print -r -- "$s" | grep -Fq 'NORMAL' || fail 'd2: editor did not open empty buffer' "$s"
     key i
     sleep 0.5
@@ -793,7 +803,7 @@ run_d2() {
     print '== d2 reopen the saved file =='
     type_cmd "run test/edit test/$name.TXT"
     sleep 3
-    s=$(screen)
+    snap
     print -r -- "$s" | grep -Fq 'd2line1' || fail 'd2: reopened file lacks d2line1' "$s"
     print -r -- "$s" | grep -Fq 'd2line2' || fail 'd2: reopened file lacks d2line2' "$s"
     type_cmd ':q!'
@@ -852,7 +862,7 @@ run_d3() {
     [[ -x tests/build/asm-host ]] || fail 'd3: missing tests/build/asm-host (run make test)'
     local suf=$(printf '%04x' $(( $(date +%s) % 65536 )))
     local exp=$(mktemp -d "${TMPDIR%/}/d3exp.XXXXXXXX")
-    s=$(screen)
+    snap
     print -r -- "$s" | grep -Fq 'A:\>' || fail 'd3: initial Human68k prompt missing' "$s"
     h68_prep
     place_in_test "$asm_module" ASM.S9M
@@ -888,7 +898,7 @@ run_d4() {
     local suf=$(printf '%04x' $(( ($(date +%s) + 3) % 65536 )))
     local prog=PROG$suf
     local exp=$(mktemp -d "${TMPDIR%/}/d4exp.XXXXXXXX")
-    s=$(screen)
+    snap
     print -r -- "$s" | grep -Fq 'A:\>' || fail 'd4: initial Human68k prompt missing' "$s"
     h68_prep
     place_in_test "$ld_module" LD.S9M
@@ -921,12 +931,12 @@ run_d4() {
 }
 
 run_f1() {
-    s=$(screen)
+    snap
     require 'f1 initial prompt' "$s" 'A:\>'
     boot_ssos || fail 'f1: ssos9 boot failed'
     type_cmd 'mem'
     sleep 1
-    s=$(screen)
+    snap
     local base=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
     [[ -n $base ]] || fail 'f1: no arena baseline' "$s"
     # Each trailing-& builtin runs in an isolated kernel-entry child whose
@@ -936,12 +946,12 @@ run_f1() {
     local p1=$(started_pid "$s")
     type_cmd 'ps&'
     sleep 2
-    s=$(screen)
+    snap
     local p2=$(started_pid "$s")
     [[ -n $p2 ]] || fail 'f1: ps& did not start' "$s"
     type_cmd 'mem&'
     sleep 2
-    s=$(screen)
+    snap
     local p3=$(started_pid "$s")
     [[ -n $p3 ]] || fail 'f1: mem& did not start' "$s"
     [[ "$(norm_text "$s")" == *"$(norm_text "$HELP_EXPECTED")"* ]] || \
@@ -958,7 +968,7 @@ run_f1() {
     done
     type_cmd 'mem'
     sleep 1
-    s=$(screen)
+    snap
     local after=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
     [[ "$after" == "$base" ]] || fail 'f1: arena did not return to baseline' \
         "baseline: $base"$'\n'"after: $after"
@@ -974,7 +984,7 @@ bg_max_record() { # highest "BG nn" number visible on the screen
 run_f2() {
     local bg_module=tests/target/build/BG.S9M
     [[ -f "$bg_module" ]] || fail 'f2: missing tests/target/build/BG.S9M (run make test)'
-    s=$(screen)
+    snap
     require 'f2 initial prompt' "$s" 'A:\>'
     h68_prep
     place_in_test "$bg_module" BG.S9M
@@ -993,7 +1003,7 @@ run_f2() {
         [[ -n $max1 ]] || fail "f2: no BG record visible before switch $round" "$s"
         key f2
         sleep 3
-        s=$(screen)
+        snap
         print -r -- "$s" | grep -Fq 'SSOS-9 shell' || \
             fail "f2: window 2 not shown after switch $round" "$s"
         key f1
@@ -1012,12 +1022,12 @@ run_f2() {
 }
 
 run_g1() {
-    s=$(screen)
+    snap
     require 'g1 initial prompt' "$s" 'A:\>'
     boot_ssos || fail 'g1: ssos9 boot failed'
     type_cmd 'mem'
     sleep 1
-    s=$(screen)
+    snap
     local base=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
     [[ -n $base ]] || fail 'g1: no arena baseline' "$s"
     local i pid
@@ -1034,7 +1044,7 @@ run_g1() {
     done
     type_cmd 'mem'
     sleep 1
-    s=$(screen)
+    snap
     local after=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
     [[ "$after" == "$base" ]] || fail 'g1: arena did not return to baseline' \
         "baseline: $base"$'\n'"after: $after"
