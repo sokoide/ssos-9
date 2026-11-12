@@ -1,7 +1,7 @@
 # Preemptive-only verification entry points.
-.PHONY: test test-native test-fat12 test-mux test-editor test-asm test-asm-host test-asm-golden test-qemu clean
+.PHONY: test test-native test-fat12 test-mux test-editor test-asm test-asm-host test-asm-golden test-link-host test-link-golden test-link test-qemu clean
 
-test: test-native test-fat12 test-mux test-editor test-asm-host
+test: test-native test-fat12 test-mux test-editor test-asm-host test-link-host
 
 test-editor:
 	@mkdir -p build
@@ -51,6 +51,19 @@ test-asm:
 	$(MAKE) -C asm runall
 	$(MAKE) test-asm-golden
 
+LINK_CORE = ../apps/link/readobj.c ../apps/link/layout.c ../apps/link/fold.c ../apps/link/image.c ../apps/link/support.c
+LINK_HOST_FLAGS = -std=c11 -Wall -Wextra -Werror -I../apps/link
+
+test-link-host:
+	@mkdir -p build
+	$(CC) $(LINK_HOST_FLAGS) unit/link_host_main.c $(LINK_CORE) -o build/link-host
+
+test-link-golden: test-link-host
+	python3 link_golden.py
+
+test-link: test-link-golden
+	$(MAKE) test-asm-golden
+
 test-qemu:
 	$(MAKE) -C ../examples/hello all
 	$(MAKE) -C ../apps/asm all
@@ -64,4 +77,4 @@ clean:
 	$(MAKE) -f Makefile.native clean
 	$(MAKE) -C asm clean
 	$(MAKE) -C qemu clean
-	rm -f build/test-asm-parse build/test-asm-encode build/test-asm-obj build/asm-host
+	rm -f build/test-asm-parse build/test-asm-encode build/test-asm-obj build/asm-host build/link-host

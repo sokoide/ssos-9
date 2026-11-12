@@ -1,10 +1,10 @@
 #include "cli.h"
+#include "../fs/fat12.h"
+#include "../fs/scsi_volume.h"
+#include "../fs/xdf.h"
 #include "../kernel/kernel.h"
 #include "../kernel/main_task.h"
 #include "../kernel/scheduler.h"
-#include "../fs/fat12.h"
-#include "../fs/xdf.h"
-#include "../fs/scsi_volume.h"
 #include "../mem/system_arena.h"
 #include "../module/builtin.h"
 #include "../module/module.h"
@@ -246,12 +246,15 @@ static int parse_pid(const char* text, SSProcessId* pid) {
 }
 
 static int parse_u32(const char* text, uint32_t* result) {
-    if (!text || !*text) return 0;
+    if (!text || !*text)
+        return 0;
     uint32_t value = 0;
     while (*text) {
-        if (*text < '0' || *text > '9') return 0;
+        if (*text < '0' || *text > '9')
+            return 0;
         uint32_t digit = (uint32_t)(*text++ - '0');
-        if (value > (UINT32_MAX - digit) / 10u) return 0;
+        if (value > (UINT32_MAX - digit) / 10u)
+            return 0;
         value = value * 10u + digit;
     }
     *result = value;
@@ -260,10 +263,43 @@ static int parse_u32(const char* text, uint32_t* result) {
 
 static int interactive_shell(void) {
     SSProcessId current = ss_process_current_id();
-    if (current == 1) return 1;
+    if (current == 1)
+        return 1;
     for (unsigned i = 1; i < SS_PROCESS_CONSOLE_COUNT; i++)
-        if (mux_shell_pids[i] == current) return 1;
+        if (mux_shell_pids[i] == current)
+            return 1;
     return 0;
+}
+
+/* The registry and built-ins do not have the name, so try the mounted FAT16
+ * root: open NAME, then NAME.S9M, and register the image dynamically. The
+ * IOCS lock spans the same open/read/close interval as the load command. */
+static int16_t load_disk_module(const char* name, SSModuleId* module_id) {
+    SSStorage* storage = &ss_system_scsi_volume.storage;
+    SSFat12File file;
+    if (!storage->mounted)
+        return SS_ERR_ID;
+    ss_iocs_lock();
+    int result = ss_storage_open_reader(storage, name, &file);
+    if (result != 0) {
+        size_t length = strlen(name);
+        char with_ext[13];
+        if (length > 0 && length <= 8) {
+            memcpy(with_ext, name, length);
+            memcpy(with_ext + length, ".S9M", 5u);
+            result = ss_storage_open_reader(storage, with_ext, &file);
+        }
+    }
+    int16_t status = SS_ERR_ID;
+    if (result == 0) {
+        if (file.size <= SS_MODULE_MAX_IMAGE_SIZE &&
+            ss_module_load_reader(ss_fat12_read, &file, file.size, module_id) ==
+                SS_OK)
+            status = SS_OK;
+        ss_storage_close_reader(storage, &file);
+    }
+    ss_iocs_unlock();
+    return status;
 }
 
 static int run_process_command(char* tokens[], uint16_t count, int background) {
@@ -276,12 +312,14 @@ static int run_process_command(char* tokens[], uint16_t count, int background) {
             return 0;
         }
         ss_iocs_lock();
-        int result = ss_scsi_volume_mount_iocs(&ss_system_scsi_volume, (uint8_t)target,
-                                               start, blocks);
+        int result = ss_scsi_volume_mount_iocs(&ss_system_scsi_volume,
+                                               (uint8_t)target, start, blocks);
         ss_iocs_unlock();
-        print(result == 0 ? "FAT16 mounted.\r\n" : "Unable to mount FAT16.\r\n");
+        print(result == 0 ? "FAT16 mounted.\r\n"
+                          : "Unable to mount FAT16.\r\n");
     } else if ((strcmp(tokens[0], "swrite") == 0 ||
-                strcmp(tokens[0], "sreplace") == 0) && count == 3) {
+                strcmp(tokens[0], "sreplace") == 0) &&
+               count == 3) {
         int replace = strcmp(tokens[0], "sreplace") == 0;
         ss_iocs_lock();
         int result = ss_storage_store(&ss_system_scsi_volume.storage, tokens[1],
@@ -292,10 +330,11 @@ static int run_process_command(char* tokens[], uint16_t count, int background) {
     } else if (strcmp(tokens[0], "sread") == 0 && count == 2) {
         uint8_t bytes[256];
         ss_iocs_lock();
-        int32_t result = ss_storage_read(&ss_system_scsi_volume.storage, tokens[1],
-                                         bytes, sizeof(bytes));
+        int32_t result = ss_storage_read(&ss_system_scsi_volume.storage,
+                                         tokens[1], bytes, sizeof(bytes));
         ss_iocs_unlock();
-        if (result < 0) print("Unable to read file (maximum 256 bytes).\r\n");
+        if (result < 0)
+            print("Unable to read file (maximum 256 bytes).\r\n");
         else {
             ss_cli_console_write(bytes, (uint32_t)result);
             print("\r\n");
@@ -315,9 +354,11 @@ static int run_process_command(char* tokens[], uint16_t count, int background) {
         int16_t lookup = ss_module_find(tokens[1], &module_id);
         if (lookup == SS_ERR_ID)
             lookup = ss_builtin_load(tokens[1], &module_id);
+        if (lookup == SS_ERR_ID)
+            lookup = load_disk_module(tokens[1], &module_id);
         if (lookup != SS_OK ||
-            ss_process_spawn(ss_process_current_id(), module_id, count - 1u, argv,
-                             &pid) != SS_OK) {
+            ss_process_spawn(ss_process_current_id(), module_id, count - 1u,
+                             argv, &pid) != SS_OK) {
             print("Unable to start module.\r\n");
         } else {
             if (background) {
@@ -358,8 +399,8 @@ static int run_process_command(char* tokens[], uint16_t count, int background) {
         SSXdfReader disk = {_iocs_b_read, (uint8_t)(tokens[1][0] - '0')};
         ss_iocs_lock();
         const char* error = "Unable to load module: disk or FAT12.\r\n";
-        int result = ss_fat12_mount(&volume, ss_xdf_read_sector, &disk,
-                                    SS_XDF_SECTORS);
+        int result =
+            ss_fat12_mount(&volume, ss_xdf_read_sector, &disk, SS_XDF_SECTORS);
         if (result == 0 && volume.sector_size != 1024)
             result = -1;
         if (result == 0) {
@@ -468,9 +509,11 @@ int16_t ss_init(void) {
 }
 
 static void show_help(void) {
-    print("Commands: help, uptime, ps, modules, mem, run NAME [ARGS...] [&], load DRIVE FILE, unload NAME, kill "
+    print("Commands: help, uptime, ps, modules, mem, run NAME [ARGS...] [&], "
+          "load DRIVE FILE, unload NAME, kill "
           "PID, wait PID, ");
-    print("smount ID [START [BLOCKS]], swrite FILE TEXT, sreplace FILE TEXT, sread FILE, ");
+    print("smount ID [START [BLOCKS]], swrite FILE TEXT, sreplace FILE TEXT, "
+          "sread FILE, ");
     print("debug, trace, clear, version, mux, exit\r\n");
 }
 
@@ -485,7 +528,8 @@ static void* mux_shell(void* argument) {
         print("SSOS-9 shell\r\n> ");
         (void)shell_loop();
     }
-    if (ss_process_syscall_leave()) ss_process_exit_current(130);
+    if (ss_process_syscall_leave())
+        ss_process_exit_current(130);
     return NULL;
 }
 
@@ -503,7 +547,8 @@ static void start_mux(void) {
         SSProcessSnapshot existing;
         if (mux_shell_pids[id] &&
             ss_process_snapshot(mux_shell_pids[id], &existing) == SS_OK) {
-            if (existing.state != SS_PROCESS_ZOMBIE) continue;
+            if (existing.state != SS_PROCESS_ZOMBIE)
+                continue;
             uint16_t status;
             if (ss_process_wait(1, mux_shell_pids[id], &status) != SS_OK)
                 continue;
@@ -536,7 +581,8 @@ int ss_cli_execute_line(char* line) {
     memcpy(command_copy, line, length + 1u);
     char* tokens[SS_PROCESS_MAX_ARGS + 1u];
     int background;
-    int16_t count = ss_cli_parse_line(line, tokens, SS_PROCESS_MAX_ARGS + 1u, &background);
+    int16_t count =
+        ss_cli_parse_line(line, tokens, SS_PROCESS_MAX_ARGS + 1u, &background);
     if (count < 0) {
         print(count == SS_CLI_PARSE_LIMIT ? "Too many arguments.\r\n"
                                           : "Syntax error.\r\n");
@@ -618,7 +664,8 @@ static int shell_loop(void) {
     char line[64];
     unsigned used = 0;
     for (;;) {
-        if (ss_process_kill_pending()) return 0;
+        if (ss_process_kill_pending())
+            return 0;
         if (ss_cli_poll_ctrl_c()) {
             used = 0;
             print("^C\r\n> ");

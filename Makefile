@@ -5,7 +5,7 @@ SUBDIRS := tools/makedisk
 ASM_FORMATTER ?= asmfmt
 CLANG_FORMAT ?= clang-format
 
-.PHONY: $(TOPTARGETS) all debug format loc test test-asm test-qemu verify verify-check
+.PHONY: $(TOPTARGETS) all debug format loc test test-asm test-link test-qemu verify verify-check
 
 usage:
 	@echo "SSOS-9 build targets (preemptive only):"
@@ -26,6 +26,7 @@ all: tools/makedisk
 	$(MAKE) -C ssos all
 	$(MAKE) -C apps/edit all
 	$(MAKE) -C apps/asm all
+	$(MAKE) -C apps/link all
 
 debug: all
 	$(MAKE) -C ssos debug
@@ -38,6 +39,7 @@ clean:
 	$(MAKE) -C ssos clean
 	$(MAKE) -C apps/edit clean
 	$(MAKE) -C apps/asm clean
+	$(MAKE) -C apps/link clean
 	$(MAKE) -C tests clean
 
 format:
@@ -60,6 +62,9 @@ test:
 test-asm:
 	$(MAKE) -C tests test-asm
 
+test-link:
+	$(MAKE) -C tests test-link
+
 test-qemu:
 	$(MAKE) -C tests test-qemu
 
@@ -70,5 +75,5 @@ verify-check:
 	@tools/verify-check.sh $(REF)
 
 # Run the preemptive verification suites and report the target hardware boundary.
-verify: all test test-asm test-qemu
+verify: all test test-asm test-link test-qemu
 	$(MAKE) verify-check

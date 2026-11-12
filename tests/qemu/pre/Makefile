@@ -19,7 +19,7 @@ SSOS = ../../../ssos/os
 TESTS = t01_round_robin t02_register_save t03_sleep_wakeup \
 	t04_main_task_register t05_timerd_cadence t06_idle_sleep t07_task_reap \
 	t08_cancel_waiting t09_arena t10_module_image t11_module_registry \
-	t12_interrupted_start t13_process_spawn
+	t12_interrupted_start t13_process_spawn t14_link_run t15_mux_flow
 COMMON_OBJS = stub.o sched.o syscall.o syscall_entry.o wakeups.o main_task.o arena.o image.o module.o builtin.o process.o \
 	system_arena_local.o preempt_ctx_switch.o
 
@@ -83,7 +83,11 @@ t13_xdf.o: $(SSOS)/fs/xdf.c $(SSOS)/fs/xdf.h
 	$(MAKE) -C ../../../examples/hello all
 ../../../apps/edit/build/edit.s9m: FORCE
 	$(MAKE) -C ../../../apps/edit all
-hello_image.o: hello_image.s ../../../examples/hello/build/hello.s9m ../../../examples/hello/build/hello-data.xdf ../../../apps/edit/build/edit.s9m ../../../apps/asm/build/asm.s9m ../../../tests/asm/qemu-prog.s build/asm-expected.bin
+../../../apps/link/build/ld.s9m: FORCE
+	$(MAKE) -C ../../../apps/link all
+../../../tests/build/link-host: FORCE
+	$(MAKE) -C ../../../tests test-link-host
+hello_image.o: hello_image.s ../../../examples/hello/build/hello.s9m ../../../examples/hello/build/hello-data.xdf ../../../apps/edit/build/edit.s9m ../../../apps/asm/build/asm.s9m ../../../apps/link/build/ld.s9m ../../../tests/asm/qemu-prog.s build/asm-expected.bin ../../../tests/asm/link/start.s ../../../tests/asm/link/main.s ../../../tests/asm/link/obj.s ../../../tests/asm/link/badmain.s build/link-expected.bin
 	$(CC) $(ASFLAGS) -c $< -o $@
 
 # Expected S9O1 object for the on-target assembler test, produced by the
@@ -91,6 +95,19 @@ hello_image.o: hello_image.s ../../../examples/hello/build/hello.s9m ../../../ex
 build/asm-expected.bin: ../../../tests/asm/qemu-prog.s ../../../tests/build/asm-host
 	@mkdir -p build
 	../../../tests/build/asm-host $< $@
+# Expected S9M1 image for the on-target linker test: the three link-sample
+# objects assembled by the host assembler core and linked by the host
+# linker core (tests/Makefile test-link-host), byte-identical to the
+# on-target `ld` run.
+build/link-expected.bin: ../../../tests/asm/link/start.s ../../../tests/asm/link/main.s ../../../tests/asm/link/obj.s ../../../tests/build/asm-host ../../../tests/build/link-host
+	@mkdir -p build/golden
+	../../../tests/build/asm-host ../../../tests/asm/link/start.s build/link-start.o
+	../../../tests/build/asm-host ../../../tests/asm/link/main.s build/link-main.o
+	../../../tests/build/asm-host ../../../tests/asm/link/obj.s build/link-obj.o
+	@# The image stores the module name taken from the output base name,
+	@# so link into PROG.S9M to match the on-target `ld PROG.S9M ...` run.
+	../../../tests/build/link-host build/golden/PROG.S9M build/link-start.o build/link-main.o build/link-obj.o
+	mv build/golden/PROG.S9M $@
 t02_register_save_entry.o: t02_register_save.s
 	$(CC) $(ASFLAGS) -c $< -o $@
 
@@ -113,6 +130,12 @@ t12_interrupted_start.elf: t12_interrupted_start.o t12_interrupted_start_entry.o
 
 t13_process_spawn.elf: t13_process_spawn.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) ../common/linker.ld
 	$(CC) $(CFLAGS) t13_process_spawn.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) $(LDFLAGS) -o $@
+
+t14_link_run.elf: t14_link_run.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) ../common/linker.ld
+	$(CC) $(CFLAGS) t14_link_run.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) $(LDFLAGS) -o $@
+
+t15_mux_flow.elf: t15_mux_flow.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) ../common/linker.ld
+	$(CC) $(CFLAGS) t15_mux_flow.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) $(LDFLAGS) -o $@
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@

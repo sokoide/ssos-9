@@ -76,6 +76,26 @@ the object built by `asm-host` on the host. Like the rest of the QEMU suite,
 this runs under the QEMU port of the Timer D context-switch path; it does
 not run the assembler on real hardware.
 
+The linker (`apps/link`, contract `docs/linker-contract.md`) is verified at
+two host levels plus one on-target level. `test-link-host` builds
+`build/link-host`, a host entry point sharing the module core, with the
+same `-Wall -Wextra -Werror` profile. `test-link-golden` (`tests/link_golden.py`)
+runs two checks: a cross-comparison that links `tests/asm/link/golden/gcross`
+with both `link-host` and `m68k-xelf-ld` and requires identical text bytes
+(only the profile GNU ld can express: text concatenation, PC16 folding,
+constant data, every object's text a multiple of 4), and a self-check where
+an independent mini-linker in the script computes the expected S9M1 image
+(header fields, code, init data, fixups, CRC) for `tests/asm/link` sample
+sources exercising A5 displacement folding, cross-object PC16, and a CODE32
+fixup; `badmain.s` must fail with an undefined-symbol diagnostic and leave
+no output file. In QEMU, t14 stores the sample sources on FAT16, runs the
+real `asm` and `ld` modules, byte-compares `PROG.S9M` against the host-built
+golden, spawns the linked program, and checks exit status 27, its
+`LNK\n` console output, and the undefined-symbol negative case.
+`make test` includes `test-link-host`; the CLI `run` command falls back to
+registering `NAME` or `NAME.S9M` from the mounted FAT16 root when the
+registry and built-ins do not have it.
+
 For the interactive console smoke test, run `source ~/.elf2x68k` and
 `make -C tests/target`. Start the current standalone launcher from Human68k,
 then insert `tests/target/build/console.xdf` in drive 1. In SSOS-9, run
