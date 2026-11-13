@@ -1,7 +1,7 @@
 # XEiJ で確認すべき統合テスト計画
 
-更新日: 2026-11-13。状態: **A1〜A3・B1〜B4・C1〜C3・C5・D1〜D4・E3・F1・F2・G1実装・実行済み
-(C4を除きPASS)。C4は実行済み・エミュレータキー経路の制限でFAIL (下記)。E1・E2は未実装**。
+更新日: 2026-11-13。状態: **A1〜A3・B1〜B4・C1〜C3・C5・D1〜D4・E1・E3・F1・F2・G1実装・実行済み
+(C4を除きPASS)。C4は実行済み・エミュレータキー経路の制限でFAIL (下記)。E2は実装済み・未実行**。
 `smount` は Human68k 形式の先頭パーティションのみを受け付け、MS-DOS 型 FAT16 は拒否される。
 パスの 8.3 名照合は大文字小文字を区別しない (Human68k 側の作成・検索の挙動に合わせている)。
 
@@ -205,6 +205,19 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
   出力名はゲストが typekey で入力できる小文字に合わせる。モジュール画像
   (`EDIT/ASM/LD/CONSOLE.S9M`) は `A:\TEST` 内の初回配置を再利用し、ビルド更新後の
   再配置は手作業で行う。実行済み (2026-11-13、golden バイト一致)。
+- E1: `tools/emulator-itest.sh e1`。mux の F1 で edit により簡略ソース 3 本を
+  作成 (`n` → `i` → タイプ → ESC → `:wq`)、F2 で `run test/asm` ×3 +
+  `run test/ld`、F3 で `run test/<prog>` のフォールバック起動 (`lnk`、status 27)
+  を行う。ディスクフォールバックの `run` は終了後も登録イメージを残すため、
+  arena 比較前に `unload` で edit/asm/ld/生成プログラムを解放する。
+  cleanup は exact 名の `del` (確認プロンプトなし) で行い、`dir` 再取得を
+  ポーリングして消えたことを確認する。実行済み (2026-11-13、PASS、
+  arena baseline `253908/253908` に復帰)。
+- E2: `tools/emulator-itest.sh e2`。`tests/asm/link/badmain.s` (未定義シンボル
+  参照) を `A:\TEST` に配置して target 上で asm し、`run test/ld` が
+  `Undefined symbol missing` と status 1 で止まること、生成ファイルが未作成で
+  あることを Human68k 側で確認する。`h68_absent` は単発照合が stale 画面と
+  競合するため `dir` 再取得をポーリングする。
 - F1: `tools/emulator-itest.sh f1`。`help&` `ps&` `mem&` を投入し、3 出力が
   行単位で崩れず揃うこと、`wait PID` で回収し `mem` が baseline に戻ることを
   確認する (`wait` は PID 必須で引数なしには対応しない)。

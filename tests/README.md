@@ -352,3 +352,29 @@ The accumulated d1-d4 artifacts were cleared from `A:\TEST` with Human68k
 wildcard deletes, keeping only the module images (bg/console/edit/asm/ld
 .S9M); Human68k confirms each wildcard delete once with `<Y/N>`, and the
 itest's shift_key covers `?` (X6iJ has no `question` key name).
+
+On 2026-11-13, E1 passed: with the multiplexer running, window 1 (F1)
+created three linker-sample sources through `run test/edit` (simplified
+lowercase t14-style sources typed into new buffers, `:wq` each), window 2
+(F2) assembled them with `run test/asm` x3 and linked `test/e1p<id>.s9m`
+with `run test/ld`, and window 3 (F3) executed it through the volume
+fallback (`lnk`, exit status 27). Back on window 1 the four disk-fallback
+registered images (edit, asm, ld, and the linked program) were unloaded by
+name before the arena comparison, which then matched the pre-test baseline
+exactly (`free_bytes=253908 largest_free=253908`). After a guest reset the
+script deleted the seven artifacts from `A:\TEST` by exact name (Human68k
+does not prompt for exact-name deletes; wildcard deletes ask `<Y/N>` once
+per file) and polled the directory until the rows were gone. Standalone
+SHA-256
+`3ba86b82f4aec11b7a150085784a67f2659b0086fb1b6ea864a40cbf07537bdd`.
+
+Three operational findings came out of the E1 runs: `typekey` also drops
+the underscore keycode (now sent as a held presskey/releasekey like yen),
+long editor typing streams lose their tail at full pipe speed (the script
+paces characters at 0.05 s and settles every six lines), and a foreground
+`run` that resolves through the disk fallback leaves its registered image
+in the module registry after the process exits, so arena-before/after
+comparisons must `unload` those images first. The absence check after
+cleanup polls fresh `dir` captures because a single check can race a stale
+clipboard frame. d2/d3/d4 gained the same post-run exact-name cleanup.
+E2 is implemented in the same script revision and runs separately.

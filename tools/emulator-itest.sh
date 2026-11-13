@@ -15,6 +15,8 @@
 #   d2  edit saves and reloads a new file in A:\TEST
 #   d3  on-target assembler output matches the host build
 #   d4  ld links, run fallback executes, image matches host golden
+#   e1  mux three-window edit -> asm x3 -> ld -> run
+#   e2  linker rejects an undefined symbol and writes no output
 #   e3  builtin hello real-PIC launch
 #   f1  background builtins (help&, ps&, mem&) interleave cleanly and reap
 #   f2  background module output continues across mux window switches
@@ -30,12 +32,12 @@ frontmost() {
     osascript -e 'tell application "System Events" to set frontmost of process "java" to true' >/dev/null || fail 'cannot activate XEiJ'
 }
 key() { printf 'typekey %s\n' "$1" > "$PIPE" || fail 'cannot write control pipe'; sleep 0.1; }
-# XEiJ's instant typekey drops the yen keycode; hold it just under the
-# keyboard auto-repeat delay so exactly one backslash is delivered.
-yen_key() {
-    printf 'presskey yen\n' > "$PIPE" || fail 'cannot write control pipe'
+# XEiJ's instant typekey drops some keycodes (yen, underline); hold them
+# just under the keyboard auto-repeat delay so exactly one is delivered.
+hold_key() {
+    printf 'presskey %s\n' "$1" > "$PIPE" || fail 'cannot write control pipe'
     sleep 0.15
-    printf 'releasekey yen\n' > "$PIPE" || fail 'cannot write control pipe'
+    printf 'releasekey %s\n' "$1" > "$PIPE" || fail 'cannot write control pipe'
     sleep 0.1
 }
 shift_key() { # shifted glyph: hold shift, tap the key, release
@@ -55,7 +57,14 @@ type_char() {
         ',') key comma ;;
         '/') key slash ;;
         '&') shift_key 6 ;;
-        '\') yen_key ;;
+        '"') shift_key 2 ;;
+        '#') shift_key 3 ;;
+        '%') shift_key 5 ;;
+        '(') shift_key 8 ;;
+        ')') shift_key 9 ;;
+        '_') hold_key underline ;;
+        ';') key semicolon ;;
+        '\') hold_key yen ;;
         $'\n') key return ;;
         *) key "$1" ;;
     esac
@@ -391,6 +400,47 @@ norm_text() { # wrap-insensitive text: drop every space, CR, and LF
 started_pid() { # extract the last "Started ... PID n" number from screen $s
     print -r -- "$1" | grep -o 'Started \(module\|command\) as PID [0-9]*' |
         grep -o '[0-9]*$' | tail -1
+}
+type_editor_lines() { # type_editor_lines <text>; types the lines into the
+    # editor in insert mode, one return key per line. Long streams lose
+    # their tail when typed at full speed, so pace the characters and let
+    # the editor drain every few lines.
+    local line c n=0
+    for line in ${(f)1}; do
+        for c in ${(s::)line}; do
+            type_char "$c"
+            sleep 0.05
+        done
+        key return
+        sleep 0.3
+        if (( (++n % 6) == 0 )); then sleep 1; fi
+    done
+}
+h68_del() { # h68_del <NAME.EXT>...; delete exact files in A:\TEST on
+    # Human68k (exact names never trigger the wildcard <Y/N> prompt)
+    local n
+    for n in "$@"; do
+        type_cmd "del a:\\test\\$n"
+        sleep 1
+    done
+}
+h68_absent() { # h68_absent <name> <ext> <timeout>; poll the A:\TEST listing
+    # until the row is gone. A single check races a stale screen copy (the
+    # Option-Shift-C keystroke can be lost, leaving the previous frame on the
+    # clipboard), so keep refreshing the listing.
+    local name=${1:l} ext=${2:l} tmo=$3 waited=0
+    while (( waited < tmo )); do
+        sleep 2
+        waited=$((waited + 2))
+        type_cmd 'cls'
+        type_cmd 'dir a:\\test'
+        sleep 1
+        snap
+        if ! print -r -- "$s" | tr '\r' '\n' | grep -Eiq "^${name}[ ]+${ext}"; then
+            return 0
+        fi
+    done
+    fail "$name.$ext still exists in A:\\TEST after ${tmo}s" "$s"
 }
 
 run_d1() {
@@ -814,6 +864,11 @@ run_d2() {
     type_cmd "type a:\\test\\$name.TXT"
     wait_line 'd2line1' 10 || fail 'd2: Human68k cannot read the saved file' "$s"
     print -r -- "$s" | grep -Fq 'd2line2' || fail 'd2: Human68k file lacks d2line2' "$s"
+    h68_del "${(U)name}.TXT"
+    type_cmd 'cls'
+    type_cmd 'dir a:\\test'
+    wait_screen 'A:\\>' 8 || fail 'd2: dir did not complete' "$s"
+    h68_absent "$name" 'txt' 12
     print "PASS d2: edit saved and reloaded A:\\TEST\\$name.TXT"
 }
 
@@ -887,6 +942,13 @@ run_d3() {
         print "d3: ${host_file:t} byte-identical to host build"
     done
     rm -rf "$exp"
+    h68_del "SA${(U)suf}.S" "MB${(U)suf}.S" "OB${(U)suf}.S" \
+        "SA${(U)suf}.O" "MB${(U)suf}.O" "OB${(U)suf}.O"
+    type_cmd 'cls'
+    type_cmd 'dir a:\\test'
+    wait_screen 'A:\\>' 8 || fail 'd3: dir did not complete' "$s"
+    h68_absent "sa$suf" 'o' 12
+    h68_absent "ob$suf" 'o' 12
     print 'PASS d3: three on-target objects match the host assembler'
 }
 
@@ -927,6 +989,13 @@ run_d4() {
         fail "d4: guest ${host_file:t} differs from the host golden" \
             "$(cmp "$host_file" "$exp/${prog:l}.s9m" 2>&1 | head -2)"
     rm -rf "$exp"
+    h68_del "SA${(U)suf}.S" "MB${(U)suf}.S" "OB${(U)suf}.S" \
+        "SA${(U)suf}.O" "MB${(U)suf}.O" "OB${(U)suf}.O" "${(U)prog}.S9M"
+    type_cmd 'cls'
+    type_cmd 'dir a:\\test'
+    wait_screen 'A:\\>' 8 || fail 'd4: dir did not complete' "$s"
+    h68_absent "sa$suf" 'o' 12
+    h68_absent "$prog" 's9m' 12
     print "PASS d4: ld + run fallback produced the golden image; status 27 and LNK"
 }
 
@@ -1052,6 +1121,201 @@ run_g1() {
     print "PASS g1: five spawn/kill/wait cycles; arena back to $base"
 }
 
+# Simplified t14-style sources typed through the editor (lowercase, no
+# comments): START entry calls main and exits with its status, MAIN prints
+# "lnk" and returns base(7) + factor(10) doubled by helper = 27, OBJ holds
+# helper and factor. The assembler/linker are case-insensitive on mnemonics
+# and symbols, so the typed lowercase form links and runs identically.
+E1_START='.text
+.globl _start
+.extern main
+_start:
+bsr.w main
+move.l %d0, %d1
+moveq #4, %d0
+trap #0'
+
+E1_OBJ='.text
+.globl helper
+helper:
+add.l factor(%a5), %d0
+rts
+.data
+.globl factor
+factor:
+.dc.l 10'
+
+E1_MAIN='.text
+.globl main
+.extern helper
+.extern factor
+main:
+move.l base_val(%a5), %d0
+add.l factor(%a5), %d0
+bsr.w helper
+move.l %d0, result(%a5)
+lea msg(%pc), %a0
+move.l %a0, wt_buf(%a5)
+lea wt(%a5), %a1
+move.l %a1, %d1
+moveq #35, %d0
+trap #0
+move.l result(%a5), %d0
+rts
+msg:
+.ascii "lnk\n"
+.data
+base_val:
+.dc.l 7
+wt:
+.dc.l 1
+wt_buf:
+.dc.l 0
+wt_len:
+.dc.l 4
+.bss
+result:
+.space 4'
+
+run_e1() {
+    local asm_module=apps/asm/build/asm.s9m ld_module=apps/link/build/ld.s9m
+    [[ -f "$asm_module" && -f "$ld_module" ]] || fail 'e1: missing asm/ld module images (run make all)'
+    local suf=$(printf '%04x' $(( $(date +%s) % 65536 )))
+    local srcs="e1s$suf" main="e1m$suf" obj="e1o$suf" prog="e1p$suf"
+    local base after
+    s=$(screen)
+    print -r -- "$s" | grep -Fq 'A:\>' || fail 'e1: initial Human68k prompt missing' "$s"
+    h68_prep
+    place_in_test "$asm_module" ASM.S9M
+    place_in_test "$ld_module" LD.S9M
+    boot_mount
+    type_cmd 'mux'
+    wait_screen 'Multiplexer:' 8 || fail 'e1: mux did not start' "$s"
+    key f1
+    sleep 1.5
+    type_cmd 'mem' # baseline after the mux shells exist, so the comparison
+    wait_screen 'arena free_bytes=' 8 || fail 'e1: no arena baseline' "$s"
+    s=$(screen)
+    base=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
+    [[ -n $base ]] || fail 'e1: cannot parse arena baseline' "$s"
+
+    print '== E1 window 1: create three sources with edit =='
+    local stem text
+    for stem in $srcs $main $obj; do
+        case $stem in
+            ${srcs}) text=$E1_START ;;
+            ${main}) text=$E1_MAIN ;;
+            ${obj}) text=$E1_OBJ ;;
+        esac
+        type_cmd "run test/edit test/$stem.s"
+        wait_screen 'Cannot read file.' 12 || fail "e1: editor did not prompt for $stem.s" "$s"
+        key n
+        sleep 1.5
+        key i
+        sleep 0.5
+        type_editor_lines "$text"
+        key esc
+        sleep 1
+        type_cmd ':wq'
+        wait_screen 'exited with status 0' 30 || fail "e1: editor did not save $stem.s" "$s"
+        wait_line '> ' 10 || fail "e1: no prompt after saving $stem.s" "$s"
+        print "e1: created $stem.s via edit"
+    done
+
+    print '== E1 window 2: asm x3 + ld =='
+    key f2
+    sleep 1.5
+    type_cmd "run test/asm test/$srcs.s test/$srcs.o"
+    wait_screen "Wrote test/$srcs.o" 30 || fail "e1: asm $srcs failed" "$s"
+    wait_line '> ' 10 || fail "e1: no prompt after asm $srcs" "$s"
+    type_cmd "run test/asm test/$main.s test/$main.o"
+    wait_screen "Wrote test/$main.o" 30 || fail "e1: asm $main failed" "$s"
+    wait_line '> ' 10 || fail "e1: no prompt after asm $main" "$s"
+    type_cmd "run test/asm test/$obj.s test/$obj.o"
+    wait_screen "Wrote test/$obj.o" 30 || fail "e1: asm $obj failed" "$s"
+    wait_line '> ' 10 || fail "e1: no prompt after asm $obj" "$s"
+    type_cmd "run test/ld test/$prog.s9m test/$srcs.o test/$main.o test/$obj.o"
+    wait_screen "Wrote test/$prog.s9m" 30 || fail 'e1: ld did not write the image' "$s"
+    wait_line '> ' 10 || fail 'e1: no prompt after ld' "$s"
+    print 'e1: assembled and linked on window 2'
+
+    print '== E1 window 3: run the linked program =='
+    key f3
+    sleep 1.5
+    type_cmd "run test/$prog"
+    wait_screen 'lnk' 15 || fail 'e1: linked program did not print lnk' "$s"
+    wait_screen 'exited with status 27' 10 || fail 'e1: program did not exit 27' "$s"
+    print 'e1: program reaped with status 27 and lnk output'
+
+    print '== E1 window 1: unload the registered images, then compare =='
+    key f1
+    sleep 1.5
+    # Foreground `run` resolves through the disk fallback and keeps the
+    # registered image (edit/asm/ld plus the linked program) after the
+    # process exits; unload them so the arena is comparable again.
+    local mod
+    for mod in edit asm ld $prog; do
+        type_cmd "unload $mod"
+        wait_screen 'Module unloaded.' 8 || fail "e1: unload $mod failed" "$s"
+        sleep 0.3
+    done
+    type_cmd 'mem'
+    sleep 1
+    s=$(screen)
+    after=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
+    [[ "$after" == "$base" ]] || fail 'e1: arena did not return to baseline' \
+        "baseline: $base"$'\n'"after: $after"
+    ssos_exit
+    print '== E1 cleanup on Human68k =='
+    guest_reset
+    type_cmd 'dir a:\test'
+    wait_screen 'A:\>' 8 || fail 'e1: dir did not complete' "$s"
+    h68_del "${(U)srcs}.S" "${(U)main}.S" "${(U)obj}.S" \
+        "${(U)srcs}.O" "${(U)main}.O" "${(U)obj}.O" "${(U)prog}.S9M"
+    type_cmd 'cls'
+    type_cmd 'dir a:\test'
+    wait_screen 'A:\>' 8 || fail 'e1: dir did not complete' "$s"
+    h68_absent "${srcs}" 's' 12
+    h68_absent "${main}" 'o' 12
+    print "PASS e1: edit->asm->ld->run across mux windows; lnk, status 27, arena $base"
+}
+
+run_e2() {
+    local asm_module=apps/asm/build/asm.s9m ld_module=apps/link/build/ld.s9m
+    [[ -f "$asm_module" && -f "$ld_module" ]] || fail 'e2: missing asm/ld module images (run make all)'
+    local suf=$(printf '%04x' $(( ($(date +%s) + 11) % 65536 )))
+    local bad="e2b$suf" prog="e2p$suf"
+    s=$(screen)
+    print -r -- "$s" | grep -Fq 'A:\>' || fail 'e2: initial Human68k prompt missing' "$s"
+    h68_prep
+    place_in_test "$asm_module" ASM.S9M
+    place_in_test "$ld_module" LD.S9M
+    cp tests/asm/link/badmain.s "$HOME/tmp/$bad.S"
+    place_in_test "$HOME/tmp/$bad.S" "${(U)bad}.S"
+    boot_mount
+    type_cmd "run test/asm test/$bad.s test/$bad.o"
+    wait_screen "Wrote test/$bad.o" 30 || fail 'e2: asm of the negative sample failed' "$s"
+    wait_line '> ' 10 || fail 'e2: no prompt after asm' "$s"
+    print '== E2 ld must reject the undefined symbol =='
+    type_cmd "run test/ld test/$prog.s9m test/$bad.o"
+    wait_screen 'Undefined symbol missing' 20 || fail 'e2: undefined symbol not reported' "$s"
+    wait_screen 'exited with status 1' 10 || fail 'e2: ld did not exit nonzero' "$s"
+    wait_line '> ' 10 || fail 'e2: no prompt after the failed ld' "$s"
+    print 'e2: ld reported Undefined symbol missing and exited 1'
+    ssos_exit
+    print '== E2 verify the output file was not created =='
+    guest_reset
+    type_cmd 'dir a:\test'
+    wait_screen 'A:\>' 8 || fail 'e2: dir did not complete' "$s"
+    h68_absent "$prog" 's9m' 12
+    h68_del "${(U)bad}.S" "${(U)bad}.O"
+    type_cmd 'cls'
+    type_cmd 'dir a:\test'
+    wait_screen 'A:\>' 8 || fail 'e2: dir did not complete' "$s"
+    h68_absent "$bad" 'o'
+    print 'PASS e2: undefined symbol rejected, no output file, artifacts cleaned'
+}
+
 case ${1:-} in
     a2) run_a2 ;;
     a3)
@@ -1074,9 +1338,11 @@ case ${1:-} in
     d2) run_d2 ;;
     d3) run_d3 ;;
     d4) run_d4 ;;
+    e1) run_e1 ;;
+    e2) run_e2 ;;
     e3) run_e3 ;;
     f1) run_f1 ;;
     f2) run_f2 ;;
     g1) run_g1 ;;
-    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1|b2|b3|b4|c1|c2|c3|c4|c5|d1|d2|d3|d4|e3|f1|f2|g1' ;;
+    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1|b2|b3|b4|c1|c2|c3|c4|c5|d1|d2|d3|d4|e1|e2|e3|f1|f2|g1' ;;
 esac
