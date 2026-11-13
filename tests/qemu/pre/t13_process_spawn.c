@@ -421,6 +421,9 @@ int main(void) {
         call_sys(SS9_SYS_CONSOLE_LOCATE, 80u << 16) != SS9_ERR_PARAM ||
         call_sys(SS9_SYS_CONSOLE_LOCATE, 31u) != SS9_ERR_PARAM)
         fail("console position syscall");
+    if (call_sys(SS9_SYS_CONSOLE_SIZE, 0) != (int32_t)((80u << 16) | 25u) ||
+        call_sys(SS9_SYS_CONSOLE_SIZE, 1) != SS9_ERR_PARAM)
+        fail("console size syscall");
 
     set_counter(first.data_base, 1000);
     if (get32(second.data_base + 8) != 0)

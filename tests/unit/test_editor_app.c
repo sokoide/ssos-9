@@ -10,10 +10,14 @@ static uint8_t file_data[16384], staged[16384];
 static uint32_t file_size, read_offset, staged_size;
 static int exists, fail_write, write_open, commits, fail_open_read, saw_failure, saw_unsaved;
 static uint16_t screen_row, screen_column;
-static uint8_t screen[25][80], last_screen[25][80];
+static uint8_t screen[31][80], last_screen[31][80];
+static uint16_t fake_rows = 25;
 
 void ss9_test_pause(void) { abort(); }
 int32_t ss9_console_key(void) { return *keys ? (uint8_t)*keys++ : -1; }
+int32_t ss9_console_size(void) {
+    return (int32_t)((80u << 16) | fake_rows);
+}
 int32_t ss9_console_clear(void) {
     memcpy(last_screen, screen, sizeof(screen));
     memset(screen, ' ', sizeof(screen));
@@ -21,7 +25,7 @@ int32_t ss9_console_clear(void) {
     return 0;
 }
 int32_t ss9_console_locate(uint16_t x, uint16_t y) {
-    assert(x < 80 && y < 25); screen_row = y; screen_column = x; return 0;
+    assert(x < 80 && y < 31); screen_row = y; screen_column = x; return 0;
 }
 int32_t ss9_open_read(const char* name) {
     assert(!strcmp(name, "TEST.S"));
@@ -99,5 +103,16 @@ int main(void) {
     keys = "niZ\033:wq\r:q!\r";
     assert(editor_main(2, argv) == 0);
     assert(commits == 3 && file_size == 13 && !memcmp(file_data, "YXhello\nworld", 13));
+    /* A 31-row console region (31 kHz text screen) shifts the status and
+     * command lines to rows 29/30 and widens the text area to 29 rows. */
+    fake_rows = 31;
+    exists = 0;
+    keys = "niedit\033:wq\r";
+    assert(editor_main(2, argv) == 0);
+    assert(commits == 4 && file_size == 4 && !memcmp(file_data, "edit", 4));
+    assert(!memcmp(last_screen[0], "edit", 4));
+    /* the last render before :wq exits shows COMMAND mode with the name */
+    assert(!memcmp(last_screen[29], "COMMAND *TEST.S", 15));
+    assert(!memcmp(last_screen[30], ":wq", 3));
     return 0;
 }

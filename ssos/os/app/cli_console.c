@@ -135,6 +135,13 @@ void ss_cli_console_clear(void) {
     ss_iocs_unlock();
 }
 
+uint32_t ss_cli_console_size(void) {
+    ss_iocs_lock();
+    uint8_t rows = mux_enabled ? mux.rows : console_region_rows();
+    ss_iocs_unlock();
+    return ((uint32_t)SS_MUX_COLUMNS << 16) | rows;
+}
+
 int ss_cli_console_locate(uint32_t x, uint32_t y) {
     /* Without the multiplexer the bound is the tallest hardware text screen;
      * IOCS clips to the live console region. */

@@ -29,7 +29,8 @@ enum {
     SS9_SYS_FILE_STORE = 0x25,
     SS9_SYS_CONSOLE_CLEAR = 0x26,
     SS9_SYS_CONSOLE_LOCATE = 0x27,
-    SS9_SYS_CONSOLE_KEY = 0x28
+    SS9_SYS_CONSOLE_KEY = 0x28,
+    SS9_SYS_CONSOLE_SIZE = 0x29
 };
 
 #define SS9_ABI_VERSION 1u
@@ -50,10 +51,13 @@ enum {
  * console region is narrower and IOCS clips locations beyond it. */
 #define SS9_CONSOLE_ROWS 31u
 
-/* CONSOLE_CLEAR and CONSOLE_KEY take scalar zero. CONSOLE_LOCATE packs x in
- * the high 16 bits and y in the low 16 bits. CONSOLE_KEY is nonblocking:
- * ASCII returns as 0x00xx, non-ASCII IOCS scan codes as scan << 8, and -1 means
- * no key or the caller is not the foreground process. */
+/* CONSOLE_CLEAR, CONSOLE_KEY, and CONSOLE_SIZE take scalar zero.
+ * CONSOLE_LOCATE packs x in the high 16 bits and y in the low 16 bits.
+ * CONSOLE_SIZE returns the live console region as columns in the high 16
+ * bits and rows in the low 16 bits (the IOCS B_CONSOL region; 25 rows in
+ * 15 kHz modes, 31 rows in 31 kHz modes). CONSOLE_KEY is nonblocking:
+ * ASCII returns as 0x00xx, non-ASCII IOCS scan codes as scan << 8, and -1
+ * means no key or the caller is not the foreground process. */
 
 typedef struct {
     uint32_t name;

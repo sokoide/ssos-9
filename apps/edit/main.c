@@ -1,20 +1,36 @@
 #include "buffer.h"
 #include "ssos9/user.h"
 
-#define TEXT_ROWS 23u
-#define TEXT_COLUMNS 79u
+/* Line layout follows the live console region (see ss9_console_size): the
+ * text area takes rows - 2 lines, then one status row and one command row
+ * fill the screen. Rows stay clear of the bottom-right cell, which IOCS
+ * cannot write without scrolling the text screen. */
+#define TEXT_ROWS_MAX 29u /* SS9_CONSOLE_ROWS - 2 */
+#define TEXT_COLUMNS_MAX 79u /* SS9_CONSOLE_COLUMNS - 1 */
 
 typedef struct {
     EditBuffer text;
     const char* name;
     uint32_t top_line;
     uint32_t left_column;
+    uint16_t text_rows; /* console rows - 2; status and command follow */
+    uint16_t width; /* writable columns, console columns - 1 */
     uint8_t existing;
     uint8_t mode; /* 0 normal, 1 insert, 2 command */
     uint8_t command_length;
     char command[5];
     const char* message;
 } Editor;
+
+static void measure(Editor* e) {
+    int32_t size = ss9_console_size();
+    uint16_t columns = (uint16_t)((uint32_t)size >> 16);
+    uint16_t rows = (uint16_t)((uint32_t)size & 0xffffu);
+    if (!columns || columns > SS9_CONSOLE_COLUMNS) columns = SS9_CONSOLE_COLUMNS;
+    if (rows < 3u || rows > SS9_CONSOLE_ROWS) rows = SS9_CONSOLE_ROWS;
+    e->width = columns - 1u;
+    e->text_rows = rows - 2u;
+}
 
 static uint32_t length(const char* text) {
     uint32_t n = 0;
@@ -87,49 +103,50 @@ static void render(Editor* e) {
     for (uint32_t i = 0; i < e->text.cursor; i++)
         if (e->text.data[i] == '\n') line++;
     if (line < e->top_line) e->top_line = line;
-    if (line >= e->top_line + TEXT_ROWS) e->top_line = line - TEXT_ROWS + 1u;
+    if (line >= e->top_line + e->text_rows)
+        e->top_line = line - e->text_rows + 1u;
     uint32_t column = e->text.cursor - edit_line_start(&e->text, e->text.cursor);
     if (column < e->left_column) e->left_column = column;
-    if (column >= e->left_column + TEXT_COLUMNS)
-        e->left_column = column - TEXT_COLUMNS + 1u;
+    if (column >= e->left_column + e->width)
+        e->left_column = column - e->width + 1u;
     for (uint32_t n = 0; n < e->top_line && pos < e->text.length; n++) {
         pos = edit_line_end(&e->text, pos);
         if (pos < e->text.length) pos++;
     }
-    for (uint16_t row = 0; row < TEXT_ROWS; row++) {
-        uint8_t output[TEXT_COLUMNS];
+    for (uint16_t row = 0; row < e->text_rows; row++) {
+        uint8_t output[TEXT_COLUMNS_MAX];
         uint32_t end = edit_line_end(&e->text, pos);
-        for (uint32_t x = 0; x < TEXT_COLUMNS; x++) {
+        for (uint32_t x = 0; x < e->width; x++) {
             uint32_t at = pos + e->left_column + x;
             uint8_t c = at < end ? e->text.data[at] : ' ';
             output[x] = c >= 32 && c <= 126 ? c : ' ';
         }
         (void)ss9_console_locate(0, row);
-        (void)ss9_write(1, output, TEXT_COLUMNS);
+        (void)ss9_write(1, output, e->width);
         pos = end < e->text.length ? end + 1u : end;
     }
-    uint8_t status[TEXT_COLUMNS];
-    for (uint32_t i = 0; i < TEXT_COLUMNS; i++) status[i] = ' ';
+    uint8_t status[TEXT_COLUMNS_MAX];
+    for (uint32_t i = 0; i < e->width; i++) status[i] = ' ';
     const char* mode = e->mode == 1 ? "INSERT" : e->mode == 2 ? "COMMAND" : "NORMAL";
     uint32_t at = 0;
-    for (uint32_t i = 0; mode[i] && at < TEXT_COLUMNS; i++) status[at++] = (uint8_t)mode[i];
+    for (uint32_t i = 0; mode[i] && at < e->width; i++) status[at++] = (uint8_t)mode[i];
     status[at++] = ' ';
     if (e->text.modified) status[at++] = '*';
     for (uint32_t i = 0; e->name[i] && at < 40; i++) status[at++] = (uint8_t)e->name[i];
     status[at++] = ' ';
     if (e->message)
-        for (uint32_t i = 0; e->message[i] && at < TEXT_COLUMNS; i++) status[at++] = (uint8_t)e->message[i];
-    (void)ss9_console_locate(0, 23);
-    (void)ss9_write(1, status, TEXT_COLUMNS);
-    uint8_t command[TEXT_COLUMNS];
-    for (uint32_t i = 0; i < TEXT_COLUMNS; i++) command[i] = ' ';
+        for (uint32_t i = 0; e->message[i] && at < e->width; i++) status[at++] = (uint8_t)e->message[i];
+    (void)ss9_console_locate(0, e->text_rows);
+    (void)ss9_write(1, status, e->width);
+    uint8_t command[TEXT_COLUMNS_MAX];
+    for (uint32_t i = 0; i < e->width; i++) command[i] = ' ';
     if (e->mode == 2) {
         command[0] = ':';
         for (uint32_t i = 0; i < e->command_length; i++) command[i + 1u] = (uint8_t)e->command[i];
     }
-    (void)ss9_console_locate(0, 24);
-    (void)ss9_write(1, command, TEXT_COLUMNS);
-    if (e->mode == 2) (void)ss9_console_locate((uint16_t)(e->command_length + 1u), 24);
+    (void)ss9_console_locate(0, e->text_rows + 1u);
+    (void)ss9_write(1, command, e->width);
+    if (e->mode == 2) (void)ss9_console_locate((uint16_t)(e->command_length + 1u), (uint16_t)(e->text_rows + 1u));
     else (void)ss9_console_locate((uint16_t)(column - e->left_column), (uint16_t)(line - e->top_line));
 }
 
@@ -153,6 +170,7 @@ int main(int argc, char** argv) {
     if (argc != 2) { (void)write_text("Usage: run edit FILE\r\n"); return 2; }
     edit_init(&e.text);
     e.name = argv[1];
+    measure(&e);
     e.top_line = e.left_column = 0;
     e.existing = e.mode = e.command_length = 0;
     e.message = 0;

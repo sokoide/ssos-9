@@ -224,6 +224,9 @@ int32_t ss_syscall_dispatch(uint32_t number, uint32_t request) {
     case SS9_SYS_CONSOLE_KEY:
         if (request) return SS9_ERR_PARAM;
         return ss_cli_foreground_key();
+    case SS9_SYS_CONSOLE_SIZE:
+        if (request) return SS9_ERR_PARAM;
+        return (int32_t)ss_cli_console_size();
     default: return SS9_ERR_NOSYS;
     }
 }

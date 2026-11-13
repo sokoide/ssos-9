@@ -24,6 +24,14 @@ static inline int32_t ss9_console_locate(uint16_t x, uint16_t y) {
     return (int32_t)d0;
 }
 
+/* Columns in the high 16 bits, rows in the low 16 bits of the result. */
+static inline int32_t ss9_console_size(void) {
+    register uint32_t d0 __asm__("d0") = SS9_SYS_CONSOLE_SIZE;
+    register uint32_t d1 __asm__("d1") = 0;
+    __asm__ volatile("trap #0" : "+d"(d0), "+d"(d1) : : "cc", "memory");
+    return (int32_t)d0;
+}
+
 static inline int32_t ss9_open(const char* name, uint32_t flags) {
     SS9OpenRequest request __attribute__((aligned(4))) = {
         (uint32_t)(uintptr_t)name, flags

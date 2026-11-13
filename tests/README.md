@@ -332,3 +332,23 @@ code, data, and fixups identical. The standalone SHA-256 for this run was
 `5f6bfc832778f1d9964d357f16ea8f5feb438722b541035aa81cf9f2658faf4d`.
 This verifies the Human68k-format storage path through the real assembler,
 linker, and run fallback in XEiJ; physical hardware was not tested.
+
+On 2026-11-13, the editor was moved from a hardcoded 25-row layout to the
+live console region, matching the multiplexer. A new `SS9_SYS_CONSOLE_SIZE`
+syscall (0x29, scalar zero; returns columns<<16|rows of the live IOCS
+B_CONSOL region, or the mux window height when the multiplexer is enabled)
+backs `ss9_console_size()`. The editor now lays out `rows - 2` text lines
+plus one status row and one command row at the bottom of the region: on the
+31 kHz text screen it fills 31 rows above the function-key row (verified on
+XEiJ: status on console row 29, command row 30), and synthetic harnesses
+still report 25 rows so t15 and the host editor tests are unchanged in
+behavior. The host app test gained a 31-row scenario asserting the shifted
+layout, and t13 asserts the syscall contract (80<<16|25 with the QEMU
+default region, nonzero request rejected). Host suites 45/45, QEMU 18/18.
+D2 rerun with the new editor passed (standalone SHA-256
+`3ba86b82f4aec11b7a150085784a67f2659b0086fb1b6ea864a40cbf07537bdd`,
+editor module `1d13a860713223979809609055702febbe70cd64b0f1e829f88fd7de7e6baa9a`).
+The accumulated d1-d4 artifacts were cleared from `A:\TEST` with Human68k
+wildcard deletes, keeping only the module images (bg/console/edit/asm/ld
+.S9M); Human68k confirms each wildcard delete once with `<Y/N>`, and the
+itest's shift_key covers `?` (X6iJ has no `question` key name).
