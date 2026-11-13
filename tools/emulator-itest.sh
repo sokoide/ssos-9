@@ -327,16 +327,18 @@ h68_prep() { # from A:\>: reset keywitch, ensure A:\TEST exists, leave a
     key return # flush any pending unentered line from earlier activity
     type_cmd 'keywitch -r'
     sleep 1
-    type_cmd 'dir a:\test'
-    wait_screen 'A:\>' 8 || fail 'dir a:\test did not complete' "$s"
+    # Relative paths (dir/mkdir test) keep backslashes out of the typed
+    # stream: the held yen key can double under auto-repeat races.
+    type_cmd 'dir test'
+    wait_screen 'A:\>' 8 || fail 'dir test did not complete' "$s"
     if print -r -- "$s" | grep -Eq 'ディレクトリ.*見つかり|irectory not found'; then
         print '== create A:\TEST =='
-        type_cmd 'mkdir a:\test'
+        type_cmd 'mkdir test'
         sleep 1
     fi
     type_cmd 'cls'
-    type_cmd 'dir a:\test'
-    wait_screen 'A:\>' 8 || fail 'dir a:\test did not complete' "$s"
+    type_cmd 'dir test'
+    wait_screen 'A:\>' 8 || fail 'dir test did not complete' "$s"
     return 0
 }
 place_in_test() { # place_in_test <host-file> <NAME.EXT>; stage on F: and copy
@@ -349,13 +351,17 @@ place_in_test() { # place_in_test <host-file> <NAME.EXT>; stage on F: and copy
         print "place: $name already in A:\\TEST (keeping existing copy)"
         return 0
     fi
-    [[ "$src" == "$HOME/tmp/$name" ]] || cp "$src" "$HOME/tmp/$name" ||
+    # macOS HFS+/APFS ignore name case, so a string compare misses the
+    # staged file when only the case differs; compare content instead.
+    cmp -s "$src" "$HOME/tmp/$name" || cp "$src" "$HOME/tmp/$name" ||
         fail "cannot stage $name in ~/tmp (F:)"
-    type_cmd "copy f:$name a:\\test\\$name"
+    type_cmd 'cd test'
+    type_cmd "copy f:$name $name"
     sleep 1
     type_cmd 'cls'
-    type_cmd 'dir a:\test'
+    type_cmd 'dir'
     wait_row "$stem" "$ext" 12 || fail "$name was not copied into A:\\TEST" "$s"
+    type_cmd 'cd ..'
     return 0
 }
 ssos_exit() { # exit SSOS-9 and confirm the Human68k prompt
@@ -419,27 +425,35 @@ type_editor_lines() { # type_editor_lines <text>; types the lines into the
 h68_del() { # h68_del <NAME.EXT>...; delete exact files in A:\TEST on
     # Human68k (exact names never trigger the wildcard <Y/N> prompt)
     local n
+    type_cmd 'cd test'
+    sleep 0.5
     for n in "$@"; do
-        type_cmd "del a:\\test\\$n"
+        type_cmd "del ${(L)n}"
         sleep 1
     done
+    type_cmd 'cd ..'
+    return 0
 }
 h68_absent() { # h68_absent <name> <ext> <timeout>; poll the A:\TEST listing
     # until the row is gone. A single check races a stale screen copy (the
     # Option-Shift-C keystroke can be lost, leaving the previous frame on the
     # clipboard), so keep refreshing the listing.
     local name=${1:l} ext=${2:l} tmo=$3 waited=0
+    type_cmd 'cd test'
+    sleep 0.5
     while (( waited < tmo )); do
         sleep 2
         waited=$((waited + 2))
         type_cmd 'cls'
-        type_cmd 'dir a:\\test'
+        type_cmd 'dir'
         sleep 1
         snap
         if ! print -r -- "$s" | tr '\r' '\n' | grep -Eiq "^${name}[ ]+${ext}"; then
+            type_cmd 'cd ..'
             return 0
         fi
     done
+    type_cmd 'cd ..'
     fail "$name.$ext still exists in A:\\TEST after ${tmo}s" "$s"
 }
 
@@ -465,23 +479,19 @@ run_d1() {
     # A:'s SCSI target read-only before any SSOS-9 write. Writes stay inside
     # A:\TEST.
     printf 'D1FIXTURE' > "$HOME/tmp/$fix.TXT" || fail 'd1: cannot write fixture to ~/tmp (F:)'
-    type_cmd 'dir a:\test'
-    wait_screen 'A:\>' 8 || fail 'd1: dir a:\test did not complete' "$s"
-    if print -r -- "$s" | grep -Eq 'ディレクトリ.*見つかり|irectory not found'; then
-        print '== D1 create A:\TEST =='
-        type_cmd 'mkdir a:\test'
-        sleep 1
-    fi
-    type_cmd "copy f:$fix.TXT a:\\test\\$fix.TXT"
+    h68_prep
+    type_cmd 'cd test'
+    type_cmd "copy f:$fix.TXT $fix.TXT"
     sleep 1
     type_cmd 'cls'
-    type_cmd 'dir a:\test'
+    type_cmd 'dir'
     # Match the dir row "name +ext" in the lowercased display so command
     # echoes cannot match.
     wait_row "${fix:l}" 'txt' 12 || fail "d1: fixture $fix.TXT missing in A:\\TEST" "$s"
     before=$(d1_names "$s")
-    type_cmd "type a:\\test\\$fix.TXT"
+    type_cmd "type $fix.TXT"
     wait_screen 'D1FIXTURE' 8 || fail 'd1: Human68k fixture content mismatch' "$s"
+    type_cmd 'cd ..'
 
     print '== D1 boot SSOS-9 =='
     boot_ssos || fail 'd1: ssos9 boot failed'
@@ -531,7 +541,8 @@ run_d1() {
     type_cmd 'keywitch -r'
     sleep 1
     type_cmd 'cls'
-    type_cmd 'dir a:\test'
+    type_cmd 'cd test'
+    type_cmd 'dir'
     # SSOS-9 stores the 8.3 name uppercase; Human68k keeps its own case.
     wait_row "$base" 'txt' 12 || fail 'd1: new file missing in A:\TEST after reset' "$s"
     print -r -- "$s" | tr '\r' '\n' | grep -Eiq "^${fix}[ ]+txt" ||
@@ -539,8 +550,9 @@ run_d1() {
     after=$(d1_names "$s" | grep -Eiv "^$base\.")
     [[ "$after" == "$before" ]] || fail 'd1: A:\TEST listing changed beyond the new file' \
         "before: $before"$'\n'"after: $after"
-    type_cmd "type a:\\test\\$upper.TXT"
+    type_cmd "type $upper.TXT"
     wait_line 'world' 12 || fail 'd1: Human68k does not see world' "$s"
+    type_cmd 'cd ..'
     print -r -- "$s" | grep -Fq 'hello' && fail 'd1: old content still visible after replace' "$s"
     print 'PASS d1: Human68k sees world and the A:\TEST listing is unchanged'
     print 'PASS d1'
@@ -861,13 +873,12 @@ run_d2() {
     ssos_exit
     print '== d2 verify from Human68k after reset =='
     guest_reset
-    type_cmd "type a:\\test\\$name.TXT"
+    type_cmd 'cd test'
+    type_cmd "type $name.TXT"
     wait_line 'd2line1' 10 || fail 'd2: Human68k cannot read the saved file' "$s"
     print -r -- "$s" | grep -Fq 'd2line2' || fail 'd2: Human68k file lacks d2line2' "$s"
+    type_cmd 'cd ..'
     h68_del "${(U)name}.TXT"
-    type_cmd 'cls'
-    type_cmd 'dir a:\\test'
-    wait_screen 'A:\\>' 8 || fail 'd2: dir did not complete' "$s"
     h68_absent "$name" 'txt' 12
     print "PASS d2: edit saved and reloaded A:\\TEST\\$name.TXT"
 }
@@ -925,10 +936,12 @@ run_d3() {
     ssos_exit
     print '== d3 fetch objects through F: after reset =='
     guest_reset
-    type_cmd "copy a:\\test\\sa$suf.o f:"
-    type_cmd "copy a:\\test\\mb$suf.o f:"
-    type_cmd "copy a:\\test\\ob$suf.o f:"
+    type_cmd 'cd test'
+    type_cmd "copy sa$suf.o f:"
+    type_cmd "copy mb$suf.o f:"
+    type_cmd "copy ob$suf.o f:"
     sleep 2
+    type_cmd 'cd ..'
     tests/build/asm-host tests/asm/link/start.s "$exp/SA$suf.O"
     tests/build/asm-host tests/asm/link/main.s "$exp/MB$suf.O"
     tests/build/asm-host tests/asm/link/obj.s "$exp/OB$suf.O"
@@ -944,9 +957,6 @@ run_d3() {
     rm -rf "$exp"
     h68_del "SA${(U)suf}.S" "MB${(U)suf}.S" "OB${(U)suf}.S" \
         "SA${(U)suf}.O" "MB${(U)suf}.O" "OB${(U)suf}.O"
-    type_cmd 'cls'
-    type_cmd 'dir a:\\test'
-    wait_screen 'A:\\>' 8 || fail 'd3: dir did not complete' "$s"
     h68_absent "sa$suf" 'o' 12
     h68_absent "ob$suf" 'o' 12
     print 'PASS d3: three on-target objects match the host assembler'
@@ -975,8 +985,10 @@ run_d4() {
     ssos_exit
     print '== d4 fetch and compare the linked image =='
     guest_reset
-    type_cmd "copy a:\\test\\$prog.s9m f:"
+    type_cmd 'cd test'
+    type_cmd "copy $prog.s9m f:"
     sleep 2
+    type_cmd 'cd ..'
     tests/build/asm-host tests/asm/link/start.s "$exp/SA$suf.O"
     tests/build/asm-host tests/asm/link/main.s "$exp/MB$suf.O"
     tests/build/asm-host tests/asm/link/obj.s "$exp/OB$suf.O"
@@ -991,9 +1003,6 @@ run_d4() {
     rm -rf "$exp"
     h68_del "SA${(U)suf}.S" "MB${(U)suf}.S" "OB${(U)suf}.S" \
         "SA${(U)suf}.O" "MB${(U)suf}.O" "OB${(U)suf}.O" "${(U)prog}.S9M"
-    type_cmd 'cls'
-    type_cmd 'dir a:\\test'
-    wait_screen 'A:\\>' 8 || fail 'd4: dir did not complete' "$s"
     h68_absent "sa$suf" 'o' 12
     h68_absent "$prog" 's9m' 12
     print "PASS d4: ld + run fallback produced the golden image; status 27 and LNK"
@@ -1183,7 +1192,7 @@ run_e1() {
     local suf=$(printf '%04x' $(( $(date +%s) % 65536 )))
     local srcs="e1s$suf" main="e1m$suf" obj="e1o$suf" prog="e1p$suf"
     local base after
-    s=$(screen)
+    snap
     print -r -- "$s" | grep -Fq 'A:\>' || fail 'e1: initial Human68k prompt missing' "$s"
     h68_prep
     place_in_test "$asm_module" ASM.S9M
@@ -1195,7 +1204,7 @@ run_e1() {
     sleep 1.5
     type_cmd 'mem' # baseline after the mux shells exist, so the comparison
     wait_screen 'arena free_bytes=' 8 || fail 'e1: no arena baseline' "$s"
-    s=$(screen)
+    snap
     base=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
     [[ -n $base ]] || fail 'e1: cannot parse arena baseline' "$s"
 
@@ -1261,20 +1270,15 @@ run_e1() {
     done
     type_cmd 'mem'
     sleep 1
-    s=$(screen)
+    snap
     after=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
     [[ "$after" == "$base" ]] || fail 'e1: arena did not return to baseline' \
         "baseline: $base"$'\n'"after: $after"
     ssos_exit
     print '== E1 cleanup on Human68k =='
     guest_reset
-    type_cmd 'dir a:\test'
-    wait_screen 'A:\>' 8 || fail 'e1: dir did not complete' "$s"
     h68_del "${(U)srcs}.S" "${(U)main}.S" "${(U)obj}.S" \
         "${(U)srcs}.O" "${(U)main}.O" "${(U)obj}.O" "${(U)prog}.S9M"
-    type_cmd 'cls'
-    type_cmd 'dir a:\test'
-    wait_screen 'A:\>' 8 || fail 'e1: dir did not complete' "$s"
     h68_absent "${srcs}" 's' 12
     h68_absent "${main}" 'o' 12
     print "PASS e1: edit->asm->ld->run across mux windows; lnk, status 27, arena $base"
@@ -1285,7 +1289,7 @@ run_e2() {
     [[ -f "$asm_module" && -f "$ld_module" ]] || fail 'e2: missing asm/ld module images (run make all)'
     local suf=$(printf '%04x' $(( ($(date +%s) + 11) % 65536 )))
     local bad="e2b$suf" prog="e2p$suf"
-    s=$(screen)
+    snap
     print -r -- "$s" | grep -Fq 'A:\>' || fail 'e2: initial Human68k prompt missing' "$s"
     h68_prep
     place_in_test "$asm_module" ASM.S9M
@@ -1305,14 +1309,9 @@ run_e2() {
     ssos_exit
     print '== E2 verify the output file was not created =='
     guest_reset
-    type_cmd 'dir a:\test'
-    wait_screen 'A:\>' 8 || fail 'e2: dir did not complete' "$s"
     h68_absent "$prog" 's9m' 12
     h68_del "${(U)bad}.S" "${(U)bad}.O"
-    type_cmd 'cls'
-    type_cmd 'dir a:\test'
-    wait_screen 'A:\>' 8 || fail 'e2: dir did not complete' "$s"
-    h68_absent "$bad" 'o'
+    h68_absent "$bad" 'o' 12
     print 'PASS e2: undefined symbol rejected, no output file, artifacts cleaned'
 }
 

@@ -378,3 +378,25 @@ comparisons must `unload` those images first. The absence check after
 cleanup polls fresh `dir` captures because a single check can race a stale
 clipboard frame. d2/d3/d4 gained the same post-run exact-name cleanup.
 E2 is implemented in the same script revision and runs separately.
+
+On 2026-11-13, E2 passed: the undefined-symbol negative sample
+(`tests/asm/link/badmain.s`) was placed in `A:\TEST`, assembled on target,
+and `run test/ld` stopped with `Undefined symbol missing` and exit status 1;
+after a guest reset Human68k showed no output file in `A:\TEST`, and the
+sample plus its object were removed again. With this run every planned
+emulator integration area is implemented and executed except C4, which
+fails by environment (the IOCS keyboard path cannot deliver the mux
+prefixes; F-key switching is covered by C3). Standalone SHA-256
+`3ba86b82f4aec11b7a150085784a67f2659b0086fb1b6ea864a40cbf07537bdd`.
+
+The same session removed backslashes from every Human68k-side typed path:
+the shared helpers now `cd test` and use relative names, so the held yen
+keypress — which intermittently doubles under an auto-repeat race (observed
+once as `dir a:\\test` and a silently failed copy) — no longer sits inside
+any typed command. `place_in_test` stages by content (macOS filesystems
+ignore name case, so a string compare missed an already-staged file), the
+e1/e2 heads capture through snap like every other area, and the d2-d4
+cleanups drop their redundant dir captures. One E2 attempt found the guest
+wedged in the XEiJ ROM debugger after the keyboard path froze; restarting
+the emulator app restored Human68k, consistent with the earlier freeze
+note. Physical hardware was not tested.
