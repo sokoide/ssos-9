@@ -21,6 +21,9 @@
 #   f1  background builtins (help&, ps&, mem&) interleave cleanly and reap
 #   f2  background module output continues across mux window switches
 #   g1  five spawn/kill/wait cycles return the arena to baseline
+#   h2  load 1 CONSOLE.S9M through the real floppy (ini fd1 swap)
+#   h3  Ctrl-C interrupts only the active mux window's foreground
+#   h4  sread boundaries: empty file ok, >256 bytes rejected
 # Storage tests (c5, d1..d4) place fixtures in A:\TEST only and reuse the
 # already-copied module images; run B/C1-4 tests without disk writes.
 set -u
@@ -69,9 +72,9 @@ type_char() {
         *) key "$1" ;;
     esac
 }
-type_cmd() {
+type_cmd() { # pipe writes do not need the app frontmost; only the
+    # Option-Shift-C screen copy in screen() does (S1 speedup)
     local c
-    frontmost
     for c in ${(s::)1}; do type_char "$c"; done
     key return
 }
@@ -88,8 +91,17 @@ screen() {
         print -r -- 'SSOS9_SCREEN_COPY_PENDING'
         return 0
     fi
-    sleep 1.2
+    # Adaptive clipboard poll (S2): most copies land in well under a second,
+    # so check early (0.4 s) and poll at 0.3 s before falling back to the
+    # slower retry keystrokes below.
+    sleep 0.4
     out=$(pbpaste)
+    local quick=0
+    while [[ "$out" == 'SSOS9_SCREEN_COPY_PENDING' && $quick -lt 3 ]]; do
+        sleep 0.3
+        quick=$((quick + 1))
+        out=$(pbpaste)
+    done
     while [[ "$out" == 'SSOS9_SCREEN_COPY_PENDING' && $tries -lt 3 ]]; do
         osascript -e 'tell application "System Events" to keystroke "c" using {option down, shift down}' >/dev/null 2>&1
         sleep $((1 + tries))
@@ -123,13 +135,16 @@ ticks_of() {
     [[ -n $v ]] || fail 'b1: no ticks= on screen' "$1"
     print -- $((16#${v#ticks=}))
 }
-wait_screen() { # wait_screen <pattern> <timeout-seconds>; screen text in $s
-    local pat=$1 tmo=$2 waited=0
-    while (( waited < tmo )); do
-        sleep 3
-        waited=$((waited + 3))
+wait_screen() { # wait_screen <pattern> <timeout-seconds>; screen text in $s.
+    # Adaptive cadence (S3): check right away (screen() settles ~0.4 s),
+    # then back off 0.5 -> 1 -> 2 s. Most waits match on the first or second
+    # capture, so the old fixed 3 s poll dominated the run time.
+    local pat=$1 deadline=$(( SECONDS + $2 )) gap=0.5
+    while (( SECONDS < deadline )); do
         s=$(screen)
         print -r -- "$s" | grep -Fq -- "$pat" && return 0
+        sleep $gap
+        (( gap < 2 )) && gap=$(( gap * 2 ))
     done
     return 1
 }
@@ -174,6 +189,13 @@ run_a2() {
         snap
         require "iteration $i debug" "$s" 'MFP IERB/IMRB/TCDCR/TDDR='
         print -r -- "$s" | grep -F 'MFP IERB/IMRB/TCDCR/TDDR='
+        # B5-lite: the Timer D interrupt stays consistently enabled (mask
+        # 3E3E) across cycles. Register values before launch and after exit
+        # are not observable from Human68k, so behavior after return (the
+        # dir check below) remains the restoration evidence.
+        local mfp=$(print -r -- "$s" |
+            grep -o 'MFP IERB/IMRB/TCDCR/TDDR=[0-9A-F]*' | grep -o '[0-9A-F]*$')
+        [[ $mfp == 3E3E* ]] || fail "iteration $i: Timer D mask changed: $mfp" "$s"
         type_cmd 'exit'
         sleep 3
         snap
@@ -303,7 +325,6 @@ boot_ssos() { # from the Human68k prompt; banner screen in $s
     type_cmd 'f:ssos9'
     wait_screen 'SSOS-9: minimal X68000 CLI' 30 || return 1
     wait_screen '> ' 15 || return 1
-    sleep 1
     snap
     return 0
 }
@@ -318,7 +339,7 @@ guest_reset() { # reboot the guest through the control pipe and wait for the
     printf 'reset\n' > "$PIPE" || fail 'cannot write reset to control pipe'
     wait_screen 'HIOCS' 30 || fail 'guest did not start rebooting' "$s"
     wait_screen 'A:\>' 150 || fail 'Human68k did not come back' "$s"
-    sleep 3
+    sleep 2 # AUTOEXPORT tools can still print just after the prompt
     type_cmd 'keywitch -r'
     sleep 1
 }
@@ -335,10 +356,13 @@ h68_prep() { # from A:\>: reset keywitch, ensure A:\TEST exists, leave a
         print '== create A:\TEST =='
         type_cmd 'mkdir test'
         sleep 1
+        type_cmd 'cls'
+        type_cmd 'dir test'
+        wait_screen 'A:\>' 8 || fail 'dir test did not complete' "$s"
+    else
+        # The first listing is already fresh; only clear the screen noise.
+        type_cmd 'cls'
     fi
-    type_cmd 'cls'
-    type_cmd 'dir test'
-    wait_screen 'A:\>' 8 || fail 'dir test did not complete' "$s"
     return 0
 }
 place_in_test() { # place_in_test <host-file> <NAME.EXT>; stage on F: and copy
@@ -381,22 +405,22 @@ screen_line() { # screen_line <screen text> <exact line>; the screen copy
     print -r -- "$1" | tr '\r' '\n' | grep -Eq -- "^${2}[[:space:]]*$"
 }
 wait_line() { # wait_line <exact line> <timeout-seconds>; screen in $s
-    local tmo=$2 waited=0
-    while (( waited < tmo )); do
-        sleep 3
-        waited=$((waited + 3))
+    local deadline=$(( SECONDS + $2 )) gap=0.5
+    while (( SECONDS < deadline )); do
         s=$(screen)
         screen_line "$s" "$1" && return 0
+        sleep $gap
+        (( gap < 2 )) && gap=$(( gap * 2 ))
     done
     return 1
 }
 wait_row() { # wait_row <name> <ext> <timeout>; dir row in $s, any case
-    local tmo=$3 waited=0
-    while (( waited < tmo )); do
-        sleep 3
-        waited=$((waited + 3))
+    local deadline=$(( SECONDS + $3 )) gap=0.5
+    while (( SECONDS < deadline )); do
         s=$(screen)
         print -r -- "$s" | tr '\r' '\n' | grep -Eiq "^${1}[ ]+${2}" && return 0
+        sleep $gap
+        (( gap < 2 )) && gap=$(( gap * 2 ))
     done
     return 1
 }
@@ -1315,6 +1339,156 @@ run_e2() {
     print 'PASS e2: undefined symbol rejected, no output file, artifacts cleaned'
 }
 
+run_h3() {
+    snap
+    require 'h3 initial prompt' "$s" 'A:\>'
+    boot_ssos || fail 'h3: ssos9 boot failed'
+    type_cmd 'mux'
+    wait_screen 'Multiplexer:' 8 || fail 'h3: mux did not start' "$s"
+    key f2
+    sleep 1.5
+    type_cmd 'run counter' # foreground on window 2: its shell blocks
+    sleep 2
+    key f1
+    sleep 1.5
+    print '== H3 Ctrl-C on the active window only =='
+    printf 'presskey ctrl\n' > "$PIPE"; sleep 0.2
+    printf 'typekey c\n' > "$PIPE"; sleep 0.2
+    printf 'releasekey ctrl\n' > "$PIPE"; sleep 0.5
+    wait_screen '^C' 8 || fail 'h3: window 1 did not consume the Ctrl-C' "$s"
+    print -r -- "$s" | grep -Fq 'interrupted' &&
+        fail 'h3: Ctrl-C leaked to the hidden window' "$s"
+    key f2
+    sleep 1.5
+    snap
+    print -r -- "$s" | grep -Fq 'interrupted' &&
+        fail 'h3: window 2 foreground was interrupted while hidden' "$s"
+    print 'h3: hidden foreground survived; interrupting it on its window'
+    printf 'presskey ctrl\n' > "$PIPE"; sleep 0.2
+    printf 'typekey c\n' > "$PIPE"; sleep 0.2
+    printf 'releasekey ctrl\n' > "$PIPE"; sleep 0.5
+    wait_screen 'interrupted' 8 || fail 'h3: window 2 foreground not interrupted' "$s"
+    wait_line '> ' 8 || fail 'h3: no prompt after interrupt' "$s"
+    key f1
+    sleep 1
+    ssos_exit
+    print 'PASS h3: Ctrl-C routes to the active window only'
+}
+
+run_h4() {
+    local edit_module=apps/edit/build/edit.s9m
+    [[ -f "$edit_module" ]] || fail 'h4: missing apps/edit/build/edit.s9m (run make all)'
+    local id=$(printf '%05x' $(( $(date +%s) % 1048576 )))
+    local empty="h4a$id" big="h4b$id"
+    local bigline='xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+    snap
+    require 'h4 initial prompt' "$s" 'A:\>'
+    h68_prep
+    place_in_test "$edit_module" EDIT.S9M
+    boot_mount
+    print '== H4 empty file: sread returns 0 bytes without error =='
+    type_cmd "run test/edit test/$empty.TXT"
+    wait_screen 'Cannot read file.' 10 || fail 'h4: editor did not prompt' "$s"
+    key n
+    sleep 1.5
+    type_cmd ':wq' # save the empty buffer
+    wait_screen 'exited with status 0' 25 || fail 'h4: empty save failed' "$s"
+    wait_line '> ' 10 || fail 'h4: no prompt after :wq' "$s"
+    type_cmd "sread test/$empty.TXT"
+    # The typed extension arrives lowercase; match the stem only.
+    wait_screen "sread test/$empty" 8 || fail 'h4: sread echo missing' "$s"
+    sleep 1
+    snap
+    print -r -- "$s" | grep -Fq 'Unable to read' &&
+        fail 'h4: empty file read reported an error' "$s"
+    print 'h4: empty file read clean'
+    print '== H4 280+ byte file: sread rejects beyond the 256-byte cap =='
+    type_cmd "run test/edit test/$big.TXT"
+    wait_screen 'Cannot read file.' 10 || fail 'h4: editor did not prompt (big)' "$s"
+    key n
+    sleep 1.5
+    key i
+    sleep 0.5
+    local n
+    for ((n = 0; n < 7; n++)); do
+        type_editor_lines "$bigline"
+    done
+    key esc
+    sleep 1
+    type_cmd ':wq'
+    wait_screen 'exited with status 0' 30 || fail 'h4: big save failed' "$s"
+    wait_line '> ' 10 || fail 'h4: no prompt after big :wq' "$s"
+    type_cmd "sread test/$big.TXT"
+    wait_screen 'Unable to read file (maximum 256 bytes).' 10 ||
+        fail 'h4: oversized read not rejected' "$s"
+    wait_line '> ' 8 || fail 'h4: no prompt after rejection' "$s"
+    ssos_exit
+    guest_reset
+    h68_del "H4A${(U)id}.TXT" "H4B${(U)id}.TXT"
+    h68_absent "$empty" 'txt' 12
+    h68_absent "$big" 'txt' 12
+    print 'PASS h4: sread empty ok, >256 rejected, artifacts cleaned'
+}
+
+h2_cleanup() { # mirror a3_cleanup: restore the ini and bring XEiJ back
+    local result=$1
+    [[ -n $H2_BACKUP ]] || return $result
+    print '== H2 restore XEiJ configuration =='
+    if ! xeij_stop; then
+        print -u2 -- "FAIL: h2: XEiJ still running; backup retained at $H2_BACKUP"
+        return 1
+    fi
+    if cp -p "$H2_BACKUP" "$HOME/XEiJ.ini"; then
+        rm -f "$H2_BACKUP"
+        H2_BACKUP=''
+    else
+        print -u2 -- "FAIL: h2: restore failed; backup retained at $H2_BACKUP"
+        return 1
+    fi
+    xeij_start || result=1
+    return $result
+}
+
+run_h2() {
+    # KNOWN-FAIL (2026-11-14): with media in FD1 the STD boot order boots that
+    # floppy (data disks fall back to the HDD), the media IS attached, yet the
+    # first B_READ of ss_xdf_read_sector fails on real IOCS - this path has
+    # only ever run against the QEMU mock. Opt in with SSOS9_ITEST_H2=1 to
+    # reproduce; fixing it needs an IOCS-level investigation of the md/position
+    # encoding, not a test change.
+    [[ ${SSOS9_ITEST_H2:-0} == 1 ]] || fail 'h2: known product gap; set SSOS9_ITEST_H2=1 to reproduce (see docs/test-coverage-and-speedup-plan.md)'
+    local disk=tests/target/build/console.xdf
+    [[ -f "$disk" ]] || fail 'h2: missing tests/target/build/console.xdf (run make -C tests/target)'
+    [[ -f "$HOME/XEiJ.ini" ]] || fail 'h2: missing ~/XEiJ.ini'
+    local backup=$(mktemp "${TMPDIR%/}/ssos9-xeij-ini.XXXXXXXX") || fail 'h2: cannot create backup'
+    cp -p "$HOME/XEiJ.ini" "$backup" || { rm -f "$backup"; fail 'h2: cannot back up ~/XEiJ.ini'; }
+    H2_BACKUP=$backup
+    print '== H2 insert console.xdf in FD1 (ini fd1 + restart) =='
+    xeij_stop || fail 'h2: cannot stop XEiJ'
+    sed -i '' '/^fd1=/d' "$HOME/XEiJ.ini"
+    printf 'fd1=%s\n' "$PWD/$disk" >> "$HOME/XEiJ.ini"
+    xeij_start || fail 'h2: cannot start XEiJ'
+    wait_screen 'A:\>' 150 || fail 'h2: Human68k did not boot' "$s"
+    sleep 2
+    boot_ssos || fail 'h2: ssos9 boot failed'
+    print '== H2 load the console module from real FD1 =='
+    type_cmd 'load 1 console.s9m'
+    wait_screen 'Module loaded.' 15 || fail 'h2: FAT12 load from FD1 failed' "$s"
+    type_cmd 'run console'
+    sleep 2
+    snap
+    print -r -- "$s" | grep -Fq 'Unable to start' && fail 'h2: console module failed to spawn' "$s"
+    key a
+    wait_screen 'KEY: 0061' 8 || fail 'h2: key a not reported after FD load' "$s"
+    key q
+    wait_screen 'exited with status 0' 10 || fail 'h2: module did not quit on q' "$s"
+    ssos_exit
+    trap - EXIT HUP INT TERM
+    h2_cleanup 0 || fail 'h2: configuration restore failed'
+    wait_screen 'A:\>' 150 || fail 'h2: Human68k did not come back after restore' "$s"
+    print 'PASS h2: load 1 exercised the real-floppy FAT12 path'
+}
+
 case ${1:-} in
     a2) run_a2 ;;
     a3)
@@ -1343,5 +1517,14 @@ case ${1:-} in
     f1) run_f1 ;;
     f2) run_f2 ;;
     g1) run_g1 ;;
-    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1|b2|b3|b4|c1|c2|c3|c4|c5|d1|d2|d3|d4|e1|e2|e3|f1|f2|g1' ;;
+    h2)
+        H2_BACKUP=''
+        trap 'h2_cleanup $?; exit $?' EXIT
+        trap 'exit 129' HUP
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        run_h2 ;;
+    h3) run_h3 ;;
+    h4) run_h4 ;;
+    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1|b2|b3|b4|c1|c2|c3|c4|c5|d1|d2|d3|d4|e1|e2|e3|f1|f2|g1|h2|h3|h4' ;;
 esac

@@ -977,6 +977,11 @@ int main(void) {
     }
     if (first_wait != SS_OK || second_wait != SS_OK)
         fail("mux shell reap");
+    /* CONSOLE_SIZE must also hold with the multiplexer enabled: the QEMU
+     * region stays the 25-row default, so the windows keep 25 rows. */
+    ss_cli_console_mux_enable();
+    if (call_sys(SS9_SYS_CONSOLE_SIZE, 0) != (int32_t)((80u << 16) | 25u))
+        fail("console size with mux enabled");
     tty_puts("OK shared code/private A5 data and hello\n");
     for (;;) tick();
 }

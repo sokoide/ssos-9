@@ -400,3 +400,35 @@ cleanups drop their redundant dir captures. One E2 attempt found the guest
 wedged in the XEiJ ROM debugger after the keyboard path froze; restarting
 the emulator app restored Human68k, consistent with the earlier freeze
 note. Physical hardware was not tested.
+
+On 2026-11-14, a coverage review (docs/test-coverage-and-speedup-plan.md)
+produced test additions and XEiJ run-time speedups, all in
+tools/emulator-itest.sh plus the unit/QEMU suites.
+
+Speedups (validated by re-running c1/b4/c3/d2/a2, all PASS): type_cmd no
+longer activates the app (pipe writes need no focus; only the screen copy
+does), screen() polls the clipboard adaptively (0.4 s first check instead
+of a fixed 1.2 s wait), wait_screen/wait_line/wait_row back off 0.5 -> 1
+-> 2 s instead of a fixed 3 s poll with wall-clock deadlines, and the
+fixed sleeps around boot/guest_reset/h68_prep were trimmed. Wall times
+dropped roughly 3x: c1 40 s -> 14.7 s, a2 ~4 min -> 1:12, d2 -> 1:52
+(dominated by the unavoidable ~45 s guest reset).
+
+New areas: a2 now asserts the Timer D MFP mask (3E3E) on every cycle
+(B5-lite); h3 verifies Ctrl-C interrupts only the active mux window (the
+hidden window's foreground survives, then dies on its own window); h4
+covers the sread boundaries (empty file reads clean, a 286-byte editor
+file is rejected with `maximum 256 bytes`); test_mux gained the 0x1d
+prefix path and the full-queue-with-prefix interplay; test_scheduler
+gained the trace-ring wraparound (create+start x10 keeps the newest 16
+events oldest-first); t13 asserts CONSOLE_SIZE with the multiplexer
+enabled. Host suites 46/46, QEMU 18/18.
+
+h2 (load 1 CONSOLE.S9M through a real FD1) was implemented and executed
+but fails on a product gap: with media attached to FD1 (verified: a
+bootable XDF in FD1 redirects the STD boot order and its IPL runs), the
+first B_READ of ss_xdf_read_sector fails on real IOCS, so `load` reports
+`disk or FAT12`. This path has only ever run against the QEMU mock; the
+md/position encoding for real 2HD IOCS needs investigation. The h2 area
+is gated behind SSOS9_ITEST_H2=1 so sweeps stay green until the product
+side is fixed. Physical hardware was not tested.
