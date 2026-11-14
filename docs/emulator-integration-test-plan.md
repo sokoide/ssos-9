@@ -1,7 +1,8 @@
 # XEiJ で確認すべき統合テスト計画
 
-更新日: 2026-11-13。状態: **全領域 (A1〜A3・B1〜B4・C1〜C5・D1〜D4・E1〜E3・F1・F2・G1) 実装・実行済み。
-合格は C4 を除く全領域。C4は実行済み・エミュレータキー経路の制限でFAIL (下記)**。
+更新日: 2026-11-14。状態: **全領域 (A1〜A3・B1〜B4・C1〜C5・D1〜D4・E1〜E3・F1・F2・G1・H1・H3〜H6)
+実装・実行済み。合格は C4 と H2 を除く全領域 (C4/H2 は環境制限、下記)。Q2 (P3) は未実装。
+追加テストと高速化の詳細は docs/test-coverage-and-speedup-plan.md**。
 `smount` は Human68k 形式の先頭パーティションのみを受け付け、MS-DOS 型 FAT16 は拒否される。
 パスの 8.3 名照合は大文字小文字を区別しない (Human68k 側の作成・検索の挙動に合わせている)。
 
@@ -81,7 +82,7 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 | B5 | 終了時 MFP 状態復帰 | A2 の `debug` 記録と、終約後の Human68k 動作で確認 | Timer D 関連ビットが起動前状態に戻る (IERB/IMRB の bit4、TCDCR) | P1 | ○ (A2 に内包) |
 
 ### C. 実 IOCS コンソール・キー入力
-
+Ç
 | ID | 概要 | 手順 | 合格基準 | 優先度 | 自動化 |
 | --- | --- | --- | --- | --- | --- |
 | C1 | `help` 全量表示 | `help` → 画面取得 | 画面テキストが host 期待値 (`cli.c` のコマンド表) と一致 | P1 | ○ |
@@ -124,6 +125,17 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 | ID | 概要 | 手順 | 合格基準 | 優先度 | 自動化 |
 | --- | --- | --- | --- | --- | --- |
 | G1 | spawn/kill/wait 反復と baseline 復帰 | `run counter` → Ctrl-C → `wait` ×5 → `mem` | free_bytes/largest_free が起動直後と一致 | P2 | ○ |
+
+### H. カバレッジレビュー追加 (2026-11-14、docs/test-coverage-and-speedup-plan.md 由来)
+
+| ID | 概要 | 手順 | 合格基準 | 状態 |
+| --- | --- | --- | --- | --- |
+| H1 | B5 完遂 (Timer D マスク機械判定) | a2 の各サイクルで `debug` の IERB/IMRB を検査 | 全サイクルでマスク 3E3E (bit4=Timer D 有効)。レジスタ復帰其のものは Human68k 側から観測不可のため挙動確認が傍証 | 実行済み PASS |
+| H2 | `load 1` 実フロッピ経路 | ini `fd1=console.xdf` + 再起動 → `load 1 console.s9m` → `run console` | モジュールが KEY 表示 | **環境制限 FAIL**: 媒体添付は成立するが実行中のシステムからの FDC アクセスが失敗 (`dir e:` ハング、B_READ 失敗)。xdf.c の符号化 (PDA $90+drive、mode $70、位置 3/track/side/sector) は PRO-68K マニュアルの B_SEEK/B_READ 記載と一致。UI 挿入か XEiJ fork が必要。`SSOS9_ITEST_H2=1` でのみ再現実行 |
+| H3 | Ctrl-C のウィンドウ間ルーティング | window 2 で foreground `run counter` → F1 → Ctrl-C → F2 確認 → F2 で Ctrl-C | 隠れたウィンドウの foreground は中断されず、自ウィンドウの Ctrl-C でのみ中断される (cli_wait.c はアクティブウィンドウのみ配送) | 実行済み PASS |
+| H4 | sread 境界 | edit で空ファイルと 286 バイトファイルを作成し `sread` | 空ファイルは 0 バイトでエラーなし、286 バイトは `maximum 256 bytes` で拒否 | 実行済み PASS |
+| H5 | XDF IPL 起動 + ストレージ | A:\TEST に fixture を配置後、ini `fd0=ssos9.xdf` + 再起動で XDF 起動 → `smount 0` → `sread` → `exit` 拒否 | fixture が読める、PID 1 exit が拒否される、ini 復元後 Human68k 復帰 | 実行済み PASS (2026-11-14、1:08) |
+| H6 | 25 サイクル spawn/kill/wait ソーク | G1 を 25 サイクルに延長 | arena が baseline に完全復帰 | 実行済み PASS (2026-11-14)。S3 高速化の即時初回チェックが前サイクルの Started 行に一致して古い PID を kill する競合が発覚 → wait_new_pid (単調増加 PID 待ち) で g1/h6/f1 を修正 |
 
 ## 4. スクリプト運用
 
@@ -232,6 +244,17 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
   status 0 で終了することを確認する。
 - G1: `tools/emulator-itest.sh g1`。`run counter&` → `kill` → `wait` を 5 サイクル
   反復し、`mem` が起動直後の baseline に一致することを確認する。
+- H2: `SSOS9_ITEST_H2=1 tools/emulator-itest.sh h2`。ini `fd1=` + 再起動で
+  console.xdf を挿入するが、実行中システムからの FDC アクセスが失敗するため
+  現状は再現確認用 (上記 H 行参照)。
+- H3: `tools/emulator-itest.sh h3`。mux の window 2 で foreground 実行中に F1 で
+  Ctrl-C → 隠れたウィンドウの foreground は生存、F2 に切替えて Ctrl-C で中断。
+- H4: `tools/emulator-itest.sh h4`。edit で空ファイル (即 `:wq`) と 7行×40文字の
+  ファイルを作り、`sread` の 0 バイト成功と 256 バイト超拒否を確認、cleanup する。
+- H5: `tools/emulator-itest.sh h5`。Human68k 側で fixture を配置してから ini
+  `fd0=ssos9.xdf` + 再起動 (a3 と同じバックアップ/復元) で XDF 起動し、`smount 0` +
+  `sread` + PID 1 exit 拒否を確認、ini 復元後に fixture を削除する。
+- H6: `tools/emulator-itest.sh h6`。G1 を 25 サイクルに延長したソーク。
 
 ## 5. XEiJ でも確認できないもの
 

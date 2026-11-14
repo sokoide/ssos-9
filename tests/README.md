@@ -432,3 +432,27 @@ first B_READ of ss_xdf_read_sector fails on real IOCS, so `load` reports
 md/position encoding for real 2HD IOCS needs investigation. The h2 area
 is gated behind SSOS9_ITEST_H2=1 so sweeps stay green until the product
 side is fixed. Physical hardware was not tested.
+
+On 2026-11-14 (second batch), the remaining plan items landed. h5 passed
+(1:08): with a fixture pre-placed in `A:\TEST`, the ini `fd0=ssos9.xdf`
+restart boots the XDF image, `smount 0` mounts the HDD, `sread` returns the
+fixture, `exit` is rejected as PID 1, and the ini restore brings Human68k
+back before the fixture is removed. h6 passed after a test-harness fix:
+the adaptive first-check of the S3 speedups could match a stale frame's
+`Started ... PID` line and parse the PREVIOUS cycle's PID, killing an
+already-reaped process while the real counter leaked (the arena ended
+16588 bytes short at cycle 25). A wait_new_pid helper (strictly
+increasing PID) now guards g1/h6/f1; the leak was script-side, and after
+the fix 25 cycles return the arena to the exact baseline. g1 and f1 were
+re-run green with the same guard. U3 audited the human68k_volume probe
+negatives and added eleven uncovered branches (disk/table/partition-name
+magic, fat_start=0, root_entries=0, BPB total beyond the partition,
+media byte, hidden mismatch, clusters<4085, non-power-of-2 sectors per
+cluster, fat_count=0, plus flags=2 as a legal positive); host suites
+46/46. h2's B_READ encoding was confirmed correct against the PRO-68K
+programmer's manual (PDA $90-$93 = 2HD DRIVE0-3, mode $70, position
+3/track/side/sector), moving its failure firmly into XEiJ's ini-time
+media attach lacking disk-change semantics; it stays gated behind
+SSOS9_ITEST_H2=1. screen() also re-asserts app focus before each copy
+retry, fixing a mid-run clipboard stall where stolen focus sent the retry
+keystroke to another app. Physical hardware was not tested.

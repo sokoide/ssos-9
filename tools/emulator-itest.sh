@@ -24,6 +24,8 @@
 #   h2  load 1 CONSOLE.S9M through the real floppy (ini fd1 swap)
 #   h3  Ctrl-C interrupts only the active mux window's foreground
 #   h4  sread boundaries: empty file ok, >256 bytes rejected
+#   h5  XDF IPL boot + smount/sread + PID 1 protection
+#   h6  25 spawn/kill/wait cycles return the arena to baseline
 # Storage tests (c5, d1..d4) place fixtures in A:\TEST only and reuse the
 # already-copied module images; run B/C1-4 tests without disk writes.
 set -u
@@ -103,6 +105,9 @@ screen() {
         out=$(pbpaste)
     done
     while [[ "$out" == 'SSOS9_SCREEN_COPY_PENDING' && $tries -lt 3 ]]; do
+        # Re-assert focus before each retry: a stolen focus sends the copy
+        # keystroke to another app and the marker would never clear.
+        osascript -e 'tell application "System Events" to set frontmost of process "java" to true' >/dev/null 2>&1
         osascript -e 'tell application "System Events" to keystroke "c" using {option down, shift down}' >/dev/null 2>&1
         sleep $((1 + tries))
         out=$(pbpaste)
@@ -430,6 +435,25 @@ norm_text() { # wrap-insensitive text: drop every space, CR, and LF
 started_pid() { # extract the last "Started ... PID n" number from screen $s
     print -r -- "$1" | grep -o 'Started \(module\|command\) as PID [0-9]*' |
         grep -o '[0-9]*$' | tail -1
+}
+
+wait_new_pid() { # wait_new_pid <last-pid> <timeout>; replies in $REPLY_PID with
+    # a strictly newer "Started ... PID n". With the adaptive first-check, a
+    # stale frame can still hold the PREVIOUS cycle's Started line; parsing it
+    # would kill the wrong (already reaped) PID and leak the real process.
+    local last=$1 deadline=$(( SECONDS + $2 )) gap=0.5 candidate
+    REPLY_PID=''
+    while (( SECONDS < deadline )); do
+        snap
+        candidate=$(started_pid "$s")
+        if [[ -n $candidate && $candidate -gt $last ]]; then
+            REPLY_PID=$candidate
+            return 0
+        fi
+        sleep $gap
+        (( gap < 2 )) && gap=$(( gap * 2 ))
+    done
+    return 1
 }
 type_editor_lines() { # type_editor_lines <text>; types the lines into the
     # editor in insert mode, one return key per line. Long streams lose
@@ -1044,18 +1068,14 @@ run_f1() {
     # Each trailing-& builtin runs in an isolated kernel-entry child whose
     # output interleaves on the same console; the IOCS lock keeps lines whole.
     type_cmd 'help&'
-    wait_screen 'Started command as PID' 8 || fail 'f1: help& did not start' "$s"
-    local p1=$(started_pid "$s")
+    wait_new_pid 0 8 || fail 'f1: help& did not start' "$s"
+    local p1=$REPLY_PID
     type_cmd 'ps&'
-    sleep 2
-    snap
-    local p2=$(started_pid "$s")
-    [[ -n $p2 ]] || fail 'f1: ps& did not start' "$s"
+    wait_new_pid $p1 8 || fail 'f1: ps& did not start' "$s"
+    local p2=$REPLY_PID
     type_cmd 'mem&'
-    sleep 2
-    snap
-    local p3=$(started_pid "$s")
-    [[ -n $p3 ]] || fail 'f1: mem& did not start' "$s"
+    wait_new_pid $p2 8 || fail 'f1: mem& did not start' "$s"
+    local p3=$REPLY_PID
     [[ "$(norm_text "$s")" == *"$(norm_text "$HELP_EXPECTED")"* ]] || \
         fail 'f1: help output missing or garbled' "$s"
     print -r -- "$s" | grep -Fq 'PID PPID STATE NAME MODULE DATA GOT STACK' || \
@@ -1132,12 +1152,13 @@ run_g1() {
     snap
     local base=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
     [[ -n $base ]] || fail 'g1: no arena baseline' "$s"
-    local i pid
+    local i pid last=0
     for ((i = 1; i <= 5; i++)); do
         type_cmd 'run counter&'
-        wait_screen 'Started module as PID' 8 || fail "g1: cycle $i spawn failed" "$s"
-        pid=$(started_pid "$s")
+        wait_new_pid $last 8 || fail "g1: cycle $i spawn failed" "$s"
+        pid=$REPLY_PID
         [[ -n $pid ]] || fail "g1: cycle $i PID parse failed" "$s"
+        last=$pid
         type_cmd "kill $pid"
         wait_screen 'Kill requested.' 8 || fail "g1: cycle $i kill failed" "$s"
         type_cmd "wait $pid"
@@ -1430,6 +1451,24 @@ run_h4() {
     print 'PASS h4: sread empty ok, >256 rejected, artifacts cleaned'
 }
 
+h5_cleanup() {
+    local result=$1
+    [[ -n $H5_BACKUP ]] || return $result
+    print '== H5 restore XEiJ configuration =='
+    if ! xeij_stop; then
+        print -u2 -- "FAIL: h5: XEiJ still running; backup retained at $H5_BACKUP"
+        return 1
+    fi
+    if cp -p "$H5_BACKUP" "$HOME/XEiJ.ini"; then
+        rm -f "$H5_BACKUP"
+        H5_BACKUP=''
+    else
+        print -u2 -- "FAIL: h5: restore failed; backup retained at $H5_BACKUP"
+        return 1
+    fi
+    xeij_start || result=1
+    return $result
+}
 h2_cleanup() { # mirror a3_cleanup: restore the ini and bring XEiJ back
     local result=$1
     [[ -n $H2_BACKUP ]] || return $result
@@ -1450,12 +1489,17 @@ h2_cleanup() { # mirror a3_cleanup: restore the ini and bring XEiJ back
 }
 
 run_h2() {
-    # KNOWN-FAIL (2026-11-14): with media in FD1 the STD boot order boots that
-    # floppy (data disks fall back to the HDD), the media IS attached, yet the
-    # first B_READ of ss_xdf_read_sector fails on real IOCS - this path has
-    # only ever run against the QEMU mock. Opt in with SSOS9_ITEST_H2=1 to
-    # reproduce; fixing it needs an IOCS-level investigation of the md/position
-    # encoding, not a test change.
+    # KNOWN-FAIL (2026-11-14): ini-attached FD1 media IS reachable (a
+    # bootable XDF in FD1 redirects the STD boot and its IPL runs, proving
+    # the boot ROM reads the media), but FDC access from the running system
+    # fails: Human68k `dir e:` hangs in retry and `load 1` fails at the
+    # first B_READ. ss_xdf_read_sector's encoding matches both the
+    # IPL-proven form and the PRO-68K manual (PDA $90-$93 = 2HD DRIVE0-3,
+    # mode $70 = MFM|RETRY|SEEK, D2 = 3/track/side/sector), so the
+    # suspicion is XEiJ's ini-time attach lacking the disk-change
+    # insertion semantics a UI insert provides. Automating this needs an
+    # XEiJ fork with a pipe-driven insert, or a manual UI insert. Opt in
+    # with SSOS9_ITEST_H2=1 to reproduce.
     [[ ${SSOS9_ITEST_H2:-0} == 1 ]] || fail 'h2: known product gap; set SSOS9_ITEST_H2=1 to reproduce (see docs/test-coverage-and-speedup-plan.md)'
     local disk=tests/target/build/console.xdf
     [[ -f "$disk" ]] || fail 'h2: missing tests/target/build/console.xdf (run make -C tests/target)'
@@ -1487,6 +1531,78 @@ run_h2() {
     h2_cleanup 0 || fail 'h2: configuration restore failed'
     wait_screen 'A:\>' 150 || fail 'h2: Human68k did not come back after restore' "$s"
     print 'PASS h2: load 1 exercised the real-floppy FAT12 path'
+}
+
+run_h5() {
+    # XDF-IPL boot (no Human68k underneath) + the SCSI volume: place a
+    # fixture in A:\TEST from Human68k first, then boot the XDF image via
+    # ini fd0 (STD boots FD when inserted) and read the fixture with smount.
+    [[ -f "$HOME/tmp/ssos9.xdf" ]] || fail 'h5: missing ~/tmp/ssos9.xdf (run make install)'
+    local fix="H5F$(printf '%05X' $(( $(date +%s) % 1048576 )))"
+    [[ -f "$HOME/XEiJ.ini" ]] || fail 'h5: missing ~/XEiJ.ini'
+    snap
+    require 'h5 initial prompt' "$s" 'A:\>'
+    printf 'H5FIXTURE' > "$HOME/tmp/$fix.TXT"
+    h68_prep
+    place_in_test "$HOME/tmp/$fix.TXT" "$fix.TXT"
+    local backup=$(mktemp "${TMPDIR%/}/ssos9-xeij-ini.XXXXXXXX") || fail 'h5: cannot create backup'
+    cp -p "$HOME/XEiJ.ini" "$backup" || { rm -f "$backup"; fail 'h5: cannot back up ~/XEiJ.ini'; }
+    H5_BACKUP=$backup
+    print '== H5 insert ssos9.xdf in FD0 and boot the XDF image =='
+    xeij_stop || fail 'h5: cannot stop XEiJ'
+    sed -i '' '/^fd0=/d' "$HOME/XEiJ.ini"
+    printf 'fd0=%s\n' "$HOME/tmp/ssos9.xdf" >> "$HOME/XEiJ.ini"
+    xeij_start || fail 'h5: cannot start XEiJ'
+    wait_screen 'SSOS-9: minimal X68000 CLI' 90 || fail 'h5: XDF boot banner missing' "$s"
+    sleep 1
+    wait_screen '> ' 15 || fail 'h5: no CLI prompt after IPL boot' "$s"
+    print '== H5 mount the HDD and read the fixture =='
+    type_cmd 'smount 0'
+    wait_screen 'FAT16 mounted.' 15 || fail 'h5: smount 0 failed under XDF boot' "$s"
+    type_cmd "sread test/$fix.TXT"
+    wait_screen 'H5FIXTURE' 10 || fail 'h5: fixture not readable under XDF boot' "$s"
+    type_cmd 'exit'
+    wait_screen 'Cannot exit the initial SSOS-9 process (PID 1).' 10 ||
+        fail 'h5: PID 1 exit not rejected under XDF boot' "$s"
+    trap - EXIT HUP INT TERM
+    h5_cleanup 0 || fail 'h5: configuration restore failed'
+    wait_screen 'A:\>' 150 || fail 'h5: Human68k did not come back' "$s"
+    h68_del "$fix.TXT"
+    h68_absent "$fix" 'txt' 12
+    print 'PASS h5: XDF boot + smount + sread + PID 1 protection'
+}
+
+run_h6() {
+    # Soak: 25 spawn/kill/wait cycles must return the arena to baseline.
+    snap
+    require 'h6 initial prompt' "$s" 'A:\>'
+    boot_ssos || fail 'h6: ssos9 boot failed'
+    type_cmd 'mem'
+    sleep 1
+    snap
+    local base=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
+    [[ -n $base ]] || fail 'h6: no arena baseline' "$s"
+    local i pid last=0
+    for ((i = 1; i <= 25; i++)); do
+        type_cmd 'run counter&'
+        wait_new_pid $last 8 || fail "h6: cycle $i spawn failed" "$s"
+        pid=$REPLY_PID
+        [[ -n $pid ]] || fail "h6: cycle $i PID parse failed" "$s"
+        last=$pid
+        type_cmd "kill $pid"
+        wait_screen 'Kill requested.' 8 || fail "h6: cycle $i kill failed" "$s"
+        type_cmd "wait $pid"
+        wait_screen 'exited with status' 8 || fail "h6: cycle $i reap failed" "$s"
+        if (( i % 5 == 0 )); then print "h6: $i cycles done"; fi
+    done
+    type_cmd 'mem'
+    sleep 1
+    snap
+    local after=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
+    [[ "$after" == "$base" ]] || fail 'h6: arena did not return to baseline' \
+        "baseline: $base"$'\n'"after: $after"
+    ssos_exit
+    print "PASS h6: 25 cycles; arena back to $base"
 }
 
 case ${1:-} in
@@ -1525,6 +1641,14 @@ case ${1:-} in
         trap 'exit 143' TERM
         run_h2 ;;
     h3) run_h3 ;;
+    h5)
+        H5_BACKUP=''
+        trap 'h5_cleanup $?; exit $?' EXIT
+        trap 'exit 129' HUP
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        run_h5 ;;
+    h6) run_h6 ;;
     h4) run_h4 ;;
-    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1|b2|b3|b4|c1|c2|c3|c4|c5|d1|d2|d3|d4|e1|e2|e3|f1|f2|g1|h2|h3|h4' ;;
+    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1|b2|b3|b4|c1|c2|c3|c4|c5|d1|d2|d3|d4|e1|e2|e3|f1|f2|g1|h2|h3|h4|h5|h6' ;;
 esac

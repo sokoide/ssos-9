@@ -3,9 +3,8 @@
 更新日: 2026-11-14。エミュレータ統合テスト (A〜G) 完遂後のカバレッジレビューに基づく
 追加テスト計画と、XEiJ 実行の高速化計画。実装状況は各表の「状態」列で追跡する。
 2026-11-14 実装分: S1〜S4 適用・検証済み (c1 40s→14.7s、b4 20.0s、c3 27.8s、
-d2 1:52、a2 1:12)、H1/H3/H4 実装・実行 PASS、U1/U2 追加 (host 46/46)、
-Q1 追加 (QEMU 18/18)。H2 は実行したが製品側の実 IOCS B_READ 不具合で
-KNOWN-FAIL (下記)。
+d2 1:52、a2 1:12)、H1/H3〜H6 実装・実行 PASS、U1〜U3 追加 (host 46/46)、
+Q1 追加 (QEMU 18/18)。H2 は環境制限 FAIL (下記)。残りは Q2 (P3) のみ未実装。
 
 ## 1. 現状カバレッジの要約
 
@@ -29,11 +28,11 @@ KNOWN-FAIL (下記)。
 | ID | 内容 | 根拠 | 優先度 | 状態 |
 | --- | --- | --- | --- | --- |
 | H1 | B5 完遂: a2 の各サイクルで `debug` の IERB/IMRB マスク (3E3E) と TCDCR/TDDR 範囲の一貫性を機械判定。レジスタ値の復帰其のものは Human68k 側から観測できないため、A2 の挙動確認と併記で境界を明示する | 計画書 §4 が「B5 は未実装」と自認 | P1 | **実装・PASS** (a2 5 サイクルで 3E3E 一貫) |
-| H2 | `load 1 CONSOLE.S9M` 実フロッピ経路: ini `fd1=tests/target/build/console.xdf` + XEiJ 再起動 (a3 の ini バックアップ/復元パターン) → SSOS-9 で `load 1 console.s9m` → `run console` で KEY 表示。xdf.c + sector_adapter + 実 IOCS 2HD リードの組合せは QEMU モックのみで未到達 | 唯一の未到達コード経路 | P1 | **KNOWN-FAIL**: 実装・実行したが `load 1` が最初の B_READ で失敗 (`disk or FAT12`)。FD1 への媒体添付自体は成立している (FD1 に起動可能 XDF を入れると STD 起動がその FD から走り、ssos9.xdf の IPL まで実行されることを確認)。`load` の実 IOCS 経路は QEMU モックでしか検証されたことがなく、md/position 符号化の実機調査が必要 — 製品側の課題。テストは `SSOS9_ITEST_H2=1` でのみ再現実行する |
+| H2 | `load 1 CONSOLE.S9M` 実フロッピ経路: ini `fd1=tests/target/build/console.xdf` + XEiJ 再起動 (a3 の ini バックアップ/復元パターン) → SSOS-9 で `load 1 console.s9m` → `run console` で KEY 表示。xdf.c + sector_adapter + 実 IOCS 2HD リードの組合せは QEMU モックのみで未到達 | 唯一の未到達コード経路 | P1 | **環境制限 FAIL**: 実装・実行したが `load 1` が最初の B_READ で失敗 (`disk or FAT12`)。FD1 への媒体添付自体は成立 (FD1 に起動可能 XDF を入れると STD 起動がその FD から走り IPL が実行される)。xdf.c の符号化は PRO-68K プログラマーズマニュアル (22_Library) の B_SEEK/B_READ 記載と完全一致 (PDA $90〜$93 = 2HD DRIVE0〜3、MODE $70 = MFM|RETRY|SEEK、D2 = セクタ長3/track/side/sector) — 製品側の符号化誤りではない。実行中のシステムからの FDC アクセスが失敗する (Human68k の `dir e:` もリトライでハング) ため、ini 挿入が UI 挿入の disk-change 挙動を再現していない疑い。UI 手動挿入か XEiJ fork のパイプ挿入コマンドが必要。テストは `SSOS9_ITEST_H2=1` でのみ再現実行 |
 | H3 | Ctrl-C のウィンドウ間ルーティング: window 2 で foreground `run counter`、F1 に切替えて Ctrl-C → **window 2 の PID は中断されず** (cli_wait.c はアクティブウィンドウのみ配送)、window 2 に切り替えて Ctrl-C で回収。挙動を固定期待値として文書化 | 実 IOCS での配送先確認 | P2 | **実装・PASS** |
 | H4 | sread 境界: (a) edit で空ファイルを作成し sread → 0 バイトでエラーなし、(b) 編集で 300 バイト超のファイルを作り sread → `maximum 256 bytes` 拒否。作成後は exact 名で cleanup | CLI sread の上限の実確認 | P2 | **実装・PASS** (7行×40文字=286バイトで拒否確認) |
 | H5 | XDF IPL 起動での `smount 0` + `sread` (Human68k 非経由起動とストレージの直交)。a3 を拡張 | 経路の直交性 | P3 | 未実装 |
-| H6 | ソーク: G1 を 25 サイクルに延長、または D1 を 3 連続実行 | 回帰網羅 | P3 | 未実装 |
+| H6 | ソーク: G1 を 25 サイクルに延長、または D1 を 3 連続実行 | 回帰網羅 | P3 | **実装・PASS** (2026-11-14)。S3 の即時初回チェックが stale な Started 行を拾い古い PID を kill する競合を発見 — wait_new_pid ヘルパ (PID 単調増加待ち) で g1/h6/f1 を修正、リークはスクリプト起因で製品ではないことを確認 |
 
 ### unit 層 (`tests/unit/`)
 
@@ -41,7 +40,7 @@ KNOWN-FAIL (下記)。
 | --- | --- | --- | --- | --- |
 | U1 | mux: 0x1d (Ctrl-]) プレフィックス経路、キュー満杯 + prefix 保留の相互作用 (`CAPACITY - (prefix?1:0)` ガード)。c4 で実 IOCS 経路が不能になった分、unit が唯一の守り | test_mux は `~` のみ | P2 | **実装・PASS** (no-op switch・実switch・非 digit push・満杯 push 失敗) |
 | U2 | scheduler: trace リングのラップアラウンド (>16 イベントで最古 16 件が oldest-first)。B2 は実機暗黙確認のみ | 決定論的検証欠落 | P2 | **実装・PASS** (create+start 10 ペア→CREATE 8 + START 8) |
-| U3 | human68k_volume 陰性 8 ケースの内訳監査 (fat_start=0、clusters<4085、total>partition、media=0xf7 以外等)、抜けがあれば補填 | 現状でも充分の可能性 | P3 | 未実装 |
+| U3 | human68k_volume 陰性 8 ケースの内訳監査 (fat_start=0、clusters<4085、total>partition、media=0xf7 以外等)、抜けがあれば補填 | 現状でも充分の可能性 | P3 | **実装・PASS**: 監査の結果 11 分岐が未カバーと判明し補填 (disk id、table id、partition 名、fat_start=0、root_entries=0、total>partition、media、hidden 不一致、clusters<4085、spc 非べき乗、fat_count=0 + flags=2 の正当ケース)。host 46/46 |
 
 ### QEMU 層 (`tests/qemu/pre/`)
 

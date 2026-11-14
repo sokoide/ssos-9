@@ -77,6 +77,31 @@ int main(void) {
     assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
     init(&f);
     assert(ss_human68k_probe(&v, read_sector, &f, 10000, 15) != 0);
+    /* 2026-11-14 audit: remaining probe rejection branches that had no case. */
+    init(&f); memcpy(f.id, "X68SCSI0", 8);            /* disk id */
+    assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
+    init(&f); memcpy(f.table, "X68Z", 4);             /* partition table id */
+    assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
+    init(&f); memcpy(f.table + 16, "MSDOS5.0", 8);    /* partition name */
+    assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
+    init(&f); be16(f.ipl + 0x16, 0);                  /* fat_start == 0 */
+    assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
+    init(&f); be16(f.ipl + 0x18, 0);                  /* root_entries == 0 */
+    assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
+    init(&f); be32(f.ipl + 0x1e, 9500);               /* BPB total > partition */
+    assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
+    init(&f); f.ipl[0x1c] = 0xf9;                     /* media byte */
+    assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
+    init(&f); be32(f.ipl + 0x22, 33);                 /* hidden != start */
+    assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
+    init(&f); be32(f.ipl + 0x1e, 100);                /* clusters < 4085 */
+    assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
+    init(&f); f.ipl[0x14] = 3;                        /* spc not a power of 2 */
+    assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
+    init(&f); f.ipl[0x15] = 0;                        /* fat_count == 0 */
+    assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) != 0);
+    init(&f); be32(f.table + 24, 0x02000020);         /* flags 2 is legal */
+    assert(ss_human68k_probe(&v, read_sector, &f, 10000, 0) == 0);
     puts("Human68k SCSI volume tests passed");
     return 0;
 }
