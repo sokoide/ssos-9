@@ -456,3 +456,13 @@ media attach lacking disk-change semantics; it stays gated behind
 SSOS9_ITEST_H2=1. screen() also re-asserts app focus before each copy
 retry, fixing a mid-run clipboard stall where stolen focus sent the retry
 keystroke to another app. Physical hardware was not tested.
+
+On 2026-11-15, `make test-emulator EMULATOR_TESTS="e2 e3"` passed
+on the running XEiJ with its existing Human68k SCSI ID 0 boot volume.
+E2 mounted the volume, assembled the negative input, observed the linker
+reject the undefined symbol, and checked that no output file was created;
+E3 printed Hello, returned status 0, observed scheduler switch events, and
+returned to Human68k. The installed `ssos9.x` SHA-256 was
+`03718103d57e1d956b635e69c4c5c9f64977718ff2458d3d4df497ae8ee325e0`;
+`ssos9.xdf` was `ff7f9c8dcd870160225622deb6a62975e81f5d2c0a88692333133d1f3ce10046`
+(the test booted the `.x`). This is XEiJ coverage, not physical hardware.

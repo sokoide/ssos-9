@@ -54,18 +54,9 @@ int main(void) {
     blocks[69][11] = 0x10; blocks[69][26] = 2;
     SSScsiDevice d = {scsi_read, scsi_write, 20000, 0, 20000, 512, 0};
     SSScsiVolume volume = {0}; uint8_t out[4] = {0};
-    /* FAT1 is set up above but FAT2 is still zero: the copies disagree, so
-     * attach must reject the volume instead of write-mounting it. */
-    if (!ss_scsi_volume_attach(&volume, &d)) {
-        tty_puts("FAIL Human68k mismatch attach accepted\n"); for (;;) {}
-    }
-    /* FAT1 spans logical sectors 1..18, which the +32 partition offset maps
-     * to blocks[33..50]; mirror them into FAT2 at blocks[51..68]. */
-    for (unsigned s = 0; s < 18; s++)
-        for (unsigned i = 0; i < 1024; i++)
-            blocks[51 + s][i] = blocks[33 + s][i];
+    /* FAT2 is unused and deliberately differs from FAT1. */
     if (ss_scsi_volume_attach(&volume, &d)) {
-        tty_puts("FAIL Human68k attach rejected mirrored\n"); for (;;) {}
+        tty_puts("FAIL Human68k attach rejected unused FAT2\n"); for (;;) {}
     }
     if (ss_storage_store(&volume.storage, "A:\\TEST\\A.TXT",
                          (const uint8_t*)"abc", 3, 0)) {
@@ -75,11 +66,11 @@ int main(void) {
         out[0] != 'a' || out[1] != 'b' || out[2] != 'c') {
         tty_puts("FAIL Human68k read\n"); for (;;) {}
     }
-    /* A write updates every FAT copy: both copies must stay identical. */
+    /* The unused second FAT must remain untouched. */
     for (unsigned s = 0; s < 18; s++)
         for (unsigned i = 0; i < 1024; i++)
-            if (blocks[33 + s][i] != blocks[51 + s][i]) {
-                tty_puts("FAIL Human68k fat mirror\n"); for (;;) {}
+            if (blocks[51 + s][i]) {
+                tty_puts("FAIL Human68k FAT2 modified\n"); for (;;) {}
             }
     tty_puts("OK Human68k volume and storage\n");
     for (;;) {}

@@ -5,7 +5,7 @@ SUBDIRS := tools/makedisk
 ASM_FORMATTER ?= asmfmt
 CLANG_FORMAT ?= clang-format
 
-.PHONY: $(TOPTARGETS) all debug format loc test test-asm test-link test-qemu test-emulator test-emulator-a2 test-emulator-b1 test-emulator-list verify verify-check
+.PHONY: $(TOPTARGETS) all debug format loc test test-asm test-link test-qemu test-emulator test-emulator-list verify verify-check
 
 usage:
 	@echo "SSOS-9 build targets (preemptive only):"
@@ -78,33 +78,56 @@ test-qemu:
 # prompt. See docs/emulator-integration-test-plan.md.
 #
 # Select tests with EMULATOR_TESTS (space-separated IDs):
-#   make test-emulator                      # run all
+#   make test-emulator                      # run the default (always-green) set
 #   make test-emulator EMULATOR_TESTS=b1    # one test
 #   EMULATOR_TESTS="a2 b1" make test-emulator
 #   make test-emulator-list                 # list selectable IDs
-EMULATOR_ALL_TESTS = a2 a3 b1 e3
-EMULATOR_TESTS ?= $(EMULATOR_ALL_TESTS)
+# EMULATOR_ALL_TESTS is the full selection whitelist. The default
+# EMULATOR_TESTS is only the always-green core: c4 is a documented
+# environment-limit FAIL and h2 is gated behind SSOS9_ITEST_H2=1, so neither
+# belongs in a default run.
+EMULATOR_ALL_TESTS = a2 a3 b1 b2 b3 b4 c1 c2 c3 c4 c5 \
+	d1 d2 d3 d4 e1 e2 e3 f1 f2 g1 h2 h3 h4 h5 h6
+EMULATOR_TESTS ?= a2 a3 b1 e3
 
-.PHONY: test-emulator-list
+.PHONY: test-emulator-list $(addprefix test-emulator-,$(EMULATOR_ALL_TESTS))
 test-emulator-list:
 	@echo "selectable XEiJ integration tests (EMULATOR_TESTS):"
-	@echo "  a2  repeated XEiJ startup and return exercise"
+	@echo "  a2  repeated XEiJ startup/exit cycles with MFP mask check"
 	@echo "  a3  XDF IPL boot and PID 1 exit rejection (restarts XEiJ twice)"
 	@echo "  b1  Timer D tick rate measurement (200 Hz nominal)"
+	@echo "  b2  trace shows scheduler events during run counter"
+	@echo "  b3  real-interrupt preemption keeps input responsive"
+	@echo "  b4  real-key Ctrl-C kill and arena baseline restore"
+	@echo "  c1  help output matches host expectation"
+	@echo "  c2  redraw of output beyond 25 rows"
+	@echo "  c3  mux F1-F3 switching with per-screen retention"
+	@echo "  c4  Ctrl-]+digit window switch (documented environment-limit FAIL)"
+	@echo "  c5  console module key reporting (stages CONSOLE.S9M in A:\\TEST)"
+	@echo "  d1  create/read/replace on Human68k-formatted SCSI HDD"
+	@echo "  d2  editor save and reopen on target HDD"
+	@echo "  d3  on-target asm output byte-compared with host build"
+	@echo "  d4  ld + run disk fallback with golden comparison"
+	@echo "  e1  mux three-screen edit -> asm -> ld -> run flow"
+	@echo "  e2  linker negative case (undefined symbol rejection)"
 	@echo "  e3  builtin hello launch with trace evidence"
-	@echo 'usage: make test-emulator [EMULATOR_TESTS="a2 a3 b1 e3"]'
+	@echo "  f1  background builtins via kernel-entry children + reclaim"
+	@echo "  f2  background output survives screen switching"
+	@echo "  g1  spawn/kill/wait cycles restore arena baseline"
+	@echo "  h2  real floppy load path (env-limited; set SSOS9_ITEST_H2=1)"
+	@echo "  h3  Ctrl-C delivery only to the active mux window"
+	@echo "  h4  sread empty-file OK and >256-byte rejection"
+	@echo "  h5  XDF IPL boot + smount/sread + PID 1 rejection + ini restore"
+	@echo "  h6  repeated spawn cycles fully restore arena"
+	@echo 'usage: make test-emulator [EMULATOR_TESTS="<ids>"] (see list above)'
 
-test-emulator-a2: install
-	tools/emulator-itest.sh a2
-
-test-emulator-a3: install
-	tools/emulator-itest.sh a3
-
-test-emulator-b1: install
-	tools/emulator-itest.sh b1
-
-test-emulator-e3: install
-	tools/emulator-itest.sh e3
+# One convenience target per test. The test-emulator loop calls the script
+# directly; these exist for single-test runs and carry the install dep.
+define EMULATOR_TEST_RULE
+test-emulator-$(1): install
+	tools/emulator-itest.sh $(1)
+endef
+$(foreach t,$(EMULATOR_ALL_TESTS),$(eval $(call EMULATOR_TEST_RULE,$(t))))
 
 test-emulator: check-emulator-tests install
 	@for t in $(EMULATOR_TESTS); do \

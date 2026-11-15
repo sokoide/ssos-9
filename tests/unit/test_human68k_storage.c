@@ -40,15 +40,15 @@ int main(void) {
     memcpy(dir + 32, "..         ", 11); dir[43] = 0x10;
     SSScsiDevice device = {rd, wr, 20000, 0, 20000, 512, 0};
     SSScsiVolume volume = {0};
-    fat2[5] = 0x12; /* F-03: copies disagree -> write-attach must reject */
-    assert(ss_scsi_volume_attach(&volume, &device) != 0);
-    assert(!volume.storage.mounted);
-    fat2[5] = 0xff;
+    /* Human68k reserves FAT2; differing data must not prevent attach. */
+    fat2[5] = 0x12;
     assert(ss_scsi_volume_attach(&volume, &device) == 0);
+    uint8_t fat2_before[18u * 1024u];
+    memcpy(fat2_before, fat2, sizeof(fat2_before));
     const uint8_t msg[] = "hello"; uint8_t out[8] = {0};
     assert(ss_storage_store(&volume.storage, "A:\\TEST\\NEW.TXT", msg, 5, 0) == 0);
     assert(fat[6] == 0xff && fat[7] == 0xff);
-    assert(!memcmp(fat, fat2, 18u * 1024u)); /* every FAT copy updated */
+    assert(!memcmp(fat2_before, fat2, sizeof(fat2_before))); /* FAT2 is unused */
     assert(!memcmp(dir + 64, "NEW     TXT", 11));
     assert(dir[64 + 26] == 3 && dir[64 + 27] == 0);
     assert(dir[64 + 28] == 5 && dir[64 + 29] == 0);
@@ -80,7 +80,7 @@ int main(void) {
     assert(ss_storage_writer_write(&volume.storage, &writer, msg + 2, 3) == 3);
     assert(ss_storage_writer_end(&volume.storage, &writer, 1) == 0);
     assert(ss_storage_read(&volume.storage, "TEST/STREAM", out, 8) == 5 && !memcmp(out, msg, 5));
-    assert(!memcmp(fat, fat2, 18u * 1024u)); /* writer path mirrors, too */
+    assert(!memcmp(fat2_before, fat2, sizeof(fat2_before))); /* writer leaves FAT2 alone */
     /* R-07: replacing a file with an empty one releases its chain and
      * stores first=0 size=0. STREAM took freed cluster 3; NEW.TXT keeps 4;
      * TMP gets 5. */
@@ -102,21 +102,6 @@ int main(void) {
     fail_lba = -1;
     assert(ss_storage_store(&volume.storage, "TEST/BLOCKED", msg, 5, 0) != 0);
     memcpy(fat, saved_fat, sizeof(saved_fat)); /* fixture recovery */
-    /* F-03: a failure while writing the second FAT copy mid-fat_set fails
-     * the store and sets the fence. FAT1 was already updated, so the copies
-     * then disagree until external inspection: per-copy updates, no atomic
-     * volume swap. */
-    memset(&volume, 0, sizeof(volume));
-    assert(ss_scsi_volume_attach(&volume, &device) == 0);
-    assert(!memcmp(fat, fat2, 18u * 1024u));
-    fail_lba = (32u + 1u + 18u) * 2u; /* first physical block of FAT2 */
-    assert(ss_storage_store(&volume.storage, "TEST/FAILFAT2", msg, 5, 0) != 0);
-    assert(volume.storage.write_failed);
-    fail_lba = -1;
-    assert(ss_storage_store(&volume.storage, "TEST/BLOCKED", msg, 5, 0) != 0);
-    assert(memcmp(fat, fat2, 18u * 1024u) != 0);
-    memcpy(fat, saved_fat, sizeof(saved_fat));
-    memcpy(fat2, saved_fat, sizeof(saved_fat));
     memset(&volume, 0, sizeof(volume));
     block_bytes = 1024;
     device.device_blocks = device.volume_blocks = 10000; device.block_size = 1024;

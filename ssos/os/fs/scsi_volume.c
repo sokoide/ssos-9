@@ -44,10 +44,7 @@ int ss_scsi_volume_attach(SSScsiVolume* volume, const SSScsiDevice* device) {
     v->cluster_count = (uint16_t)h.clusters; v->sector_size = 1024;
     v->sectors_per_cluster = h.sectors_per_cluster; v->fat_bits = 16;
     v->fat_count = h.fat_count; v->human68k = 1; v->fat_big_endian = !h.fat_little_endian;
-    /* Same reject-on-mismatch rule as ss_storage_mount: a writer updates
-     * every FAT copy, so a volume where Human68k already left FAT1 != FAT2
-     * must not be write-mounted. */
-    if (ss_storage_fat_copies_match(v)) return -1;
+    /* Human68k reserves FAT2 as unused; it need not mirror FAT1. */
     v->context = &volume->device;
     storage.write_sector = write1024; storage.mounted = 1;
     volume->device = candidate; volume->storage = storage;

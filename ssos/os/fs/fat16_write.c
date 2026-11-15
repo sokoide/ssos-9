@@ -47,7 +47,7 @@ static int fat_set(SSFat12* v, SSFatWriteSector write, uint16_t cluster,
     uint32_t index = pos / v->sector_size;
     if (index >= v->fat_sectors) return -1;
     pos %= v->sector_size;
-    for (uint32_t copy = 0; copy < v->fat_count; copy++) {
+    for (uint32_t copy = 0; copy < (v->human68k ? 1u : v->fat_count); copy++) {
         uint32_t at = v->fat_start + copy * v->fat_sectors + index;
         if (v->read_sector(v->context, at, sector)) return -1;
         sector[pos] = (uint8_t)(v->fat_big_endian ? value >> 8 : value);

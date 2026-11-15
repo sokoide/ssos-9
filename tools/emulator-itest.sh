@@ -498,6 +498,7 @@ h68_absent() { # h68_absent <name> <ext> <timeout>; poll the A:\TEST listing
         snap
         if ! print -r -- "$s" | tr '\r' '\n' | grep -Eiq "^${name}[ ]+${ext}"; then
             type_cmd 'cd ..'
+            wait_screen 'A:\>' 10 || fail 'return to A:\ after checking file absence failed' "$s"
             return 0
         fi
     done
