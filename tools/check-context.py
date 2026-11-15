@@ -117,6 +117,13 @@ def canonicalize_eoi(seq):
                 and EOI_READ.fullmatch(seq[i + 1])
                 and EOI_AND.fullmatch(seq[i + 2])
                 and EOI_WRITE.fullmatch(seq[i + 3])):
+            load, read, mask, write = seq[i:i + 4]
+            address = re.search(r",(a\d)$", load).group(1)
+            data = re.search(r",(d\d)$", read).group(1)
+            if read != f"move.b ({address}),{data}" or mask != f"andi.b #0xef,{data}" or write != f"move.b {data},({address})":
+                out.append(seq[i])
+                i += 1
+                continue
             out.append(EOI_TOKEN)
             count += 1
             i += 4
@@ -261,6 +268,9 @@ MUTATIONS = (
     ("EOI alteration",
      lambda lines: replace_once(lines, "andi.b #0xef, d1",
                                 "andi.b #0xff, d1")),
+    ("EOI register alteration",
+     lambda lines: replace_once(lines, "andi.b #0xef, d1",
+                                "andi.b #0xef, d2")),
     ("EOI deletion",
      lambda lines: delete_block(lines, ["move.l #0xe88011, a0",
                                         "move.b (a0), d1",

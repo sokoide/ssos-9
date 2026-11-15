@@ -2,7 +2,7 @@
 
 - 作成: 2026-11-15 / 対象: commit `25310ab` (clean tree)
 - 再レビュー: 2026-11-15。以下は修正計画であり、再レビューではテスト・エミュレータを実行していない。入力時のPASS記録は変更後の検証結果を意味しない。
-- **実施結果: 2026-11-15 に §2 の全項目を実装済み。統合検証 `make verify` (クロスビルド + host/asm/link golden + QEMU 16/16) 合格。§6 に項目別の完了記録と残存する [要確認] を記載。**
+- **実施結果: 2026-11-15 に §2 のコード変更を実施。F-02/F-03/R-07 は媒体互換性未確認。統合検証 `make verify` (クロスビルド + host/asm/link golden + QEMU 16/16) 合格。§6 に項目別の完了記録と残存する [要確認] を記載。**
 - 入力: 5領域(カーネル/メモリ・モジュール・ブート/FS・CLI/apps/tests)レビュー + 主要指摘の一次確認 + ホストテスト実行(全PASS)
 - 仕様出典(本プランの §1 で使用):
   - Inside X68000 原典 `22_Library/情報・コンピュータ/Inside_X68000/` + x68k-master resources 蒸留版 `04_MFP.md`, `01_メモリマップ.md`, `35_BIOSWork.md`, `38_IOCS.md`
@@ -193,17 +193,17 @@ X-01は静的な対象範囲確認を先行し、安全な測定手順が確定�
 
 ## 6. 実施結果(2026-11-15)
 
-全項目を実装し、`make verify`(クロスビルド + `make test` 全体 + asm/link golden + QEMU 16/16)が合格。契約変更に伴うテスト側更新は t13(kill→130・capacity=0 カウントクエリ)、t16(FAT不一致アタッチ拒否・全コピー書込同一性)、`trace_ring_keeps_last_capacity_oldest_first`(R-14 の容量 64 化)の 3 件。
+コード変更を実施し、媒体互換性は X-03 待ち。`make verify`(クロスビルド + `make test` 全体 + asm/link golden + QEMU 16/16)が合格。契約変更に伴うテスト側更新は t13(kill→130・capacity=0 カウントクエリ)、t16(FAT不一致アタッチ拒否・全コピー書込同一性)、`trace_ring_keeps_last_capacity_oldest_first`(R-14 の容量 64 化)の 3 件。
 
 | ID | 状態 | 実装・検証の要点 |
 |---|---|---|
 | F-01 | 完了 | `lk_obj_header` 全フィールド個別上限(`LINK_RELOC_MAX=4096` 隣接で 4095)+ layout 減算形。`tests/unit/test_link_wrap.c` 34 checks、ASan/UBSan クリーン、旧実装への対照実験で UBSan が OOB を検出 |
 | B-01 | 完了 | linker.ld ASSERT(0x43C00)、makedisk OS 上限 211,968 検査、boot コメント修正。境界値実測(211,968 受理/211,969 拒否) |
 | B-02 | 完了 | NULL 初期化、boot>1024 エラー、`%u`。open をサイズ検査後に移動し過大入力時に出力を生成しない設計に |
-| F-02 | 完了 | スキップ条件を e[14..21] 非ゼロのみに狭める。ケースフラグ付きエントリ発見・18+3 不可視のテスト追加。実バイト配置は X-03 待ち |
-| F-03 | 完了 | `fat_set` 全コピー書込、`ss_storage_fat_copies_match()` 共有、アタッチ不一致拒否(専用 probe 温存)。mkfs.fat 実イメージ + fsck 4/4。非原子契約を storage.h に文書化 |
+| F-02 | 実装済み・媒体互換性未確認 | スキップ条件を e[14..21] 非ゼロのみに狭める。ケースフラグ付きエントリ発見・18+3 不可視のテスト追加。実バイト配置は X-03 待ち |
+| F-03 | 実装済み・媒体互換性未確認 | `fat_set` 全コピー書込、`ss_storage_fat_copies_match()` 共有、アタッチ不一致拒否(専用 probe 温存)。mkfs.fat 実イメージ + fsck 4/4。非原子契約を storage.h に文書化 |
 | K-01 | 完了 | `process_orphan[]` + `ss_process_reap_orphans()`(REAPING 中は触らない)。shell_loop と前景待ちループから呼出。通常の子の wait 結果を壊さないことを検証 |
-| T-01 | 完了 | check-context.py 全面再実装: 関数全文比較(handler/switch 含む)、EOI は厳密 4 行パターンのみ正規化+件数アサート(3==3==3)、`--selftest` で 5 種改変検出、`tests/Makefile test-context` 経由で test/verify に自動組み込み |
+| T-01 | 完了 | check-context.py 全面再実装: 関数全文比較(handler/switch 含む)、EOI は厳密 4 行パターンのみ正規化+件数アサート(3==3==3)、`--selftest` で 6 種改変検出、`tests/Makefile test-context` 経由で test/verify に自動組み込み |
 | K-02 | 完了 | `tst.w` 化 |
 | UI-01 | 完了 | `SSMux.columns` + min(80,·) クランプ、offset≠0 は警告+幅固定、rows>31→25 明示。host/QEMU スタブ差し替え可能 |
 | FS-04 | 完了 | `ss_storage_read` に writer/write_failed 拒否。既存 2 テストを新契約へ更新(fd reader は読み可を明文化) |
@@ -218,7 +218,7 @@ X-01は静的な対象範囲確認を先行し、安全な測定手順が確定�
 | R-04 | 完了 | `SS9_ERR_LIMIT/STATE/ID` を公開 ABI に定義(数値不変)、syscall.c は公開名で返却 |
 | R-05 | 完了 | kill 成功時のみ `SS9_EXIT_KILLED(130)` 記録。対話シェルのステータス汚染を 5 箇所で gating。t13 の期待値を 130 に更新 |
 | R-06 | 完了 | capacity=0 はカウントクエリ(count 設定・entries 不変・戻り値=count)。t13 に回帰追加 |
-| R-07 | 完了 | 未書込コミットは first=0・クラスタ非消費、空への置換は旧チェーン解放。Human68k 自身の慣行は X-03 待ち |
+| R-07 | 実装済み・媒体互換性未確認 | 未書込コミットは first=0・クラスタ非消費、空への置換は旧チェーン解放。Human68k 自身の慣行は X-03 待ち |
 | R-08 | 完了 | 閉じ引用符を 1 文字先読みで吸収、NUL 行は明示診断。golden 追加 |
 | R-09 | 完了 | `exg an,dn` を dn,an(C188)へ正規化、text 内 ABS16 警告(host stderr/target console)。golden 追加 |
 | R-10 | 完了 | plan 検査を個別上限+明示 fixup/name 上限へ |
@@ -227,7 +227,7 @@ X-01は静的な対象範囲確認を先行し、安全な測定手順が確定�
 | R-13 | 完了 | CRC32 ニブルテーブル(64B スタック、静的データ不要)。golden + zlib 照合でバイト同一、host 実測 1.86 倍 |
 | R-14 | 完了 | `SS_TRACE_CAPACITY` 16→64(+768B .bss、CLI スタック +768B)。trace ring テストを容量中立化 |
 
-### 残存する [要確認](コード修正の対象外)
+### 残存する [要確認](結果によりコード修正が必要)
 
 - **X-01**: 初期スタック範囲の静的列挙 + XEiJ 実測(手順は §3)
 - **X-02**: Timer D 実挙動の XEiJ 観察記録(S-1/S-2 は仕様適合済み、観察記録のみ)

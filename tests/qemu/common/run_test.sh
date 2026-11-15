@@ -31,11 +31,11 @@ verdict=$(grep -v -e '^qemu-system-m68k: terminating on signal' "$output" \
 case $verdict in
     OK|OK\ *)
         ;;
-    *\ OK)
-        ;;
     FAIL*)
         echo "QEMU test reported FAIL: $verdict" >&2
         exit 1
+        ;;
+    t[0-9][0-9]:\ OK|"before ISR after OK")
         ;;
     *)
         echo "QEMU test did not end with an OK verdict (last line: ${verdict:-none})" >&2

@@ -1,7 +1,7 @@
 # Preemptive-only verification entry points.
 .PHONY: test test-context test-native test-fat12 test-mux test-editor test-asm-host test-asm-golden test-link-host test-link-golden test-link test-qemu clean
 
-test: test-context test-native test-fat12 test-mux test-editor test-asm-host test-link-host test-link-wrap
+test: test-verdict test-context test-native test-fat12 test-mux test-editor test-asm-host test-link-host test-link-wrap
 
 # Production ISR <-> QEMU port sync check (tools/check-context.py).
 test-context:
@@ -104,3 +104,7 @@ clean:
 	$(MAKE) -C asm clean
 	$(MAKE) -C qemu clean
 	rm -f build/test-asm-parse build/test-asm-encode build/test-asm-obj build/asm-host build/link-host build/test-link-wrap
+
+.PHONY: test-verdict
+test-verdict:
+	sh test_qemu_verdict.sh
