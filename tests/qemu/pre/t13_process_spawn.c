@@ -452,6 +452,12 @@ int main(void) {
         list_request.count != 3)
         fail("syscall process queries");
 
+    /* capacity == 0 is a count query: no entries touched, live count returned. */
+    SS9ProcessListRequest count_request __attribute__((aligned(4))) = {0, 0, 0};
+    if (call_sys(SS9_SYS_PROC_LIST, (uint32_t)(uintptr_t)&count_request) != 3 ||
+        count_request.count != 3)
+        fail("syscall process count query");
+
     const char* syscall_name = "qcounter";
     const char* syscall_argv[] __attribute__((aligned(4))) = {"qcounter"};
     SS9SpawnRequest spawn_request
@@ -468,7 +474,7 @@ int main(void) {
         fail("syscall kill first");
     if (call_sys(SS9_SYS_WAIT, (uint32_t)(uintptr_t)&wait_request) !=
             (int32_t)first_pid ||
-        wait_request.exit_status != 0)
+        wait_request.exit_status != SS9_EXIT_KILLED)
         fail("syscall wait first");
     if (ss_process_kill(second_pid) != SS_OK)
         fail("kill second");
@@ -478,14 +484,15 @@ int main(void) {
         if (wait_status == SS_ERR_STATE)
             tick();
     }
-    if (wait_status != SS_OK || status != 0)
+    if (wait_status != SS_OK || status != SS9_EXIT_KILLED)
         fail("reap/wait second");
     SS9WaitRequest syscall_wait
         __attribute__((aligned(4))) = {(uint32_t)spawned_pid, 0, 0};
     if (call_sys(SS9_SYS_KILL, (uint32_t)spawned_pid) != SS_OK ||
         call_sys(SS9_SYS_WAIT, (uint32_t)(uintptr_t)&syscall_wait) !=
             spawned_pid ||
-        syscall_wait.exit_status != 0 || ss_memory_free_bytes() != free_before)
+        syscall_wait.exit_status != SS9_EXIT_KILLED ||
+        ss_memory_free_bytes() != free_before)
         fail("syscall spawn/kill/wait reclaim");
 
     SSProcessId parent_pid;

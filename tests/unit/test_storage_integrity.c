@@ -111,6 +111,8 @@ static void exercise(uint32_t sector_size, int stream_failure) {
     ss_storage_close_reader(&storage, &first);
     SSFat16Writer large_writer;
     assert(ss_storage_writer_begin(&storage, "LARGE.BIN", 0, &large_writer) == 0);
+    /* A one-shot read must not observe a transaction in flight. */
+    assert(ss_storage_read(&storage, "GOOD.BIN", actual, sizeof(actual)) == -1);
     assert(ss_storage_writer_write(&storage, &large_writer, big, 65536) == 65536);
     assert(ss_storage_writer_write(&storage, &large_writer, big + 65536,
                                    big_size - 65536) == (int32_t)(big_size - 65536));
@@ -140,6 +142,9 @@ static void exercise(uint32_t sector_size, int stream_failure) {
     assert(ss_fat16_writer_commit(&storage.volume, write_sector, &writer) == 0);
     assert(ss_storage_read(&storage, "STREAM.BIN", actual, sizeof(actual)) == 100);
     assert(memcmp(input, actual, 100) == 0);
+    /* Both FAT copies stay byte-identical through successful writes. */
+    assert(memcmp(disk.bytes + sector_size, disk.bytes + mirror * sector_size,
+                  fat_sectors * sector_size) == 0);
     size_t fat_bytes = fat_sectors * sector_size;
     uint8_t* saved_fat = malloc(fat_bytes);
     assert(saved_fat);
@@ -191,8 +196,14 @@ static void exercise(uint32_t sector_size, int stream_failure) {
     disk.fail_write = -1;
     assert(ss_storage_store(&storage, "LATER.BIN", input, 1, 0) != 0);
     assert(disk.writes == after_failure);
-    assert(ss_storage_read(&storage, "GOOD.BIN", actual, sizeof(actual)) == sizeof(actual));
+    /* The write fence also blocks one-shot reads (mirrors store); fd-based
+     * readers stay available for inspecting the fenced volume. */
+    assert(ss_storage_read(&storage, "GOOD.BIN", actual, sizeof(actual)) == -1);
+    SSFat12File fenced;
+    assert(ss_storage_open_reader(&storage, "GOOD.BIN", &fenced) == 0);
+    assert(ss_fat12_read(&fenced, actual, sizeof(actual)) == sizeof(actual));
     assert(memcmp(input, actual, sizeof(input)) == 0);
+    ss_storage_close_reader(&storage, &fenced);
     free(disk.bytes);
 }
 

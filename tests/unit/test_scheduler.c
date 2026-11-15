@@ -283,29 +283,33 @@ TEST(task_initializing_cannot_start) {
 
 /* ---- trace ring ---- */
 
-TEST(trace_ring_keeps_last_sixteen_oldest_first) {
+TEST(trace_ring_keeps_last_capacity_oldest_first) {
     ss_sched_init();
-    /* Each create+start pair logs CREATE then START; ten pairs exceed the
-     * ring capacity (16), so the ring must keep the newest 16 in
-     * oldest-first order: 8 CREATE + 8 START with non-decreasing ticks. */
-    for (unsigned i = 0; i < 10; i++) {
-        uint16_t id = make_task(5);
-        ASSERT_NEQ(id, 0);
-        ASSERT_EQ(ss_task_start(id), SS_OK);
-    }
+    /* Two live tasks (the table only holds SS_MAX_TASKS) rotate via
+     * ss_do_context_switch, logging one SWITCH event per call, so more
+     * switches than the capacity overfill the ring: it must keep the
+     * newest SS_TRACE_CAPACITY events in oldest-first order with
+     * non-decreasing ticks. */
+    uint16_t a = make_task(1);
+    ASSERT_NEQ(a, 0);
+    uint16_t b = make_task(1);
+    ASSERT_NEQ(b, 0);
+    ASSERT_EQ(ss_task_start(a), SS_OK);
+    ASSERT_EQ(ss_task_start(b), SS_OK);
+    for (unsigned i = 0; i < SS_TRACE_CAPACITY + 8u; i++)
+        ss_do_context_switch();
     SSTraceEvent events[SS_TRACE_CAPACITY];
     uint16_t count = ss_trace_read(events, SS_TRACE_CAPACITY);
     ASSERT_EQ(count, SS_TRACE_CAPACITY);
-    unsigned creates = 0, starts = 0;
+    unsigned switches = 0;
     for (unsigned i = 0; i < count; i++) {
         ASSERT_TRUE(events[i].kind >= SS_TRACE_CREATE &&
                     events[i].kind <= SS_TRACE_EXIT);
-        if (events[i].kind == SS_TRACE_CREATE) creates++;
-        if (events[i].kind == SS_TRACE_START) starts++;
+        if (events[i].kind == SS_TRACE_SWITCH)
+            switches++;
         if (i) ASSERT_TRUE(events[i - 1u].tick <= events[i].tick);
     }
-    ASSERT_EQ(creates, 8u);
-    ASSERT_EQ(starts, 8u);
+    ASSERT_EQ(switches, SS_TRACE_CAPACITY);
 }
 
 void run_scheduler_tests(void) {
@@ -331,5 +335,5 @@ void run_scheduler_tests(void) {
     RUN_TEST(task_sleep_without_runnable_peer_fails);
     RUN_TEST(task_sleep_rejects_ambiguous_long_delay);
     RUN_TEST(task_sleep_wakes_across_tick_wrap);
-    RUN_TEST(trace_ring_keeps_last_sixteen_oldest_first);
+    RUN_TEST(trace_ring_keeps_last_capacity_oldest_first);
 }

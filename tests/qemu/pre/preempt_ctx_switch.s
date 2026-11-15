@@ -8,15 +8,18 @@
 	| Timer D hardware does not exist on QEMU virt, so we drive the SAME handler
 	| via `trap #1`. A trap exception frame (SR 2B + PC 4B) is byte-identical to a
 	| Timer D interrupt frame, so the `.resume_interrupted` -> `rte` path runs
-	| exactly as on real hardware. This is the path Native tests and Phase B
-	| This path returns through rte after preemptive context restoration.
+	| exactly as on real hardware: after preemptive context restoration the CPU
+	| pops the saved SR+PC frame and returns through `rte`. That is the path the
+	| host-native tests cannot reach; everything else here is a port, and the
+	| only deliberate differences from the real handler are listed below.
 	|
 	| Differences from the real handler:
 	| * entered via trap #1 (vector 0x84), not MFP Timer D (vector 0x110)
 	| * MFP EOI writes (0xe88011 bit4 clear) removed - no MFP on QEMU virt
-	| * switch threshold defaults to 1 (switch every tick) for a clear 1212
-	| pattern.  The cadence test builds this source with
-	| --defsym SS_TIMERD_SWITCH_TICKS=10, matching production.
+	| * switch threshold defaults to 10 (switch every 10 ticks), matching the
+	| production `cmpi.b #10` in interrupts.s. Tests that need a switch on
+	| every tick link preempt_ctx_switch_1.o, built with
+	| --defsym SS_TIMERD_SWITCH_TICKS=1; see tests/qemu/pre/Makefile.
 
 #include "scheduler_abi.h"
 	|
@@ -27,7 +30,7 @@
 	.align   2
 
 	.ifndef SS_TIMERD_SWITCH_TICKS
-	.set    SS_TIMERD_SWITCH_TICKS, 1
+	.set    SS_TIMERD_SWITCH_TICKS, 10
 	.endif
 
 	.globl  _start

@@ -35,8 +35,8 @@ partial output can exist.
 - `image.c` — output image geometry, S9M1 header, CRC32, module name
   derivation, diagnostic text.
 - `main.c` — target CLI (ss9_* syscalls). Host driver: `host_main.c`.
-- `support.c` — memcpy and 32-bit mul/div (libgcc replacement, same as
-  `apps/asm/support.c`; target build only).
+- `../support.c` — memcpy and 32-bit mul/div (libgcc replacement, one
+  shared source with `apps/asm`; target build only).
 
 All state lives on the stack (the S9M1 code-only profile forbids static
 data); the module is built with a 65532-byte stack, within the contract

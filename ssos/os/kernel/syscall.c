@@ -25,6 +25,18 @@ static int copy_string(uint32_t address, char* out, uint32_t capacity) {
     return 0;
 }
 
+/* Report kernel process results under their public ABI names. The numeric
+ * values are identical (see SS9_ERR_* in include/ssos9/syscall.h); the
+ * mapping keeps the kernel constants out of the module-facing contract. */
+static int32_t public_status(int16_t status) {
+    switch (status) {
+    case SS_ERR_LIMIT: return SS9_ERR_LIMIT;
+    case SS_ERR_STATE: return SS9_ERR_STATE;
+    case SS_ERR_ID: return SS9_ERR_ID;
+    default: return status;
+    }
+}
+
 static int32_t process_info(uint32_t pid, uint32_t address) {
     if (!valid_buffer(address, sizeof(SS9ProcessInfo), 1))
         return SS9_ERR_PARAM;
@@ -77,7 +89,7 @@ int32_t ss_syscall_dispatch(uint32_t number, uint32_t request) {
             return SS9_ERR;
         status = ss_process_spawn(ss_process_current_id(), module_id, req.argc,
                                   argv, &pid);
-        return status == SS_OK ? (int32_t)pid : status;
+        return status == SS_OK ? (int32_t)pid : public_status(status);
     }
     case SS9_SYS_EXIT:
         if (ss_process_current_id() == 1)
@@ -100,9 +112,9 @@ int32_t ss_syscall_dispatch(uint32_t number, uint32_t request) {
             else
                 break;
         if (ss_process_kill_pending())
-            return SS_ERR_STATE;
+            return SS9_ERR_STATE;
         if (status != SS_OK)
-            return status;
+            return public_status(status);
         req->exit_status = result;
         return (int32_t)child;
     }
@@ -111,7 +123,7 @@ int32_t ss_syscall_dispatch(uint32_t number, uint32_t request) {
         if (ss_process_snapshot(request, &target) != SS_OK ||
             target.ppid != ss_process_current_id())
             return SS9_ERR;
-        return ss_process_kill((SSProcessId)request);
+        return public_status(ss_process_kill((SSProcessId)request));
     }
     case SS9_SYS_SLEEP: return (int16_t)ss_task_sleep(request);
     case SS9_SYS_PROC_INFO:
@@ -138,9 +150,15 @@ int32_t ss_syscall_dispatch(uint32_t number, uint32_t request) {
             SSProcessSnapshot snapshot;
             if (ss_process_snapshot_at(i, &snapshot) != SS_OK)
                 continue;
+            if (input.capacity == 0) {
+                /* Count query: report the number of live processes without
+                 * touching the caller's entries buffer. */
+                count++;
+                continue;
+            }
             if (count == input.capacity) {
                 req->count = count;
-                return SS_ERR_LIMIT;
+                return SS9_ERR_LIMIT;
             }
             SS9ProcessInfo* out = &entries[count++];
             out->pid = snapshot.pid;

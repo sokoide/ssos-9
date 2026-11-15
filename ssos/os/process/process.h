@@ -48,6 +48,9 @@ int16_t ss_process_snapshot_at(uint16_t index, SSProcessSnapshot* snapshot);
 int16_t ss_process_kill(SSProcessId pid);
 int16_t ss_process_wait(SSProcessId parent, SSProcessId child,
                         uint16_t* exit_status);
+/* Reclaim zombie slots of processes reparented to the root after their
+ * parent died. Cheap and idempotent; call from shell/wait polling points. */
+void ss_process_reap_orphans(void);
 SSProcessId ss_process_current_id(void);
 SSProcessId ss_process_current_parent_id(void);
 uint8_t ss_process_current_console(void);

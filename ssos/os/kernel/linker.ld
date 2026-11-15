@@ -53,4 +53,10 @@ SECTIONS
 	ASSERT(__ssosram_start < __ssosram_end, "SSOS RAM arena is empty")
 	ASSERT(__ssosram_end <= ORIGIN(SSOSRAM) + LENGTH(SSOSRAM),
 	       "SSOS RAM end exceeds supported 12 MiB address range")
+	/* The IPL (boot/main.s) reads 207 sectors from 0x010000, so the last
+	 * byte it loads is 0x010000 + 207*1024 = 0x43c00.  .data lands at
+	 * ORIGIN(RAM) with no separate load address, so anything past that
+	 * limit would boot with a partially unloaded .data. */
+	ASSERT(LOADADDR(.data) + SIZEOF(.data) <= 0x43c00,
+	       "kernel .data exceeds IPL load span (207 sectors from 0x010000)")
 }

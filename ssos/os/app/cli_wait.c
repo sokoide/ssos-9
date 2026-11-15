@@ -118,9 +118,17 @@ int16_t ss_cli_wait_pid(SSProcessId pid, uint16_t* exit_status,
     int kill_requested = 0;
     int16_t status;
     while ((status = ss_process_wait(ss_process_current_id(), pid, exit_status)) == SS_ERR_STATE) {
+        /* Cheap and idempotent: keep orphan zombies from piling up while a
+         * foreground job runs. */
+        ss_process_reap_orphans();
         if (ss_process_kill_pending()) return SS_CLI_WAIT_CANCELLED;
         if (ss_cli_poll_ctrl_c()) {
-            if (foreground_pid[ss_process_current_console()] != pid)
+            /* foreground_pid is shared state guarded by input_lock; read it
+             * under the lock and decide afterwards (no IOCS under the lock). */
+            input_lock();
+            SSProcessId foreground = foreground_pid[ss_process_current_console()];
+            input_unlock();
+            if (foreground != pid)
                 return SS_CLI_WAIT_CANCELLED;
             if (!kill_requested) {
                 status = ss_process_kill(pid);

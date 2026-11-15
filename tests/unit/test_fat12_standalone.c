@@ -207,7 +207,13 @@ int main(int argc, char** argv) {
     assert(ss_storage_store(&storage, "FAIL", (const uint8_t*)"x", 1, 0) != 0);
     scsi_status = 0;
     assert(ss_storage_store(&storage, "FAIL", (const uint8_t*)"x", 1, 0) != 0);
-    assert(ss_storage_read(&storage, "DATA", scsi_output, 4) == 4);
+    /* The write fence blocks one-shot reads; fd readers still work. */
+    assert(ss_storage_read(&storage, "DATA", scsi_output, 4) != 0);
+    SSFat12File fenced;
+    assert(ss_storage_open_reader(&storage, "DATA", &fenced) == 0);
+    assert(ss_fat12_read(&fenced, scsi_output, 4) == 4);
+    assert(memcmp(scsi_output, "new!", 4) == 0);
+    ss_storage_close_reader(&storage, &fenced);
     ss_storage_unmount(&storage);
     assert(ss_storage_read(&storage, "DATA", scsi_output, 4) != 0);
     SSScsiVolume attached = {0};

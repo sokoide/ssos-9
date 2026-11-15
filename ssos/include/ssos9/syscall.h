@@ -37,6 +37,17 @@ enum {
 #define SS9_ERR (-1)
 #define SS9_ERR_PARAM (-2)
 #define SS9_ERR_NOSYS (-38)
+/* Negative results reported by the trap ABI for SPAWN, WAIT, KILL, and
+ * PROC_LIST. The values mirror the kernel-internal SS_ERR_LIMIT,
+ * SS9_ERR_STATE, and SS_ERR_ID codes (kernel.h) and must not change:
+ * existing modules compare the numbers directly. */
+#define SS9_ERR_LIMIT (-4)
+#define SS9_ERR_STATE (-5)
+#define SS9_ERR_ID (-6)
+/* EXIT/KILL contract: SS9_SYS_WAIT reports the status the child passed to
+ * SS9_SYS_EXIT. A child terminated by SS9_SYS_KILL reports SS9_EXIT_KILLED
+ * instead, so a kill is distinguishable from a normal exit(0). */
+#define SS9_EXIT_KILLED 130u
 #define SS9_WRITE_MAX 256u
 #define SS9_FILE_MAX 65536u
 #define SS9_FILE_CREATE 0u
@@ -105,6 +116,11 @@ typedef struct {
     uint32_t info;
 } SS9ProcessInfoRequest;
 
+/* PROC_LIST: capacity is the SS9ProcessInfo capacity at entries and count
+ * reports how many live processes exist. capacity=0 is a count query:
+ * entries is not accessed, count receives the number of live processes, and
+ * the syscall returns that count. A nonzero capacity too small for every
+ * live process returns SS9_ERR_LIMIT with count set to the capacity. */
 typedef struct {
     uint16_t capacity;
     uint16_t count;

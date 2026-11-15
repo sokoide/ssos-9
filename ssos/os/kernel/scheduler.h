@@ -5,7 +5,10 @@
 #include "scheduler_abi.h"
 
 #define SS_MAX_SLEEP_TICKS 0x7FFFFFFFUL
-#define SS_TRACE_CAPACITY 16
+/* 64 events at 200 Hz hold a few seconds of history (16 held under one
+ * second, too short for the `trace` command to be useful). Cost: 1 KiB of
+ * .bss plus a 1 KiB local array in the CLI trace handler. */
+#define SS_TRACE_CAPACITY 64
 
 typedef enum {
     SS_TRACE_CREATE = 1,

@@ -20,7 +20,7 @@ ss_syscall_entry:
 	move.l  d0, -(sp)
 	move.w  #0x2700, sr
 	jsr     ss_process_syscall_leave
-	tst.l   d0
+	tst.w   d0
 	bne.s   .kill_current
 	move.l  (sp)+, d0
 	move.w  #0x2000, sr

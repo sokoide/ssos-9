@@ -14,6 +14,7 @@ move.w  (4, %pc, %d0.l), %d4
 move.l  #0x12345678, %d5
 move.w  #1024, %d6
 move.b  #'A,%d7
+move.b  #'B',%d6
 movea.l 0x20008, %a0
 movea.w %a0, %a1
 move.l  %d0, (%a4)

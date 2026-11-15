@@ -201,8 +201,10 @@ static AsmStatus field_pc16(Enc* e, const AsmExpr* expr) {
         return em16(e, (uint32_t)disp & 0xFFFFu);
     }
     if (v.kind == ASM_VAL_ABS) {
-        /* Absolute constants are literal displacements (GAS parity:
-         * move.w 4(%pc),%d0 keeps 0004, no target subtraction). */
+        /* Absolute constants are literal displacements. For d16(%pc) this
+         * matches GAS (move.w 4(%pc),%d0 keeps 0004); for branch operands
+         * it is the contract's decided semantics -- GAS relocates numeric
+         * branch operands against *ABS* instead. */
         if (!fit_d16(v.value))
             return err(e, ASM_ERR_RANGE);
         return em16(e, v.value & 0xFFFFu);
@@ -808,8 +810,12 @@ static AsmStatus enc_exg(Enc* e) {
         op = 0xC148u | (an_of(a) << 9) | an_of(b);
     } else if (is_dn(a) && is_an(b)) {
         op = 0xC188u | ((uint32_t)a->base_reg << 9) | an_of(b);
+    } else if (is_an(a) && is_dn(b)) {
+        /* exg is symmetric: normalize %an,%dn to the dn,an form, the same
+         * encoding GAS emits (contract). */
+        op = 0xC188u | ((uint32_t)b->base_reg << 9) | an_of(a);
     } else {
-        return err(e, ASM_ERR_BAD_OPERAND); /* %an,%dn form is invalid */
+        return err(e, ASM_ERR_BAD_OPERAND); /* mixed dn/an pairs only */
     }
     return em16(e, op);
 }

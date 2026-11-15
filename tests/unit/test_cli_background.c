@@ -6,6 +6,7 @@
 #include "../../ssos/os/module/builtin.h"
 #include "../../ssos/os/process/process.h"
 #include "../../ssos/os/fs/scsi_volume.h"
+#include "../../ssos/include/ssos9/syscall.h"
 #include "ssos_test.h"
 
 static SSTask root_task;
@@ -103,7 +104,10 @@ static void collect_child(SSProcessId pid) {
     if (ss_process_snapshot(pid, &child) != SS_OK)
         return;
     ss_curr_task = &root_task;
-    (void)ss_process_kill(pid);
+    /* Terminate through the task layer only: on the target a finished task
+     * reaches the reaper via ss_task_exit, not via ss_process_kill, so this
+     * helper must not stamp the kill exit status (R-05). */
+    (void)ss_task_cancel(child.task_id);
     ss_process_reap_task(child.task_id);
     (void)ss_task_release_terminated(child.task_id);
 }
@@ -377,8 +381,9 @@ TEST(cli_scsi_mount_write_read) {
     ASSERT_EQ(ss_system_open_writer(2, "NEW.TXT", 0), -1);
     ASSERT_EQ(ss_system_write_fd(2, 3, (const uint8_t*)"bad", 3), -1);
     ASSERT_EQ(ss_system_write_fd(1, 3, (const uint8_t*)"ab", 2), 2);
-    ASSERT_EQ(ss_system_file_load("TEST.TXT", chunk, sizeof(chunk)), 1);
-    ASSERT_EQ(chunk[0], 'y');
+    /* A whole-file load is rejected while a writer transaction is open;
+     * the committed content is readable again after the close below. */
+    ASSERT_EQ(ss_system_file_load("TEST.TXT", chunk, sizeof(chunk)), -1);
     ASSERT_EQ(ss_system_write_fd(1, 3, (const uint8_t*)"cd", 2), 2);
     ASSERT_EQ(ss_system_close_fd(1, 3), 0);
     ASSERT_EQ(ss_system_file_load("TEST.TXT", chunk, sizeof(chunk)), 4);
@@ -633,6 +638,131 @@ TEST(process_syscall_memory_ownership) {
     ASSERT_EQ(ss_process_wait(1, pid, &status), SS_OK);
 }
 
+/* K-01: a mux subshell's finished background jobs are reparented to the
+ * root on subshell death, and the root never waits for them. The orphan
+ * sweep must reclaim exactly those zombie slots. */
+TEST(orphan_zombie_is_reaped_by_orphan_sweep) {
+    setup_shell();
+    SSProcessId parent_pid, child_pid;
+    ASSERT_EQ(ss_process_spawn_kernel(1, "parent", dummy_entry, "p", 1,
+                                      &parent_pid), SS_OK);
+    ASSERT_EQ(ss_process_spawn_kernel(parent_pid, "child", dummy_entry, "c",
+                                      1, &child_pid), SS_OK);
+    SSProcessSnapshot snapshot;
+    ASSERT_EQ(ss_process_snapshot(child_pid, &snapshot), SS_OK);
+    ASSERT_EQ(snapshot.ppid, parent_pid);
+
+    /* The parent dies: the child is reparented to the root as an orphan. */
+    collect_child(parent_pid);
+    ASSERT_EQ(ss_process_snapshot(child_pid, &snapshot), SS_OK);
+    ASSERT_EQ(snapshot.ppid, 1);
+    ASSERT_EQ(snapshot.state, SS_PROCESS_READY);
+
+    /* The orphan exits; nobody waits for it, so the slot must stay ZOMBIE
+     * and out of reach for a non-parent wait. */
+    execute_child(child_pid);
+    ASSERT_EQ(ss_process_snapshot(child_pid, &snapshot), SS_OK);
+    ASSERT_EQ(snapshot.state, SS_PROCESS_ZOMBIE);
+    uint16_t status;
+    ASSERT_EQ(ss_process_wait(child_pid, child_pid, &status), SS_ERR_ID);
+    ASSERT_EQ(ss_process_snapshot(child_pid, &snapshot), SS_OK);
+    ASSERT_EQ(snapshot.state, SS_PROCESS_ZOMBIE);
+
+    /* The sweep frees the orphan slot, leaves the direct root child's
+     * zombie untouched, and keeps the table walkable. */
+    ss_process_reap_orphans();
+    ASSERT_EQ(ss_process_snapshot(child_pid, &snapshot), SS_ERR_ID);
+    ASSERT_EQ(ss_process_snapshot(parent_pid, &snapshot), SS_OK);
+    ASSERT_EQ(snapshot.state, SS_PROCESS_ZOMBIE);
+    unsigned live = 0;
+    for (uint16_t i = 0; i < SS_PROCESS_MAX; i++)
+        if (ss_process_snapshot_at(i, &snapshot) == SS_OK) live++;
+    ASSERT_EQ(live, 2);
+    ASSERT_EQ(ss_process_wait(1, parent_pid, &status), SS_OK);
+}
+
+TEST(normal_child_wait_result_untouched_by_orphan_sweep) {
+    setup_shell();
+    SSProcessId pid;
+    ASSERT_EQ(ss_process_spawn_kernel(1, "normal", dummy_entry, "n", 1,
+                                      &pid), SS_OK);
+    execute_child(pid);
+    SSProcessSnapshot snapshot;
+    ASSERT_EQ(ss_process_snapshot(pid, &snapshot), SS_OK);
+    ASSERT_EQ(snapshot.state, SS_PROCESS_ZOMBIE);
+    ss_process_reap_orphans();
+    ASSERT_EQ(ss_process_snapshot(pid, &snapshot), SS_OK);
+    ASSERT_EQ(snapshot.state, SS_PROCESS_ZOMBIE);
+    uint16_t status = 99;
+    ASSERT_EQ(ss_process_wait(1, pid, &status), SS_OK);
+    ASSERT_EQ(status, 0);
+    ASSERT_EQ(ss_process_snapshot(pid, &snapshot), SS_ERR_ID);
+}
+
+TEST(orphan_cycles_keep_slot_count_stable) {
+    setup_shell();
+    SSProcessSnapshot snapshot;
+    for (unsigned cycle = 0; cycle < 3 * SS_PROCESS_MAX; cycle++) {
+        SSProcessId parent_pid, child_pid;
+        ASSERT_EQ(ss_process_spawn_kernel(1, "parent", dummy_entry, "p", 1,
+                                          &parent_pid), SS_OK);
+        ASSERT_EQ(ss_process_spawn_kernel(parent_pid, "child", dummy_entry,
+                                          "c", 1, &child_pid), SS_OK);
+        collect_child(parent_pid);
+        execute_child(child_pid);
+        ss_process_reap_orphans();
+        ASSERT_EQ(ss_process_snapshot(child_pid, &snapshot), SS_ERR_ID);
+        uint16_t status;
+        ASSERT_EQ(ss_process_wait(1, parent_pid, &status), SS_OK);
+    }
+    unsigned live = 0;
+    for (uint16_t i = 0; i < SS_PROCESS_MAX; i++)
+        if (ss_process_snapshot_at(i, &snapshot) == SS_OK) live++;
+    ASSERT_EQ(live, 1);
+}
+
+/* R-05: a killed child must be distinguishable from exit(0) via wait. */
+TEST(killed_child_wait_reports_kill_status) {
+    setup_shell();
+    SSProcessId pid;
+    ASSERT_EQ(ss_process_spawn_kernel(1, "doomed", dummy_entry, "d", 1,
+                                      &pid), SS_OK);
+    ASSERT_EQ(ss_process_kill(pid), SS_OK);
+    collect_child(pid);
+    uint16_t status = 0;
+    ASSERT_EQ(ss_process_wait(1, pid, &status), SS_OK);
+    ASSERT_EQ(status, SS9_EXIT_KILLED);
+}
+
+/* R-05: interactive shells keep running after a failed command and must not
+ * reserve the error status on their own process; kernel-entry children
+ * still do. */
+TEST(interactive_shell_does_not_poison_exit_status) {
+    setup_shell();
+    ss_curr_task = &root_task;
+    char kill_bad[] = "kill 999";
+    ASSERT_EQ(ss_cli_execute_line(kill_bad), 0);
+    char wait_invalid[] = "wait 0";
+    ASSERT_EQ(ss_cli_execute_line(wait_invalid), 0);
+    char wait_missing[] = "wait 999";
+    ASSERT_EQ(ss_cli_execute_line(wait_missing), 0);
+    char unknown[] = "frobnicate";
+    ASSERT_EQ(ss_cli_execute_line(unknown), 0);
+    char unknown_args[] = "help extra";
+    ASSERT_EQ(ss_cli_execute_line(unknown_args), 0);
+    SSProcessSnapshot snapshot;
+    ASSERT_EQ(ss_process_snapshot(1, &snapshot), SS_OK);
+    ASSERT_EQ(snapshot.exit_status, 0);
+
+    /* A kernel-entry child still reserves the command's status. */
+    char line[] = "kill 999&";
+    ASSERT_EQ(ss_cli_execute_line(line), 0);
+    execute_child(2);
+    uint16_t status;
+    ASSERT_EQ(ss_process_wait(1, 2, &status), SS_OK);
+    ASSERT_EQ(status, 1);
+}
+
 void run_cli_background_tests(void) {
     RUN_TEST(process_reaper_claims_before_hook_and_release);
     RUN_TEST(process_syscall_memory_ownership);
@@ -644,6 +774,11 @@ void run_cli_background_tests(void) {
     RUN_TEST(cli_kernel_child_slot_failure_rolls_back);
     RUN_TEST(cli_invalid_ampersand_has_no_side_effect);
     RUN_TEST(cli_background_builtin_error_status);
+    RUN_TEST(orphan_zombie_is_reaped_by_orphan_sweep);
+    RUN_TEST(normal_child_wait_result_untouched_by_orphan_sweep);
+    RUN_TEST(orphan_cycles_keep_slot_count_stable);
+    RUN_TEST(killed_child_wait_reports_kill_status);
+    RUN_TEST(interactive_shell_does_not_poison_exit_status);
     RUN_TEST(cli_background_cancel_during_output_releases_console);
     RUN_TEST(cli_kernel_child_allocation_and_task_failure_roll_back);
     RUN_TEST(cli_scsi_mount_write_read);

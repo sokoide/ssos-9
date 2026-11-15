@@ -1,5 +1,6 @@
 #include "process.h"
 
+#include "../../include/ssos9/syscall.h"
 #include "../mem/system_arena.h"
 #include "../fs/storage.h"
 
@@ -13,6 +14,10 @@ static SSTask* process_tasks[SS_PROCESS_MAX];
 static void* process_blocks[SS_PROCESS_MAX];
 static uint8_t process_in_syscall[SS_PROCESS_MAX];
 static uint8_t process_kill_pending[SS_PROCESS_MAX];
+/* Set when a process was reparented to the root because its parent died.
+ * The root shell never waits for such orphans, so their zombies are
+ * reclaimed by ss_process_reap_orphans instead of ss_process_wait. */
+static uint8_t process_orphan[SS_PROCESS_MAX];
 static uint32_t next_pid;
 
 static void write_be32(uint8_t* destination, uint32_t value) {
@@ -68,6 +73,7 @@ static int16_t reserve_slot(SSProcessId parent, SSProcessId* pid,
     process_table[*slot].ppid = parent;
     process_table[*slot].console_id = process_table[parent_slot].console_id;
     process_table[*slot].state = SS_PROCESS_INITIALIZING;
+    process_orphan[*slot] = 0;
     ss_irq_restore(saved_sr);
     return SS_OK;
 }
@@ -80,6 +86,7 @@ static void clear_slot(uint16_t slot) {
     process_blocks[slot] = NULL;
     process_in_syscall[slot] = 0;
     process_kill_pending[slot] = 0;
+    process_orphan[slot] = 0;
     ss_irq_restore(saved_sr);
 }
 
@@ -94,6 +101,7 @@ int16_t ss_process_init(SSTask* root_task) {
         process_blocks[i] = NULL;
         process_in_syscall[i] = 0;
         process_kill_pending[i] = 0;
+        process_orphan[i] = 0;
     }
     process_table[0].pid = SS_PROCESS_ROOT_PID;
     process_table[0].ppid = SS_PROCESS_IDLE_PID;
@@ -210,6 +218,7 @@ int16_t ss_process_spawn(SSProcessId parent, SSModuleId module_id,
     process_blocks[slot] = block;
     process_in_syscall[slot] = 0;
     process_kill_pending[slot] = 0;
+    process_orphan[slot] = 0;
     status = ss_task_start(task_id);
     if (status == SS_OK)
         process->state = SS_PROCESS_READY;
@@ -273,6 +282,7 @@ int16_t ss_process_spawn_kernel(SSProcessId parent, const char* name,
     process_blocks[slot] = block;
     process_in_syscall[slot] = 0;
     process_kill_pending[slot] = 0;
+    process_orphan[slot] = 0;
     status = ss_task_start(task_id);
     if (status == SS_OK)
         process->state = SS_PROCESS_READY;
@@ -321,6 +331,10 @@ int16_t ss_process_kill(SSProcessId pid) {
     }
     uint16_t task_id = process_table[slot].task_id;
     if (process_in_syscall[slot]) {
+        /* Reserve the kill exit status so wait can tell a kill apart from a
+         * normal exit(0). A task that still leaves through its own exit
+         * path may overwrite it with the status it exited with. */
+        process_table[slot].exit_status = SS9_EXIT_KILLED;
         process_kill_pending[slot] = 1;
         if (tcb_table[task_id - 1].state == SS_TS_WAIT)
             (void)ss_task_wake(task_id);
@@ -328,6 +342,8 @@ int16_t ss_process_kill(SSProcessId pid) {
         return SS_OK;
     }
     int16_t status = (int16_t)ss_task_cancel(task_id);
+    if (status == SS_OK)
+        process_table[slot].exit_status = SS9_EXIT_KILLED;
     ss_irq_restore(saved_sr);
     return status;
 }
@@ -351,8 +367,35 @@ int16_t ss_process_wait(SSProcessId parent, SSProcessId child,
         ((volatile uint8_t*)&process_table[slot])[i] = 0;
     process_tasks[slot] = NULL;
     process_blocks[slot] = NULL;
+    process_orphan[slot] = 0;
     ss_irq_restore(saved_sr);
     return SS_OK;
+}
+
+/* Reclaim zombie slots that were reparented to the root process because
+ * their parent died. The root shell never issues a wait for those orphans,
+ * so without this sweep SS_PROCESS_MAX fills with zombies after a mux
+ * subshell exits leaving finished background jobs. Slots the root spawned
+ * itself never carry the orphan flag and keep their exit status for the
+ * explicit wait. Resource release already happened on the REAPING->ZOMBIE
+ * path in ss_process_reap_task; this only clears the table slot, following
+ * the same masked single-slot discipline as ss_process_wait. */
+void ss_process_reap_orphans(void) {
+    for (uint16_t i = 1; i < SS_PROCESS_MAX; i++) {
+        uint16_t saved_sr = ss_irq_save();
+        if (process_table[i].state != SS_PROCESS_ZOMBIE ||
+            process_table[i].ppid != SS_PROCESS_ROOT_PID ||
+            !process_orphan[i]) {
+            ss_irq_restore(saved_sr);
+            continue;
+        }
+        volatile uint8_t* bytes = (volatile uint8_t*)&process_table[i];
+        for (uint32_t j = 0; j < sizeof(process_table[i]); j++) bytes[j] = 0;
+        process_tasks[i] = NULL;
+        process_blocks[i] = NULL;
+        process_orphan[i] = 0;
+        ss_irq_restore(saved_sr);
+    }
 }
 
 uint8_t ss_process_current_console(void) {
@@ -517,8 +560,13 @@ void ss_process_reap_task(uint16_t task_id) {
         saved_sr = ss_irq_save();
         for (uint16_t child = 1; child < SS_PROCESS_MAX; child++) {
             if (process_table[child].state != SS_PROCESS_FREE &&
-                process_table[child].ppid == exiting_pid)
+                process_table[child].ppid == exiting_pid) {
                 process_table[child].ppid = SS_PROCESS_ROOT_PID;
+                /* Mark the orphan origin so ss_process_reap_orphans can
+                 * reclaim it; a direct child of the root keeps its status
+                 * for the explicit wait. */
+                process_orphan[child] = 1;
+            }
         }
         process_table[i].state = SS_PROCESS_ZOMBIE;
         process_table[i].data_base = NULL;

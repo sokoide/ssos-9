@@ -47,7 +47,7 @@ static int fat_set(SSFat12* v, SSFatWriteSector write, uint16_t cluster,
     uint32_t index = pos / v->sector_size;
     if (index >= v->fat_sectors) return -1;
     pos %= v->sector_size;
-    for (uint32_t copy = 0; copy < (v->human68k ? 1u : v->fat_count); copy++) {
+    for (uint32_t copy = 0; copy < v->fat_count; copy++) {
         uint32_t at = v->fat_start + copy * v->fat_sectors + index;
         if (v->read_sector(v->context, at, sector)) return -1;
         sector[pos] = (uint8_t)(v->fat_big_endian ? value >> 8 : value);
@@ -338,7 +338,12 @@ int ss_fat16_writer_commit(SSFat12* v, SSFatWriteSector write,
     uint8_t sector[1024] __attribute__((aligned(4)));
     if (!v || !write || !writer || !writer->active) return -1;
     if (v->human68k) {
-        if (!writer->first && writer_allocate(v, write, writer)) return -1;
+        /* A commit without any write owns no cluster (first=0, size=0),
+         * matching the legacy path and the FAT convention for empty files.
+         * Replacing a file with an empty one therefore releases its whole
+         * chain. (Offset-based truncation does not exist in this writer.) */
+        if (!writer->first && writer->size && writer_allocate(v, write, writer))
+            return -1;
         if (writer->slot_was_end && writer->human_has_next_sector) {
             if (v->read_sector(v->context, writer->human_next_sector, sector)) return -1;
             sector[0] = 0;

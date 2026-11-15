@@ -88,6 +88,7 @@ static int save(Editor* e) {
     int32_t fd = ss9_open(e->name, e->existing ? SS9_OPEN_REPLACE : SS9_OPEN_CREATE);
     if (fd < 0) { e->message = "Save failed: open"; return -1; }
     if (ss9_write((uint32_t)fd, e->text.data, e->text.length) != (int32_t)e->text.length) {
+        (void)ss9_close((uint32_t)fd);
         e->message = "Save failed: write";
         return -1;
     }

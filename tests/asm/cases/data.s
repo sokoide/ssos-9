@@ -3,6 +3,9 @@
 .even
 .word 0x1234, -1
 .long 0x12345678
+.byte 7
+.even
+.word 9
 
 foo:
 	.word   foo
@@ -11,6 +14,7 @@ foo:
 	.word   size*2
 	.byte   size>>2
 	.byte   'Z
+	.byte   'Z'
 	.ascii  "AB"
 	.asciz  "CD"
 	.space  4

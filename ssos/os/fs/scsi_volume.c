@@ -35,13 +35,20 @@ int ss_scsi_volume_attach(SSScsiVolume* volume, const SSScsiDevice* device) {
         fat_header[2] != 0xff || fat_header[3] != 0xff) return -1;
     SSStorage storage = {0};
     SSFat12* v = &storage.volume;
-    v->read_sector = read1024; v->context = &volume->device;
+    /* Validate against the candidate so a rejected volume leaves the output
+     * untouched, then re-point the reader at the owned device copy. */
+    v->read_sector = read1024; v->context = &candidate;
     v->total_sectors = h.sectors; v->fat_start = h.fat_start;
     v->root_start = h.root_start; v->data_start = h.data_start;
     v->fat_sectors = h.fat_sectors; v->root_entries = h.root_entries;
     v->cluster_count = (uint16_t)h.clusters; v->sector_size = 1024;
     v->sectors_per_cluster = h.sectors_per_cluster; v->fat_bits = 16;
     v->fat_count = h.fat_count; v->human68k = 1; v->fat_big_endian = !h.fat_little_endian;
+    /* Same reject-on-mismatch rule as ss_storage_mount: a writer updates
+     * every FAT copy, so a volume where Human68k already left FAT1 != FAT2
+     * must not be write-mounted. */
+    if (ss_storage_fat_copies_match(v)) return -1;
+    v->context = &volume->device;
     storage.write_sector = write1024; storage.mounted = 1;
     volume->device = candidate; volume->storage = storage;
     return 0;

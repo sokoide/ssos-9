@@ -38,24 +38,48 @@ LinkStatus lk_image_plan(LinkImage* image, const LinkLayout* layout,
     image->image_size = 0;
     if (image->text_size == 0)
         return LINK_ERR_EMPTY_TEXT; /* entry is text[0] */
+    /* State every region bound explicitly instead of relying on the
+     * component caps happening to sum below the buffer: code by
+     * LINK_TEXT_MAX, init data by LINK_DATA_MAX (pass 1 caps
+     * data_total), the name by the module name rule, and the fixup
+     * region by its own worst case 12 * LINK_FIXUP_MAX. With all
+     * components capped, data_offset + init_size cannot wrap and the
+     * worst legal geometry (80 + 32768 + 12288 + 31 + 3072 = 48239)
+     * still fits LINK_IMAGE_BUF_MAX. */
     if (image->code_size > LINK_TEXT_MAX ||
-        image->data_offset + image->init_size > LINK_IMAGE_BUF_MAX) {
+        image->init_size > LINK_DATA_MAX ||
+        image->name_size > LINK_MODULE_NAME_MAX ||
+        image->data_offset + image->init_size > LINK_IMAGE_BUF_MAX ||
+        image->fixup_offset + 12u * LINK_FIXUP_MAX > LINK_IMAGE_BUF_MAX) {
         return LINK_ERR_LIMIT;
     }
     return LINK_OK;
 }
 
 /* IEEE CRC32 (reflected polynomial 0xEDB88320, init/final XOR
- * 0xFFFFFFFF), computed bit by bit to keep the code small. */
+ * 0xFFFFFFFF), two 4-bit table steps per byte. The 16-entry table is
+ * built on the stack per call: the S9M1 code-only profile has no static
+ * writable data, and a 1 KB byte-index table would eat a third of the
+ * 32768-byte .text budget as rodata. The result is bit-identical to the
+ * bit-serial version (same polynomial per step) and matches zlib
+ * crc32. */
 static uint32_t crc32_add(uint32_t crc, const uint8_t* data, uint32_t length) {
+    uint32_t table[16];
     uint32_t i;
-    int bit;
+    uint32_t n;
+    for (n = 0; n < 16; n++) {
+        uint32_t value = n;
+        int bit;
+        for (bit = 0; bit < 4; bit++) {
+            uint32_t mask = 0u - (value & 1u);
+            value = (value >> 1) ^ (0xEDB88320u & mask);
+        }
+        table[n] = value;
+    }
     for (i = 0; i < length; i++) {
         crc ^= data[i];
-        for (bit = 0; bit < 8; bit++) {
-            uint32_t mask = 0u - (crc & 1u);
-            crc = (crc >> 1) ^ (0xEDB88320u & mask);
-        }
+        crc = (crc >> 4) ^ table[crc & 0xFu];
+        crc = (crc >> 4) ^ table[crc & 0xFu];
     }
     return crc;
 }

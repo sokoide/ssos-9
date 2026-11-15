@@ -10,6 +10,11 @@ void asm_ctx_init(AsmCtx* ctx) {
     ctx->section = ASM_SECTION_TEXT;
 }
 
+void asm_set_warn(AsmCtx* ctx, AsmWarnFn fn, void* user) {
+    ctx->warn = fn;
+    ctx->warn_user = user;
+}
+
 const char* asm_status_message(AsmStatus status) {
     switch (status) {
     case ASM_OK: return "ok";
@@ -35,6 +40,7 @@ const char* asm_status_message(AsmStatus status) {
     case ASM_ERR_UNSUPPORTED: return "unsupported instruction form";
     case ASM_ERR_WRITE: return "object write failed";
     case ASM_ERR_SOURCE_LONG: return "source too long";
+    case ASM_ERR_ODD_OFFSET: return "instruction or word/long data at odd offset";
     }
     return "unknown error";
 }

@@ -17,6 +17,7 @@ static void clear_windows(SSMux* mux) {
 void ss_mux_init(SSMux* mux) {
     if (!mux) return;
     mux->rows = SS_MUX_ROWS;
+    mux->columns = SS_MUX_COLUMNS;
     clear_windows(mux);
 }
 
@@ -24,6 +25,28 @@ int ss_mux_set_rows(SSMux* mux, uint8_t rows) {
     if (!mux || !rows || rows > SS_MUX_ROWS_MAX) return -1;
     mux->rows = rows;
     clear_windows(mux);
+    return 0;
+}
+
+int ss_mux_set_columns(SSMux* mux, uint8_t columns) {
+    if (!mux || !columns || columns > SS_MUX_COLUMNS) return -1;
+    mux->columns = columns;
+    clear_windows(mux);
+    return 0;
+}
+
+int ss_mux_region_decode(uint32_t start_offset, uint32_t d2, SSMuxRegion* out) {
+    if (!out) return -1;
+    uint32_t rows = (d2 & 0xffffu) + 1u;    /* d2.w = rows-1 */
+    uint32_t columns = (d2 >> 16) + 1u;     /* d2.hw = columns-1 */
+    /* Rows beyond the 31-row hardware text screen cannot be displayed; a
+     * bogus report falls back to the known-good 25-row default. */
+    if (!rows || rows > SS_MUX_ROWS_MAX) rows = SS_MUX_ROWS;
+    if (!columns || columns > SS_MUX_COLUMNS) columns = SS_MUX_COLUMNS;
+    out->rows = (uint8_t)rows;
+    out->offset_supported = start_offset == 0;
+    if (!out->offset_supported) columns = SS_MUX_COLUMNS;
+    out->columns = (uint8_t)columns;
     return 0;
 }
 
@@ -44,7 +67,7 @@ int ss_mux_clear(SSMux* mux, uint8_t window_id) {
 }
 
 int ss_mux_locate(SSMux* mux, uint8_t window_id, uint8_t x, uint8_t y) {
-    if (!mux || window_id >= SS_MUX_WINDOWS || x >= SS_MUX_COLUMNS ||
+    if (!mux || window_id >= SS_MUX_WINDOWS || x >= mux->columns ||
         y >= mux->rows)
         return -1;
     mux->windows[window_id].x = x;
@@ -75,7 +98,7 @@ int ss_mux_write(SSMux* mux, uint8_t window_id, const uint8_t* data,
             if (window->x) window->x--;
         } else if (c >= 32 && c != 127) {
             window->cells[window->y][window->x++] = c;
-            if (window->x == SS_MUX_COLUMNS) {
+            if (window->x == mux->columns) {
                 window->x = 0;
                 newline(window, mux->rows);
             }

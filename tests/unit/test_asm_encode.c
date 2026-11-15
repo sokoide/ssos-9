@@ -701,7 +701,9 @@ int main(void) {
     ok("exg %d0,%a1", &s, B(0xC1, 0x89), 2);
     s = insn(ASM_MN_EXG, ASM_SIZE_NONE);
     ops2(&s, op_an(0), op_dn(1));
-    er("exg %a0,%d1 rejected", &s, ASM_ERR_BAD_OPERAND, ASM_ERR_BAD_OPERAND);
+    /* %an,%dn normalizes to the dn,an encoding (GAS parity): same bytes
+     * as exg %d1,%a0 */
+    ok("exg %a0,%d1 -> dn,an form", &s, B(0xC3, 0x88), 2);
     s = insn(ASM_MN_SWAP, ASM_SIZE_NONE);
     ops(&s, op_dn(0));
     ok("swap %d0", &s, B(0x48, 0x40), 2);

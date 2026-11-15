@@ -17,4 +17,12 @@ void ss_cli_console_mux_enable(void);
 int ss_cli_console_mux_select(uint8_t window);
 uint8_t ss_cli_console_mux_active(void);
 
+#if defined(SS_HOST_TEST) || defined(SS_QEMU_TEST)
+/* B_CONSOL result stand-ins for host harnesses, mirroring the IOCS layout
+ * (d1 start offset, d2 packed columns-1 / rows-1). Both zero keeps the
+ * synthetic default region, matching pre-query behavior. */
+extern uint32_t ss_test_console_offset;
+extern uint32_t ss_test_console_d2;
+#endif
+
 #endif

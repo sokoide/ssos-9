@@ -2,6 +2,7 @@
 
 - 作成: 2026-11-15 / 対象: commit `25310ab` (clean tree)
 - 再レビュー: 2026-11-15。以下は修正計画であり、再レビューではテスト・エミュレータを実行していない。入力時のPASS記録は変更後の検証結果を意味しない。
+- **実施結果: 2026-11-15 に §2 の全項目を実装済み。統合検証 `make verify` (クロスビルド + host/asm/link golden + QEMU 16/16) 合格。§6 に項目別の完了記録と残存する [要確認] を記載。**
 - 入力: 5領域(カーネル/メモリ・モジュール・ブート/FS・CLI/apps/tests)レビュー + 主要指摘の一次確認 + ホストテスト実行(全PASS)
 - 仕様出典(本プランの §1 で使用):
   - Inside X68000 原典 `22_Library/情報・コンピュータ/Inside_X68000/` + x68k-master resources 蒸留版 `04_MFP.md`, `01_メモリマップ.md`, `35_BIOSWork.md`, `38_IOCS.md`
@@ -16,7 +17,7 @@
 | S-2 | IPRB/ISRB(EOI)処理が実機で不明 | 同: IPR はベクタ渡し時に自動クリア(:212)。ISR はベクタ渡しで set、**該当ビットに 0 を書くとクリア(EOI)**(:216)。実装(`interrupts.s:129-133` 等)は ISRB($E88011)を read-modify-write で bit4 のみ 0 クリア(他ビット保持)し、IPRB は通常パスで書かない → 仕様どおり。VR は `(VR & 0x08) \| 0x40`(`interrupts.s:47-50`)で Human68k の EOI モードビット(S, bit3)を保存: S=1(software EOI)ならこの書込は必須、S=0(auto EOI)なら ISR は自動復帰済みで書込は無害。割込みベクタ = VR上位$4 + オフセット$4 = **$44** → テーブル $110 ✓。プリスケーラ TCDCR 下位=$7(/200)・TDDR=100 → 4MHz/200/100=**200Hz**(資料の計算例と同形式)✓ | **実装適合・変更不要**(実機観察タスクは §3 に残す) |
 | S-3 | `cli_console.c` が B_CONSOL の列数・開始位置を無視 | resources/38_IOCS.md:965-976 (`_B_CONSOL` $2e): 返り **d2.hw = 桁数-1 (0〜127)**、**d2.w = 行数-1 (0〜63)**、**d1.l = 変更前の表示開始オフセット (X/8+Y\*128)**。実装は d2.w(行数)のみ読み、d2.hw(桁数)と d1(開始オフセット)を無視 | **指摘確定** → 修正 UI-01 |
 | S-4 | 初期スタック SP=$010000 の下方成長が IOCS ワークを壊す? | Inside X68000 メモリマップ(原典 01章: $000000〜$00FFFF は「IPLイメージ」領域。リセット直後のみ $FF0000〜 の ROM ミラーで、$FF0000〜 へのアクセスで DRAM に切替 = **通常時は普通の DRAM**)。IOCS ワークは $800 起点(キー状態等、少なくとも $97x まで、ROM 版で追加あり)。SP=$010000 からの下方成長はこの領域と共有 | **リスクは IOCS ワーク上限で決まる。コード変更より実測が先** → §3 X-01 |
-| S-5 | `_B_READ` の引数とステータスマスクが実機仕様と合うか | PRO-68K 第3章: d1.w=PDA×256+MODE(**$90=2HD DRIVE0**〜$93、mode $70)、d2.l=セクタ長(3=1024B)/track/side/sec、d3.l=バイト数、a1.l=バッファ。返り d0.l = **ST0(bit31-24)/ST1(23-16)/ST2(15-8)/シリンダ(7-0)**。`boot/main.s` の `0x9070`, `0x03000002`, 207セクタ一括読込は仕様適合。マスク `and.l #0xF0FFFF00` = ST0 上位ニブル(IC/SE/EC/NR)+ST1+ST2 を検査し、ST0 下位ニブルとシリンダを除外。通過条件は `(ST0 & 0xF0)==0 && ST1==0 && ST2==0` | **説明を訂正。マスク変更要否は各ステータスビットの仕様確認後に判断** |
+| S-5 | `_B_READ` の引数とステータスマスクが実機仕様と合うか | PRO-68K 第3章: d1.w=PDA×256+MODE(**$90=2HD DRIVE0**〜$93、mode $70)、d2.l=セクタ長(3=1024B)/track/side/sec、d3.l=バイト数、a1.l=バッファ。返り d0.l = **ST0(bit31-24)/ST1(23-16)/ST2(15-8)/シリンダ(7-0)**。`boot/main.s` の `0x9070`, `0x03000002`, 207セクタ一括読込は仕様適合。マスク `and.l #0xF0FFFF00` = ST0 上位ニブル(IC/SE/EC)+ST1+ST2 を検査し、ST0 下位ニブル(NR/H/ドライブ番号)とシリンダを除外。通過条件は `(ST0 & 0xF0)==0 && ST1==0 && ST2==0` | **実装適合・変更不要(2026-11-15 付録6.3で確定)**: 検査対象ビットは全てエラー要因で正常終了時0(ST2のbit3/2はベリファイ用でB_READでは常に0)。除外したNR(非Ready)はIC=01で検出されるためマスク外で可 |
 | S-6 | Human68k 予約領域(ディレクトリエントリ 0x0C-0x15)のバイト配置 | PRO-68K/IOCS/FileSystem 資料のいずれにも記載なし(Human68k 内部実装)。逆情報(UMA, oryaan/gist)では 0x0C-0x0D=ケースフラグ、0x0E-0x15=18+3拡張名 | **公式一次資料なし → 実イメージ確認を前提に修正**(F-02) |
 
 ## 2. 修正項目
@@ -182,10 +183,54 @@
 5. **P2の契約・堅牢性**: FS-04、UI-01、A-02、T-02、R-04〜R-11の残項目。ABI変更は互換性確認後に行う。A-01は先行調査 → 方針決定 → 実装の順とする。
 6. **P3の整理・任意改善**: R-12〜R-14。CRC32高速化は正確性修正と分離する。
 
-X-01は静的な対象範囲確認を先行し、安全な測定手順が確定してから実行する。X-02とS-5のステータス仕様確認は独立した調査として進める。いずれもコード修正やQEMUのPASSで完了扱いにしない。
+X-01は静的な対象範囲確認を先行し、安全な測定手順が確定してから実行する。X-02は独立した調査として進める。いずれもコード修正やQEMUのPASSで完了扱いにしない。
 
 ## 5. スコープ外
 
 - 協調スケジューラ・GUI/ウィンドウ subsystems の再導入(AGENTS.md の禁止維持)
 - 本番 MFP/IOCS コンソール/Human68k 起動の包括的実機検証(境界表明のまま。§3 の観察記録で止める)
 - 性能最適化(CRC32 以外)、C ランタイム一般化、リダイレクト
+
+## 6. 実施結果(2026-11-15)
+
+全項目を実装し、`make verify`(クロスビルド + `make test` 全体 + asm/link golden + QEMU 16/16)が合格。契約変更に伴うテスト側更新は t13(kill→130・capacity=0 カウントクエリ)、t16(FAT不一致アタッチ拒否・全コピー書込同一性)、`trace_ring_keeps_last_capacity_oldest_first`(R-14 の容量 64 化)の 3 件。
+
+| ID | 状態 | 実装・検証の要点 |
+|---|---|---|
+| F-01 | 完了 | `lk_obj_header` 全フィールド個別上限(`LINK_RELOC_MAX=4096` 隣接で 4095)+ layout 減算形。`tests/unit/test_link_wrap.c` 34 checks、ASan/UBSan クリーン、旧実装への対照実験で UBSan が OOB を検出 |
+| B-01 | 完了 | linker.ld ASSERT(0x43C00)、makedisk OS 上限 211,968 検査、boot コメント修正。境界値実測(211,968 受理/211,969 拒否) |
+| B-02 | 完了 | NULL 初期化、boot>1024 エラー、`%u`。open をサイズ検査後に移動し過大入力時に出力を生成しない設計に |
+| F-02 | 完了 | スキップ条件を e[14..21] 非ゼロのみに狭める。ケースフラグ付きエントリ発見・18+3 不可視のテスト追加。実バイト配置は X-03 待ち |
+| F-03 | 完了 | `fat_set` 全コピー書込、`ss_storage_fat_copies_match()` 共有、アタッチ不一致拒否(専用 probe 温存)。mkfs.fat 実イメージ + fsck 4/4。非原子契約を storage.h に文書化 |
+| K-01 | 完了 | `process_orphan[]` + `ss_process_reap_orphans()`(REAPING 中は触らない)。shell_loop と前景待ちループから呼出。通常の子の wait 結果を壊さないことを検証 |
+| T-01 | 完了 | check-context.py 全面再実装: 関数全文比較(handler/switch 含む)、EOI は厳密 4 行パターンのみ正規化+件数アサート(3==3==3)、`--selftest` で 5 種改変検出、`tests/Makefile test-context` 経由で test/verify に自動組み込み |
+| K-02 | 完了 | `tst.w` 化 |
+| UI-01 | 完了 | `SSMux.columns` + min(80,·) クランプ、offset≠0 は警告+幅固定、rows>31→25 明示。host/QEMU スタブ差し替え可能 |
+| FS-04 | 完了 | `ss_storage_read` に writer/write_failed 拒否。既存 2 テストを新契約へ更新(fd reader は読み可を明文化) |
+| A-01 | 完了(決定) | objdump -dr 実測: GAS は数値分岐を絶対アドレス解釈しリンク時折り畳み(R_68K_PC16 *ABS*、addend 配置非依存)。PIC 契約で表現不可のため**リテラル変位を正式契約として明文化**、selftest で動作固定。d16(%pc) は GAS 一致を明記 |
+| A-02 | 完了 | `ASM_ERR_ODD_OFFSET`(命令・.dc.w/.dc.l を pass 1 で検出)。正例・負例 golden 追加 |
+| E-01 | 完了 | save 失敗経路に close 追加(fake 層が観測できないためテスト拡張はなし) |
+| T-02 | 完了 | 閾値既定 10(要速切替は t04/t07/t12 のみ =1 を明示)、テスト単位 TIMEOUT(t13/t14=6, t15=10)、verdict は最終非空行の厳密判定、run 全実行+サマリ。xelf-gcc は技術的可行(1 行変更)だが PATH 前提追加のため未切替 |
+| T-03 | 完了 | mktemp 実在 74 文字ファイル+拒否理由 grep(`source name is not 8.3`)。退行ハーネスで非空振りを証明 |
+| R-01 | 完了 | `INT_MIN/-1 == INT_MIN`(unsigned 経由)、単項マイナスも同様。剰余演算子は文法に存在せず適用外を契約明記 |
+| R-02 | 完了 | `counter_image` に aligned(2) |
+| R-03 | 完了 | `foreground_pid` 読取を input_lock 下へ、`show_debug` の TCB 読取を irq マスク窓へ(表示はマスク解除後) |
+| R-04 | 完了 | `SS9_ERR_LIMIT/STATE/ID` を公開 ABI に定義(数値不変)、syscall.c は公開名で返却 |
+| R-05 | 完了 | kill 成功時のみ `SS9_EXIT_KILLED(130)` 記録。対話シェルのステータス汚染を 5 箇所で gating。t13 の期待値を 130 に更新 |
+| R-06 | 完了 | capacity=0 はカウントクエリ(count 設定・entries 不変・戻り値=count)。t13 に回帰追加 |
+| R-07 | 完了 | 未書込コミットは first=0・クラスタ非消費、空への置換は旧チェーン解放。Human68k 自身の慣行は X-03 待ち |
+| R-08 | 完了 | 閉じ引用符を 1 文字先読みで吸収、NUL 行は明示診断。golden 追加 |
+| R-09 | 完了 | `exg an,dn` を dn,an(C188)へ正規化、text 内 ABS16 警告(host stderr/target console)。golden 追加 |
+| R-10 | 完了 | plan 検査を個別上限+明示 fixup/name 上限へ |
+| R-11 | 完了 | 行番号 +1、base 内ドットで NAME_LONG。`asm_host_main --selftest` で恒久化 |
+| R-12 | 完了 | coop 空ディレクトリ削除、壊れたコメント修正、support.c を `apps/support.c` に単一化(両 Makefile が同一ソースをコンパイル、tests/Makefile も更新) |
+| R-13 | 完了 | CRC32 ニブルテーブル(64B スタック、静的データ不要)。golden + zlib 照合でバイト同一、host 実測 1.86 倍 |
+| R-14 | 完了 | `SS_TRACE_CAPACITY` 16→64(+768B .bss、CLI スタック +768B)。trace ring テストを容量中立化 |
+
+### 残存する [要確認](コード修正の対象外)
+
+- **X-01**: 初期スタック範囲の静的列挙 + XEiJ 実測(手順は §3)
+- **X-02**: Timer D 実挙動の XEiJ 観察記録(S-1/S-2 は仕様適合済み、観察記録のみ)
+- **X-03**: 実 Human68k イメージでの e[12..21] バイト配置と FAT 選択の確認(F-02/F-03/R-07 の仮定を確定)
+- UI-01 の実機描画(15kHz/31kHz)、`m68k-xelf-gcc` への QEMU suite 切替の別タスク決定
+- edit の save 失敗 close は fake 層の制約でテスト未拡張(コードレビューで担保)

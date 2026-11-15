@@ -1,4 +1,6 @@
-/* Freestanding support routines that GCC may emit calls to at -Os.
+/* Freestanding support routines that GCC may emit calls to at -Os, shared
+ * verbatim by the asm and ld module builds (apps/asm/Makefile and
+ * apps/link/Makefile compile this one file; modules build independently).
  * memcpy: block moves (struct assignment). The 32-bit multiply/divide
  * helpers replace the m68k libgcc routines, whose objects carry absolute
  * relocations the S9M1 module profile cannot carry (code-only, PC16). */
@@ -13,8 +15,7 @@ void* memcpy(void* dst, const void* src, size_t n) {
     return dst;
 }
 
-/* Restoring division over the 32 bits of num. den == 0 returns 0 (the
- * expression evaluator rejects division by zero before reaching here). */
+/* Restoring division over the 32 bits of num. den == 0 returns 0. */
 static uint32_t udivmod(uint32_t num, uint32_t den, uint32_t* rem) {
     uint32_t q = 0;
     uint32_t r = 0;

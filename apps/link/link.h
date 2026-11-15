@@ -25,6 +25,9 @@
 #define LINK_OBJ_SYMBOL_SIZE 12u
 #define LINK_OBJ_RELOC_SIZE 16u
 #define LINK_OBJ_TOTAL_MAX 65535u
+/* Per-object relocation cap: 16 * LINK_RELOC_MAX stays inside the S9O1
+ * total budget, so lk_obj_header can bound each field before summing. */
+#define LINK_RELOC_MAX 4095u
 #define LINK_READER_CHUNK 256u
 
 /* S9M1 image geometry. */
@@ -192,8 +195,10 @@ LinkStatus lk_reader_end(LinkReader* reader, const LinkIo* io);
 void lk_reader_close(LinkReader* reader, const LinkIo* io);
 
 /* Reads and validates the 40-byte S9O1 header: magic, version, flags=0,
- * entry=0, reserved=0, and a total size within the S9O1 limit. The file
- * length itself is checked by the exact reads plus lk_reader_end. */
+ * entry=0, reserved=0, each size field within its own limit
+ * (LINK_ERR_LIMIT, checked before the total so the sum cannot wrap), and
+ * a total size within the S9O1 limit. The file length itself is checked
+ * by the exact reads plus lk_reader_end. */
 LinkStatus lk_obj_header(LinkReader* reader, const LinkIo* io,
                          LinkObjHeader* out);
 /* Reads and validates one relocation record: section in {1,2}, type
@@ -235,7 +240,9 @@ void lk_image_init(LinkImage* image);
 /* Computes the image geometry after pass 1 (code padding, data offsets,
  * name placement). Call once before folding. Returns LINK_ERR_EMPTY_TEXT
  * when the concatenated text is empty (the entry is text[0]) and
- * LINK_ERR_LIMIT when the code or data budget is exceeded. */
+ * LINK_ERR_LIMIT when the code, init data, name, or fixup region
+ * exceeds its bound (the image regions state LINK_IMAGE_BUF_MAX
+ * explicitly). */
 LinkStatus lk_image_plan(LinkImage* image, const LinkLayout* layout,
                          uint32_t name_size);
 /* Zero-pads the code and init data regions, stores the module name,

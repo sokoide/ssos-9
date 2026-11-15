@@ -44,8 +44,8 @@ entry:
 	|
 	|       7: 7 sectors in track 0 side 0
 	|       8: 8 sectors in track 0 side 1
-	|       8*12*2: 8 sectors in track 1-13 x 2 sides
-	|       Total 8*(1+1+24)-1 = 207KB
+	|       8*12*2: 8 sectors in tracks 1-12 x 2 sides
+	|       Total 8*(1+1+24)-1 = 207 sectors
 	move.l  #1024*(7+8+8*12*2), d3
 
 	IOCS  _B_READ

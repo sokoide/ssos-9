@@ -22,6 +22,7 @@ cmp.l  %d0, %d1
 cmp.w  (%a0), %d2
 cmpa.l %d0, %a0
 cmpi.b #7, %d3
+cmpi.b #'a', %d0
 cmpm.l (%a0)+, (%a1)+
 and.w  %d0, %d1
 andi.b #0xf, %d2

@@ -110,6 +110,20 @@ static void test_lexer_numbers(void) {
     CHECK(lex("$") == ASM_ERR_SYNTAX);
     CHECK(lex("0x") == ASM_ERR_SYNTAX);
     CHECK(lex("'") == ASM_ERR_SYNTAX);
+    /* closed-quote char constant: the trailing quote is absorbed, so the
+     * next token starts after it (R-08) */
+    CHECK(lex("'a'") == ASM_OK && tok_count == 1 &&
+          toks[0].kind == ASM_TOK_NUMBER && toks[0].number == 97);
+    CHECK(lex("''") == ASM_OK && tok_count == 1 && toks[0].number == 39);
+    CHECK(lex("#'a', %d0") == ASM_OK && tok_count == 4);
+    CHECK(kind_at(0) == ASM_TOK_HASH);
+    CHECK(kind_at(1) == ASM_TOK_NUMBER && toks[1].number == 97);
+    CHECK(kind_at(2) == ASM_TOK_COMMA);
+    CHECK(kind_at(3) == ASM_TOK_REG && toks[3].reg == ASM_REG_D0);
+    CHECK(lex("'a', %d0") == ASM_OK && kind_at(1) == ASM_TOK_COMMA);
+    /* the unterminated primary form keeps working */
+    CHECK(lex("'a, %d0") == ASM_OK && tok_count == 3 &&
+          kind_at(1) == ASM_TOK_COMMA);
     /* numeric label references stay idents */
     CHECK(lex("3b") == ASM_OK && toks[0].kind == ASM_TOK_IDENT &&
           toks[0].length == 2);
@@ -496,6 +510,19 @@ static void test_expr_eval_abs(void) {
     CHECK(eval_line(&ctx, "1<<32", &v) == ASM_ERR_RANGE);
     CHECK(eval_line(&ctx, "1<<-1", &v) == ASM_ERR_RANGE);
     CHECK(eval_line(&ctx, "5/0", &v) == ASM_ERR_RANGE);
+    /* contract: x / -1 == x (two's-complement wrap); INT_MIN / -1 does not
+     * trap. There is no modulo operator in the grammar. */
+    CHECK(eval_line(&ctx, "0x80000000/-1", &v) == ASM_OK && v.value == 0x80000000u);
+    CHECK(eval_line(&ctx, "-2147483648/-1", &v) == ASM_OK && v.value == 0x80000000u);
+    CHECK(eval_line(&ctx, "(-2147483648)/-1", &v) == ASM_OK && v.value == 0x80000000u);
+    CHECK(eval_line(&ctx, "0x80000000/1", &v) == ASM_OK && v.value == 0x80000000u);
+    CHECK(eval_line(&ctx, "-2147483648/1", &v) == ASM_OK && v.value == 0x80000000u);
+    CHECK(eval_line(&ctx, "-1/-1", &v) == ASM_OK && (int32_t)v.value == 1);
+    CHECK(eval_line(&ctx, "-7/-1", &v) == ASM_OK && (int32_t)v.value == 7);
+    CHECK(eval_line(&ctx, "2147483647/-1", &v) == ASM_OK && (int32_t)v.value == -2147483647);
+    /* unary minus wraps instead of overflowing the host build */
+    CHECK(eval_line(&ctx, "-2147483648", &v) == ASM_OK && v.value == 0x80000000u);
+    CHECK(eval_line(&ctx, "-(-2147483648)", &v) == ASM_OK && v.value == 0x80000000u);
     CHECK(eval_line(&ctx, "~0", &v) == ASM_OK && (int32_t)v.value == -1);
     CHECK(eval_line(&ctx, "-(2+3)", &v) == ASM_OK && (int32_t)v.value == -5);
     /* precedence: & above ^ above | */
@@ -599,6 +626,13 @@ static void test_parse_insn_from_sources(void) {
     CHECK(parse_line("move.b (%a0)+, %d0", &stmt) == ASM_OK);
     CHECK(parse_line("addq.l #1, %d1", &stmt) == ASM_OK);
     CHECK(parse_line("cmp.l #4, %d1", &stmt) == ASM_OK);
+    CHECK(parse_line("cmpi.b #'a', %d0", &stmt) == ASM_OK);
+    CHECK(stmt.mnemonic == ASM_MN_CMPI && stmt.size == ASM_SIZE_B);
+    CHECK(stmt.ops[0].mode == ASM_OP_IMM && stmt.ops[0].expr.count == 1 &&
+          stmt.ops[0].expr.ops[0].kind == ASM_TOK_NUMBER &&
+          stmt.ops[0].expr.ops[0].number == 97);
+    CHECK(stmt.op_count == 2 && stmt.ops[1].mode == ASM_OP_REG &&
+          stmt.ops[1].base_reg == ASM_REG_D0);
     CHECK(parse_line("blt count_loop", &stmt) == ASM_OK &&
           stmt.cc == ASM_CC_LT);
     CHECK(parse_line("link %a6,#-16", &stmt) == ASM_OK);

@@ -12,7 +12,9 @@
 #define COUNTER_NAME_OFFSET 104u
 #define COUNTER_FIXUP_OFFSET 112u
 
-static uint8_t counter_image[COUNTER_IMAGE_SIZE];
+/* The registry rejects odd image addresses, so keep the buffer 2-aligned
+ * even if the surrounding .bss layout would otherwise pack it oddly. */
+static uint8_t counter_image[COUNTER_IMAGE_SIZE] __attribute__((aligned(2)));
 
 #if !defined(SS_HOST_TEST)
 static const uint8_t hello_image[] __attribute__((aligned(4))) = {

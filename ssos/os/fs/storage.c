@@ -26,7 +26,7 @@ static int operation_write(void* context, uint32_t sector, const uint8_t* in) {
 
 /* A writer updates every FAT copy, so never allocate from a volume whose
  * copies already disagree. Read-only FAT12 loading is deliberately separate. */
-static int matching_fat_copies(const SSFat12* volume) {
+int ss_storage_fat_copies_match(const SSFat12* volume) {
     uint8_t primary[1024] __attribute__((aligned(4)));
     uint8_t mirror[1024] __attribute__((aligned(4)));
     if (volume->fat_count < 2) return 0;
@@ -51,7 +51,7 @@ int ss_storage_mount(SSStorage* storage, SSFat12ReadSector read,
         (block_size != 512 && block_size != 1024) ||
         ss_fat12_mount(&volume, read, context, sectors) ||
         volume.fat_bits != 16 || volume.sector_size != block_size ||
-        matching_fat_copies(&volume))
+        ss_storage_fat_copies_match(&volume))
         return -1;
     storage->volume = volume;
     storage->write_sector = write;
@@ -148,7 +148,8 @@ void ss_storage_close_reader(SSStorage* storage, SSFat12File* file) {
 
 int32_t ss_storage_read(SSStorage* storage, const char* name, uint8_t* data,
                         uint32_t capacity) {
-    if (!storage || !storage->mounted || (!data && capacity)) return -1;
+    if (!storage || !storage->mounted || storage->writer || storage->write_failed ||
+        (!data && capacity)) return -1;
     SSFat12File file;
     if (ss_fat12_open(&storage->volume, name, &file) || file.size > capacity ||
         file.size > 0x7fffffffu) return -1;

@@ -216,6 +216,11 @@ AsmStatus asm_lex(const char* line, AsmToken* tokens, uint8_t max,
             tok->text = q;
             tok->length = 2;
             p++;
+            /* GAS-style closed form 'a': absorb the closing quote when
+             * present ('a', lexes as 97 then whatever follows). The
+             * unterminated 'a form stays valid (contract primary form). */
+            if (*p == '\'')
+                p++;
             n++;
             continue;
         }

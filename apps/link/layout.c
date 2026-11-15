@@ -149,8 +149,13 @@ LinkStatus lk_layout_input(LinkLayout* layout, const LinkIo* io,
             return fail(layout, LINK_ERR_LIMIT);
         }
     }
-    if (layout->symbol_count + header.symbol_count > LINK_SYMBOL_MAX ||
-        pool_base + header.pool_size > LINK_NAME_POOL_MAX) {
+    /* Subtractive form: the running totals never exceed their limits, so
+     * the differences are in range and an add-based check cannot wrap
+     * (1 + 0xFFFFFFFF == 0 would pass an additive comparison). The
+     * per-field caps in lk_obj_header already bound each header field;
+     * this catches the cumulative total. */
+    if (header.symbol_count > LINK_SYMBOL_MAX - layout->symbol_count ||
+        header.pool_size > LINK_NAME_POOL_MAX - pool_base) {
         lk_reader_close(&reader, io);
         return fail(layout, LINK_ERR_LIMIT);
     }

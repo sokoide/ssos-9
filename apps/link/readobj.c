@@ -113,6 +113,20 @@ LinkStatus lk_obj_header(LinkReader* reader, const LinkIo* io,
     out->symbol_count = get32(raw + 24);
     out->reloc_count = get32(raw + 28);
     out->pool_size = get32(raw + 32);
+    /* Cap each field before summing: a raw uint32 total of unchecked
+     * fields wraps (1 + 0xFFFFFFFF == 0) and let a crafted header pass
+     * the size budget into OOB writes. Every cap is a cumulative output
+     * limit the linker enforces anyway, so an over-cap field is a limit
+     * error (docs/linker-contract.md, "領域超過"). */
+    if (out->text_size > LINK_TEXT_MAX || out->data_size > LINK_DATA_MAX ||
+        out->bss_size > LINK_PRIVATE_MAX ||
+        out->symbol_count > LINK_SYMBOL_MAX ||
+        out->reloc_count > LINK_RELOC_MAX ||
+        out->pool_size > LINK_NAME_POOL_MAX)
+        return LINK_ERR_LIMIT;
+    /* With every field capped the total is bounded well below 2^32
+     * (40 + 32768 + 12288 + 12*512 + 16*4095 + 6144 = 122904), so this
+     * sum cannot wrap and stays a plain uint32. */
     total = LINK_OBJ_HEADER_SIZE + out->text_size + out->data_size +
             LINK_OBJ_SYMBOL_SIZE * out->symbol_count +
             LINK_OBJ_RELOC_SIZE * out->reloc_count + out->pool_size;

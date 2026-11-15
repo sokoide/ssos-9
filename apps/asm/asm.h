@@ -62,7 +62,8 @@ typedef enum {
     ASM_ERR_WRONG_SECTION,
     ASM_ERR_UNSUPPORTED,
     ASM_ERR_WRITE,
-    ASM_ERR_SOURCE_LONG
+    ASM_ERR_SOURCE_LONG,
+    ASM_ERR_ODD_OFFSET
 } AsmStatus;
 
 enum {
@@ -345,6 +346,11 @@ typedef enum {
     ASM_VAL_EXTERN  /* symbol index + value addend */
 } AsmValKind;
 
+/* Non-fatal warning sink. The core invokes it during assembly (e.g. a
+ * .dc.w symbol value inside .text, which reads as an A5 displacement in
+ * the PIC model). NULL sink = warnings are dropped. */
+typedef void (*AsmWarnFn)(void* user, uint32_t line, const char* message);
+
 typedef struct {
     uint8_t kind;    /* AsmValKind */
     uint8_t section; /* REL only */
@@ -381,9 +387,13 @@ typedef struct {
     uint32_t global_count;
     AsmStatus status;
     uint32_t error_line;
+    AsmWarnFn warn;  /* optional non-fatal warning sink */
+    void* warn_user;
 } AsmCtx;
 
 /* --- ctx.c: context, symbols, emission, relocations --- */
+
+void asm_set_warn(AsmCtx* ctx, AsmWarnFn fn, void* user);
 
 void asm_ctx_init(AsmCtx* ctx);
 const char* asm_status_message(AsmStatus status);

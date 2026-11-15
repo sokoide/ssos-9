@@ -18,6 +18,11 @@ build/start.o: ../../examples/hello/start.s | build
 build/%.o: %.c asm.h ../../ssos/include/ssos9/user.h ../../ssos/include/ssos9/syscall.h | build
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Shared with apps/link; an explicit rule because ../support.c cannot be a
+# pattern-rule stem.
+build/support.o: ../support.c | build
+	$(CC) $(CFLAGS) -c $< -o $@
+
 CORE_OBJS = $(patsubst %.c,build/%.o,$(CORE))
 
 build/asm.elf: build/start.o $(CORE_OBJS) build/main.o build/support.o ../../examples/hello/module.ld

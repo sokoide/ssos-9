@@ -100,23 +100,30 @@ static void show_debug(void) {
 
     for (uint16_t id = 1; id <= SS_MAX_TASKS; id++) {
         SSTask* task = &tcb_table[id - 1];
-        if (task->state == SS_TS_NONE)
+        /* Snapshot the TCB fields under the IRQ mask: the Timer-D handler
+         * mutates them while this display-only loop reads them. Printing
+         * (IOCS) stays outside the masked window. */
+        uint16_t irq_state = ss_irq_save();
+        uint8_t state = task->state;
+        uint8_t pri = task->pri;
+        void* sp = task->context;
+        uint16_t stack_size = task->stack_size;
+        uint32_t stack_free = state == SS_TS_NONE ? 0 : ss_stack_check(id);
+        ss_irq_restore(irq_state);
+        if (state == SS_TS_NONE)
             continue;
         print("task ");
         print_u32(id);
         print(" state=");
-        print_u32(task->state);
+        print_u32(state);
         print(" pri=");
-        print_u32(task->pri);
+        print_u32(pri);
         print(" sp=");
-        print_hex32((uint32_t)(uintptr_t)task->context);
-        uint16_t irq_state = ss_irq_save();
-        uint32_t stack_free = ss_stack_check(id);
-        ss_irq_restore(irq_state);
+        print_hex32((uint32_t)(uintptr_t)sp);
         print(" stack_free=");
         print_u32(stack_free);
         print("/");
-        print_u32(task->stack_size);
+        print_u32(stack_size);
         print("\r\n");
     }
 }
@@ -269,6 +276,15 @@ static int interactive_shell(void) {
         if (mux_shell_pids[i] == current)
             return 1;
     return 0;
+}
+
+/* Reserve the process exit status only for non-interactive command runs
+ * (kernel-entry children such as background builtins and subshells): their
+ * status is the command result. An interactive shell keeps running after a
+ * failed command and must not poison its own observable exit status. */
+static void reserve_exit_status(uint16_t status) {
+    if (!interactive_shell())
+        ss_process_exit_current(status);
 }
 
 /* The registry and built-ins do not have the name, so try the mounted FAT16
@@ -429,7 +445,7 @@ static int run_process_command(char* tokens[], uint16_t count, int background) {
         SSProcessId pid;
         if (!parse_pid(tokens[1], &pid) || ss_process_kill(pid) != SS_OK) {
             print("Cannot kill that PID.\r\n");
-            ss_process_exit_current(1);
+            reserve_exit_status(1);
         } else
             print("Kill requested. Use wait PID to collect it.\r\n");
     } else if (strcmp(tokens[0], "wait") == 0 && count == 2) {
@@ -437,7 +453,7 @@ static int run_process_command(char* tokens[], uint16_t count, int background) {
         uint16_t exit_status;
         if (!parse_pid(tokens[1], &pid)) {
             print("Invalid PID.\r\n");
-            ss_process_exit_current(2);
+            reserve_exit_status(2);
             return 0;
         }
         int16_t status;
@@ -463,7 +479,7 @@ static int run_process_command(char* tokens[], uint16_t count, int background) {
             print("\r\n");
         } else {
             print("No child with that PID.\r\n");
-            ss_process_exit_current(127);
+            reserve_exit_status(127);
         }
     } else {
         return -1;
@@ -617,7 +633,7 @@ int ss_cli_execute_line(char* line) {
         return 0;
     if (count != 1) {
         print("Unknown command or invalid arguments.\r\n");
-        ss_process_exit_current(2);
+        reserve_exit_status(2);
         return 0;
     }
     const char* command = tokens[0];
@@ -660,7 +676,7 @@ int ss_cli_execute_line(char* line) {
 #endif
     } else {
         print("Unknown command. Type 'help'.\r\n");
-        ss_process_exit_current(127);
+        reserve_exit_status(127);
     }
     return 0;
 }
@@ -669,6 +685,9 @@ static int shell_loop(void) {
     char line[SS_CLI_LINE_MAX];
     unsigned used = 0;
     for (;;) {
+        /* Cheap and idempotent: reclaim orphan zombies while the shell
+         * idles at the prompt or runs the next command. */
+        ss_process_reap_orphans();
         if (ss_process_kill_pending())
             return 0;
         if (ss_cli_poll_ctrl_c()) {

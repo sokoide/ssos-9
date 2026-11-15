@@ -168,7 +168,7 @@ apps/link/
   fold.c      パス 2: コピーと再配置適用、fixup 生成、PIC 診断
   image.c     出力 image 構造体、header、CRC32
   main.c      S9M1 CLI (引数、fd 順序、メッセージ、ss9_file_store)
-  support.c   memcpy と 32 bit 乗除算 (asm と同じ)
+  ../support.c memcpy と 32 bit 乗除算 (apps/asm と単一ソースを共有)
   Makefile    apps/asm と同じ構成。mkmodule --name ld --stack-size 65532
 tests/unit/
   link_host_main.c        ホスト CLI driver (stdio 版 LinkIo 束縛)

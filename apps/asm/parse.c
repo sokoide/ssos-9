@@ -985,6 +985,12 @@ static AsmValue ev_binop(Eval* ev, uint8_t kind, const AsmValue* a,
             ev->status = ASM_ERR_RANGE;
             return make_abs(0);
         }
+        if (y == -1)
+            /* INT_MIN / -1 traps on the MC68000 and is host UB; define
+             * x / -1 == -x with INT_MIN wrapping to itself (contract). */
+            return make_abs((uint32_t)x == 0x80000000u
+                                ? (uint32_t)x
+                                : 0u - (uint32_t)x);
         return make_abs(x / y);
     }
     if (kind == ASM_TOK_AND)
@@ -1076,7 +1082,8 @@ static AsmValue ev_unary(Eval* ev) {
             ev->status = ASM_ERR_NOT_ABSOLUTE;
             return make_abs(0);
         }
-        return make_abs(-(int32_t)v.value);
+        /* negate through unsigned: -INT_MIN wraps to INT_MIN without UB */
+        return make_abs((int32_t)(0u - v.value));
     }
     if (kind == ASM_TOK_NOT) {
         AsmValue v;

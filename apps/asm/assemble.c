@@ -46,11 +46,23 @@ static AsmStatus define_label(AsmCtx* ctx, const AsmStmt* stmt) {
                           ctx->offset[ctx->section]);
 }
 
+/* Instructions and 2/4-byte data must sit at even offsets: an odd address
+ * faults as an address error at runtime (contract). Use .even; the
+ * assembler never auto-aligns. */
+static AsmStatus check_even(AsmCtx* ctx) {
+    if (ctx->offset[ctx->section] & 1u)
+        return asm_ctx_error(ctx, ASM_ERR_ODD_OFFSET);
+    return ASM_OK;
+}
+
 static AsmStatus process_insn(AsmCtx* ctx, const AsmStmt* stmt) {
     AsmStatus status;
     uint32_t size;
     if (ctx->section == ASM_SECTION_BSS)
         return asm_ctx_error(ctx, ASM_ERR_WRONG_SECTION);
+    status = check_even(ctx);
+    if (status != ASM_OK)
+        return status;
     status = asm_insn_size(stmt, &size);
     if (status != ASM_OK)
         return asm_ctx_error(ctx, status);
@@ -75,6 +87,11 @@ static AsmStatus process_data(AsmCtx* ctx, const AsmStmt* stmt) {
     uint8_t i;
     if (ctx->section == ASM_SECTION_BSS)
         return asm_ctx_error(ctx, ASM_ERR_WRONG_SECTION);
+    if (unit > 1) {
+        AsmStatus status = check_even(ctx);
+        if (status != ASM_OK)
+            return status;
+    }
     if (ctx->pass == 1)
         return advance(ctx, (uint32_t)stmt->value_count * unit);
     for (i = 0; i < stmt->value_count; i++) {
@@ -108,6 +125,12 @@ static AsmStatus process_data(AsmCtx* ctx, const AsmStmt* stmt) {
                 if (symbol < 0)
                     return asm_ctx_error(ctx, ASM_ERR_SYMBOL_TABLE_FULL);
             }
+            if (unit == 2 && ctx->section == ASM_SECTION_TEXT && ctx->warn)
+                /* ABS16 inside .text reads as an A5 displacement when the
+                 * module runs under the PIC model; warn without changing
+                 * the object bytes (contract). */
+                ctx->warn(ctx->warn_user, ctx->line,
+                          ".dc.w symbol in text reads as A5 displacement (PIC)");
             if (unit == 1)
                 status = asm_emit8(ctx, placeholder);
             else if (unit == 2)
@@ -288,8 +311,9 @@ AsmStatus asm_assemble_end(AsmCtx* ctx) {
 
 /* Derives the default output name: the source name with its extension
  * replaced by ".O" (contract CLI: run asm SRC [DST]). The source base
- * must fit the FAT16 8.3 rule; a longer source is rejected so the 16
- * byte output buffer can never overflow. */
+ * must fit the FAT16 8.3 rule; a longer source, or one whose derived
+ * base still contains a dot (e.g. "A.B.C"), is rejected so the 16 byte
+ * output buffer can never overflow and the name stays 8.3. */
 AsmStatus asm_default_output(const char* source, char* out) {
     uint32_t base = 0;
     uint32_t full = 0;
@@ -303,6 +327,9 @@ AsmStatus asm_default_output(const char* source, char* out) {
         base = full; /* no extension: keep the base name */
     if (base > 8)
         return ASM_ERR_NAME_LONG; /* callers report their own message */
+    for (i = 0; i < base; i++)
+        if (source[i] == '.')
+            return ASM_ERR_NAME_LONG; /* "A.B" base is not 8.3 */
     for (i = 0; i < base; i++) out[i] = source[i];
     out[i++] = '.';
     out[i++] = 'O';

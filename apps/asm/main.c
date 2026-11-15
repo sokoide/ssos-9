@@ -60,7 +60,8 @@ static int obj_sink(const void* bytes, uint32_t length, void* user) {
 }
 
 /* Reads one line into out (NUL-terminated, CR/LF stripped).
- * Returns 1 on a line, 0 on EOF, -1 on read error or line too long. */
+ * Returns 1 on a line, 0 on EOF, -1 on read error or line too long,
+ * -2 on a NUL byte inside the line. */
 static int reader_line(LineReader* reader, char* out) {
     uint32_t length = 0;
     for (;;) {
@@ -86,10 +87,25 @@ static int reader_line(LineReader* reader, char* out) {
         }
         if (c == '\r')
             continue;
+        if (c == 0)
+            /* A NUL would silently terminate the line string and hide the
+             * rest of the source; reject it instead. */
+            return -2;
         if (length >= ASM_LINE_MAX)
             return -1;
         out[length++] = (char)c;
     }
+}
+
+/* Non-fatal core warnings (e.g. .dc.w symbol in .text) go to the console
+ * with the source name and line, mirroring the host driver's stderr. */
+static void warn_console(void* user, uint32_t line, const char* message) {
+    (void)write_text((const char*)user);
+    (void)write_text(":");
+    (void)write_number(line);
+    (void)write_text(": warning: ");
+    (void)write_text(message);
+    (void)write_text("\r\n");
 }
 
 static int run_pass(AsmCtx* ctx, const char* source) {
@@ -109,10 +125,14 @@ static int run_pass(AsmCtx* ctx, const char* source) {
     for (;;) {
         int got = reader_line(&reader, line);
         if (got < 0) {
+            /* ctx->line counts the lines processed so far; the failing read
+             * is for the line after them. The host driver reports the same
+             * number as ctx->line + 1. */
             (void)write_text(source);
             (void)write_text(":");
-            (void)write_number(ctx->line);
-            (void)write_text(": line too long or read error\r\n");
+            (void)write_number(ctx->line + 1u);
+            (void)write_text(got == -2 ? ": NUL byte in source line\r\n"
+                                       : ": line too long or read error\r\n");
             (void)ss9_close((uint32_t)fd);
             return -1;
         }
@@ -172,6 +192,7 @@ int main(int argc, char** argv) {
         destination = output_name;
     }
     asm_ctx_init(&ctx);
+    asm_set_warn(&ctx, warn_console, (void*)source);
     asm_assemble_begin(&ctx, 1);
     if (run_pass(&ctx, source) != 0)
         return 1;

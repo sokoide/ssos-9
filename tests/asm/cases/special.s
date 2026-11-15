@@ -7,6 +7,7 @@ pea     0x20004
 exg     %d0, %d1
 exg     %a0, %a1
 exg     %d2, %a2
+exg     %a3, %d4
 link    %a6, #-8
 unlk    %a6
 moveq   #0, %d0
