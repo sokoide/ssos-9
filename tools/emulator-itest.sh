@@ -649,7 +649,9 @@ run_b2() {
     type_cmd 'trace'
     sleep 2
     snap
-    require 'b2 trace header' "$s" 'scheduler events: 16 (oldest first)'
+    # The 64-entry trace scrolls the header off the physical text screen.
+    # Inspect the visible tail and require the command to have completed.
+    wait_line '> ' 10 || fail 'b2: trace did not return to the prompt' "$s"
     local events=$(print -r -- "$s" | tr '\r' '\n' |
         grep -cE '^t=[0-9A-F]{8} (create|start|sleep|wake|switch|exit) task=[0-9]+ other=[0-9]+ value=[0-9A-F]{8}')
     (( events >= 10 )) || fail "b2: only $events typed events in trace" "$s"
@@ -660,7 +662,7 @@ run_b2() {
     type_cmd "wait $pid"
     wait_screen 'exited with status' 8 || fail 'b2: counter was not reaped' "$s"
     ssos_exit
-    print 'PASS b2: trace shows 16 scheduler events while counter ran'
+    print 'PASS b2: trace shows scheduler events while counter ran'
 }
 
 run_b3() {

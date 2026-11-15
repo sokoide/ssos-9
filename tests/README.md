@@ -466,3 +466,12 @@ returned to Human68k. The installed `ssos9.x` SHA-256 was
 `03718103d57e1d956b635e69c4c5c9f64977718ff2458d3d4df497ae8ee325e0`;
 `ssos9.xdf` was `ff7f9c8dcd870160225622deb6a62975e81f5d2c0a88692333133d1f3ce10046`
 (the test booted the `.x`). This is XEiJ coverage, not physical hardware.
+
+On 2026-11-15, `make test-emulator` passed its default selection
+(a2, a3, b1-b4, c1-c3, e3, f1, g1, h3, h6) on XEiJ. B2 checked
+30 visible scheduler events, including switches, after the 64-entry trace
+scrolled its header off-screen. A3 restored its configuration, and H6
+returned the arena to its original free and largest-block sizes after 25
+cycles. The installed `ssos9.x` SHA-256 was
+`03718103d57e1d956b635e69c4c5c9f64977718ff2458d3d4df497ae8ee325e0`.
+This does not cover optional test IDs or physical hardware.

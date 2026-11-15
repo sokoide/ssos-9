@@ -76,7 +76,7 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 | ID | 概要 | 手順 | 合格基準 | 優先度 | 自動化 |
 | --- | --- | --- | --- | --- | --- |
 | B1 | tick 計数 = 200 Hz | `debug` → 2.5 秒待つ → `debug`。2 回の `ticks=` 差分 | 差分が 500±100 (実効 200 Hz±20%) | P0 | ○ |
-| B2 | trace にスケジューライベント | `run counter` 中に `trace` | `trace` が 16 件のイベント (切替・tick) を表示。イベント種別が空でない | P0 | ○ |
+| B2 | trace にスケジューライベント | `run counter` 中に `trace` | `trace` の画面に見える末尾で10件以上の有効なイベントと切替を確認し、プロンプトへの復帰を確認 (64件の出力ではヘッダは画面外へ流れる) | P0 | ○ |
 | B3 | 実割り込みによる preemptive 動作 | `run counter` (foreground) 中に画面を 2 回取得 | カウンタが進み、かつプロンプト入力が可能 (shell が止まっていない) | P0 | ○ |
 | B4 | Ctrl-C の実キー経路 | busy foreground (`run counter`) に対し `presskey ctrl` → `typekey c` → `releasekey ctrl` | kill され `wait` で回収、`mem` が baseline に復帰 | P1 | ○ |
 | B5 | 終了時 MFP 状態復帰 | A2 の `debug` 記録と、終約後の Human68k 動作で確認 | Timer D 関連ビットが起動前状態に戻る (IERB/IMRB の bit4、TCDCR) | P1 | ○ (A2 に内包) |
@@ -159,7 +159,7 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 - E3: `tools/emulator-itest.sh e3`。`run hello` の出力と終了状態 0、
   その後の shell プロンプトを確認し、`trace` の Timer D による
   `switch` (`value` の resume_type が 0) を確認して Human68k に復帰する。
-  trace は直近 16 件であり、その switch が hello 自身の実行中だったとは限らない。
+  trace は直近 64 件までであり、その switch が hello 自身の実行中だったとは限らない。
 - D1: `tools/emulator-itest.sh d1`。実行前に `make install`、実行時点で XEiJ が
   Human68k プロンプトで待機していること。一意名の fixture (内容 `D1FIXTURE`) を
   F: から Human68k 側で `A:\TEST` に copy し (ディレクトリがなければ Human68k 側で
