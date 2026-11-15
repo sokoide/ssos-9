@@ -82,13 +82,15 @@ test-qemu:
 #   make test-emulator EMULATOR_TESTS=b1    # one test
 #   EMULATOR_TESTS="a2 b1" make test-emulator
 #   make test-emulator-list                 # list selectable IDs
-# EMULATOR_ALL_TESTS is the full selection whitelist. The default
-# EMULATOR_TESTS is only the always-green core: c4 is a documented
-# environment-limit FAIL and h2 is gated behind SSOS9_ITEST_H2=1, so neither
-# belongs in a default run.
+# EMULATOR_ALL_TESTS is the full selection whitelist. The default set is the
+# always-green core that never writes the real HDD and never needs staged
+# fixtures (a3's XDF boot restarts XEiJ and transiently edits ~/XEiJ.ini,
+# restoring both afterwards). Opt in for the rest: c5..e2/f2/h4 stage or
+# write A:\TEST, h5 restarts XEiJ and touches the mounted HDD, c4 is a
+# documented environment-limit FAIL, and h2 is gated behind SSOS9_ITEST_H2=1.
 EMULATOR_ALL_TESTS = a2 a3 b1 b2 b3 b4 c1 c2 c3 c4 c5 \
 	d1 d2 d3 d4 e1 e2 e3 f1 f2 g1 h2 h3 h4 h5 h6
-EMULATOR_TESTS ?= a2 a3 b1 e3
+EMULATOR_TESTS ?= a2 a3 b1 b2 b3 b4 c1 c2 c3 e3 f1 g1 h3 h6
 
 .PHONY: test-emulator-list $(addprefix test-emulator-,$(EMULATOR_ALL_TESTS))
 test-emulator-list:
