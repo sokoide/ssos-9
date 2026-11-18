@@ -17,6 +17,8 @@ usage:
 	@echo "  make test-qemu        Run scheduler tests under QEMU"
 	@echo "  make test-emulator    Run XEiJ integration tests against a running emulator"
 	@echo "                        (select with EMULATOR_TESTS=\"a2 b1\", list with make test-emulator-list)"
+	@echo "  make test-emulator-automated  Run 24 cases using a prepared disposable profile"
+	@echo "  make test-emulator-soak       Run the 25-cycle process recovery case"
 	@echo "  make verify           Run automated verification and report hardware checks"
 	@echo "  make clean            Remove build outputs"
 	@echo "  make format           Format Markdown, C, and assembly sources"
@@ -59,8 +61,12 @@ loc:
 	gocloc --not-match-d='node_modules|build|\.git' .
 
 # Native C tests and QEMU asm samples. See tests/README.md.
-test:
+test: test-xeij-transport
 	$(MAKE) -C tests test
+
+.PHONY: test-xeij-transport
+test-xeij-transport:
+	python3 tests/xeij_transport_test.py
 
 test-asm:
 	$(MAKE) -C tests test-asm
@@ -86,11 +92,20 @@ test-qemu:
 # always-green core that never writes the real HDD and never needs staged
 # fixtures (a3's XDF boot restarts XEiJ and transiently edits ~/XEiJ.ini,
 # restoring both afterwards). Opt in for the rest: c5..e2/f2/h4 stage or
-# write A:\TEST, h5 restarts XEiJ and touches the mounted HDD, c4 is a
-# documented environment-limit FAIL, and h2 is gated behind SSOS9_ITEST_H2=1.
+# write A:\TEST and h5 restarts XEiJ and touches the mounted HDD. The h2
+# real-floppy regression is manual in MPX68K; see tests/README.md.
 EMULATOR_ALL_TESTS = a2 a3 b1 b2 b3 b4 c1 c2 c3 c4 c5 \
-	d1 d2 d3 d4 e1 e2 e3 f1 f2 g1 h2 h3 h4 h5 h6
-EMULATOR_TESTS ?= a2 a3 b1 b2 b3 b4 c1 c2 c3 e3 f1 g1 h3 h6
+	d1 d2 d3 d4 e1 e2 e3 f1 f2 g1 h3 h4 h5 h6
+EMULATOR_CORE_TESTS = a2 a3 b1 b2 b3 b4 c1 c2 c3 c4 e3 f1 g1 h3 h6
+EMULATOR_AUTOMATED_TESTS = $(EMULATOR_ALL_TESTS)
+EMULATOR_TESTS ?= $(EMULATOR_CORE_TESTS)
+
+.PHONY: test-emulator-core test-emulator-automated test-emulator-soak
+test-emulator-core: EMULATOR_TESTS = $(EMULATOR_CORE_TESTS)
+test-emulator-soak: EMULATOR_TESTS = h6
+test-emulator-core test-emulator-soak: test-emulator
+test-emulator-automated:
+	python3 tools/xeij-suite.py --require-profile $(EMULATOR_AUTOMATED_TESTS)
 
 .PHONY: test-emulator-list $(addprefix test-emulator-,$(EMULATOR_ALL_TESTS))
 test-emulator-list:
@@ -104,7 +119,7 @@ test-emulator-list:
 	@echo "  c1  help output matches host expectation"
 	@echo "  c2  redraw of output beyond 25 rows"
 	@echo "  c3  mux F1-F3 switching with per-screen retention"
-	@echo "  c4  Ctrl-]+digit window switch (documented environment-limit FAIL)"
+	@echo "  c4  F1/F2/F3 mux window switching and output retention"
 	@echo "  c5  console module key reporting (stages CONSOLE.S9M in A:\\TEST)"
 	@echo "  d1  create/read/replace on Human68k-formatted SCSI HDD"
 	@echo "  d2  editor save and reopen on target HDD"
@@ -116,7 +131,6 @@ test-emulator-list:
 	@echo "  f1  background builtins via kernel-entry children + reclaim"
 	@echo "  f2  background output survives screen switching"
 	@echo "  g1  spawn/kill/wait cycles restore arena baseline"
-	@echo "  h2  real floppy load path (env-limited; set SSOS9_ITEST_H2=1)"
 	@echo "  h3  Ctrl-C delivery only to the active mux window"
 	@echo "  h4  sread empty-file OK and >256-byte rejection"
 	@echo "  h5  XDF IPL boot + smount/sread + PID 1 rejection + ini restore"
@@ -131,10 +145,12 @@ test-emulator-$(1): install
 endef
 $(foreach t,$(EMULATOR_ALL_TESTS),$(eval $(call EMULATOR_TEST_RULE,$(t))))
 
+build/xeij/mfpstate.x: tests/xeij/mfp_snapshot.c
+	mkdir -p $(@D)
+	m68k-xelf-gcc -m68000 -O2 -Wall -Wextra -Werror $< -lx68kiocs -o $@
+
 test-emulator: check-emulator-tests install
-	@for t in $(EMULATOR_TESTS); do \
-		tools/emulator-itest.sh $$t || exit 1 ; \
-	done
+	python3 tools/xeij-suite.py $(EMULATOR_TESTS)
 
 check-emulator-tests:
 	@for t in $(EMULATOR_TESTS); do \

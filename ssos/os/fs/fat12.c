@@ -79,7 +79,8 @@ static int short_name(const char* name, uint8_t out[11]) {
     return base && (!dot || ext) ? 0 : -1;
 }
 
-static int next_cluster(SSFat12* v, uint16_t cluster, uint16_t* next);
+static int next_cluster(SSFat12* v, uint16_t cluster, uint16_t* next,
+                        uint8_t* sector);
 
 /* Human68k preserves the case a file was created with and its own lookups
  * are case-insensitive, so match stored 8.3 names case-insensitively.
@@ -130,17 +131,18 @@ int ss_fat_locate(SSFat12* v, const char* path, SSFatLocation* loc) {
                 for (uint32_t off = 0; off < v->sector_size && (directory || examined < limit); off += 32, examined++) {
                     const uint8_t* e = sector + off;
                     if (!e[0] || e[0] == 0xe5) {
+                        int end = !e[0];
                         if (!have_free) {
                             free_loc.sector = start + s; free_loc.offset = (uint16_t)off;
-                            free_loc.was_end = !e[0]; have_free = 1;
-                            if (!e[0] && off + 32u == v->sector_size) {
+                            free_loc.was_end = end; have_free = 1;
+                            if (end && off + 32u == v->sector_size) {
                                 if ((!directory && examined + 1u < v->root_entries) ||
                                     (directory && s + 1u < count)) {
                                     free_loc.next_sector = start + s + 1u;
                                     free_loc.has_next_sector = 1;
                                 } else if (directory) {
                                     uint16_t next;
-                                    if (next_cluster(v, cluster, &next)) return -1;
+                                    if (next_cluster(v, cluster, &next, sector)) return -1;
                                     if (next < 0xfff8) {
                                         if (next < 2 || next >= v->cluster_count + 2u ||
                                             next >= 0xfff0 || next == cluster) return -1;
@@ -150,7 +152,7 @@ int ss_fat_locate(SSFat12* v, const char* path, SSFatLocation* loc) {
                                 }
                             }
                         }
-                        if (!e[0]) goto scan_done;
+                        if (end) goto scan_done;
                         continue;
                     }
                     if (e[11] & 0x08) continue;
@@ -179,7 +181,7 @@ int ss_fat_locate(SSFat12* v, const char* path, SSFatLocation* loc) {
             }
             if (!directory) break;
             uint16_t next;
-            if (next_cluster(v, cluster, &next)) return -1;
+            if (next_cluster(v, cluster, &next, sector)) return -1;
             if (next >= 0xfff8) break;
             cluster = next;
         }
@@ -222,7 +224,7 @@ static __attribute__((noinline)) int fat12_open_legacy(SSFat12* v, const char* n
             if (current < 2 || current >= v->cluster_count + 2u ||
                 current >= (v->fat_bits == 12 ? 0xff0u : 0xfff0u)) return -1;
             uint16_t next;
-            if (next_cluster(v, current, &next)) return -1;
+            if (next_cluster(v, current, &next, sector)) return -1;
             if (n + 1u == needed) {
                 if (next < (v->fat_bits == 12 ? 0xff8u : 0xfff8u)) return -1;
             } else {
@@ -239,6 +241,20 @@ static __attribute__((noinline)) int fat12_open_legacy(SSFat12* v, const char* n
     return -1;
 }
 
+static __attribute__((noinline)) int validate_human_chain(
+    SSFat12* v, uint16_t current, uint32_t needed) {
+    uint8_t sector[1024] __attribute__((aligned(4)));
+    for (uint32_t n = 0; n < needed; n++) {
+        uint16_t next;
+        if (current < 2 || current >= v->cluster_count + 2u ||
+            current >= 0xfff0 || next_cluster(v, current, &next, sector))
+            return -1;
+        if (n + 1u == needed && next < 0xfff8) return -1;
+        current = next;
+    }
+    return 0;
+}
+
 int ss_fat12_open(SSFat12* v, const char* name, SSFat12File* file) {
     if (!v || !v->human68k) return fat12_open_legacy(v, name, file);
     SSFatLocation loc;
@@ -248,20 +264,16 @@ int ss_fat12_open(SSFat12* v, const char* name, SSFat12File* file) {
     uint32_t bytes = (uint32_t)v->sectors_per_cluster * v->sector_size;
     uint32_t needed = size / bytes + (size % bytes != 0);
     if (!needed && cluster) needed = 1;
-    if (needed > v->cluster_count) return -1;
-    uint16_t current = cluster;
-    for (uint32_t n = 0; n < needed; n++) {
-        uint16_t next;
-        if (current < 2 || current >= v->cluster_count + 2u || current >= 0xfff0 || next_cluster(v, current, &next)) return -1;
-        if (n + 1u == needed) { if (next < 0xfff8) return -1; }
-        else current = next;
-    }
+    if (needed > v->cluster_count ||
+        (needed && validate_human_chain(v, cluster, needed)))
+        return -1;
     file->volume = v; file->size = size; file->offset = 0;
     file->cursor_cluster = cluster; file->cursor_index = 0;
     return 0;
 }
-static int next_cluster(SSFat12* v, uint16_t cluster, uint16_t* next) {
-    uint8_t sector[1024] __attribute__((aligned(4)));
+/* Callers reuse their sector workspace to keep IOCS paths on a 4 KiB stack. */
+static int next_cluster(SSFat12* v, uint16_t cluster, uint16_t* next,
+                        uint8_t* sector) {
     uint32_t bps = v->sector_size;
     uint32_t pos = v->fat_bits == 12 ? cluster + cluster / 2u : cluster * 2u;
     if (pos / bps >= v->fat_sectors ||
@@ -295,7 +307,7 @@ int32_t ss_fat12_read(void* context, uint8_t* out, uint32_t size) {
         if (steps >= v->cluster_count || steps < cluster_index) return -1;
         while (cluster_index < steps) {
             if (cluster < 2 || cluster >= v->cluster_count + 2u ||
-                next_cluster(v, cluster, &cluster)) return -1;
+                next_cluster(v, cluster, &cluster, sector)) return -1;
             cluster_index++;
         }
         if (cluster < 2 || cluster >= v->cluster_count + 2u) return -1;

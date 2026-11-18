@@ -9,7 +9,7 @@
 #   c1  help output matches the cli.c command table
 #   c2  >25 lines of console output redraw without scrolling
 #   c3  mux windows F1/F2/F3 retain and restore their output
-#   c4  Ctrl-] plus a digit selects a mux window
+#   c4  F1/F2/F3 select mux windows and retain output
 #   c5  console module KEY: reporting over real IOCS input
 #   d1  Human68k-format HDD create/read/replace in A:\TEST
 #   d2  edit saves and reloads a new file in A:\TEST
@@ -21,7 +21,6 @@
 #   f1  background builtins (help&, ps&, mem&) interleave cleanly and reap
 #   f2  background module output continues across mux window switches
 #   g1  five spawn/kill/wait cycles return the arena to baseline
-#   h2  load 1 CONSOLE.S9M through the real floppy (ini fd1 swap)
 #   h3  Ctrl-C interrupts only the active mux window's foreground
 #   h4  sread boundaries: empty file ok, >256 bytes rejected
 #   h5  XDF IPL boot + smount/sread + PID 1 protection
@@ -31,36 +30,96 @@
 set -u
 
 PIPE="${TMPDIR%/}/XEiJControl"
+XEI_J_STAGE=${SSOS9_XEIJ_STAGE:-"$HOME/tmp"}
+XEI_J_INI=${SSOS9_XEIJ_INI:-"$HOME/XEiJ.ini"}
+XEI_J_LAUNCHER=${SSOS9_XEIJ_LAUNCHER:-"$HOME/.local/bin/xeij.sh"}
+XEI_J_LOCK="/tmp/ssos9-xeij-itest-$UID.lock"
+TRANSPORT="${0:A:h}/xeij-transport.py"
+typeset -a held_keys=()
 
-fail() { print -u2 -- "FAIL: $1"; [[ $# -lt 2 ]] || print -u2 -r -- "$2"; exit 1; }
-frontmost() {
-    osascript -e 'tell application "System Events" to set frontmost of process "java" to true' >/dev/null || fail 'cannot activate XEiJ'
+transport() { python3 "$TRANSPORT" "$@"; }
+send_control() {
+    local command=$1 key_name=${1#* }
+    if [[ "$command" == 'presskey '* ]]; then
+        held_keys+=("$key_name")
+    fi
+    transport send "$PIPE" "$command" 2 || environment_fail "control command failed: $command"
+    if [[ "$command" == 'releasekey '* ]]; then
+        held_keys=("${(@)held_keys:#$key_name}")
+    fi
 }
-key() { printf 'typekey %s\n' "$1" > "$PIPE" || fail 'cannot write control pipe'; sleep 0.1; }
+release_held_keys() {
+    local key_name result=0
+    for key_name in "${held_keys[@]}"; do
+        transport send "$PIPE" "releasekey $key_name" 0.5 || result=1
+    done
+    return "$result"
+}
+finish_case() {
+    local result=$1
+    trap - EXIT
+    # A caught signal is reset on exec, so a restarted JVM still honors TERM.
+    trap ':' HUP INT TERM
+    release_held_keys || { (( result != 0 )) || result=1; }
+    if [[ -n "$ini_backup" ]]; then
+        restore_xeij_ini || { (( result != 0 )) || result=3; }
+    fi
+    exit "$result"
+}
+
+
+environment_fail() { print -u2 -- "ENVIRONMENT: $1"; exit 3; }
+fail() { print -u2 -- "FAIL: $1"; [[ $# -lt 2 ]] || print -u2 -r -- "$2"; exit 1; }
+copy_screen() {
+    transport run 4 osascript - "$XEI_J_PID" >/dev/null <<'APPLESCRIPT'
+on run argv
+    set targetPID to item 1 of argv as integer
+    tell application "System Events"
+        set targetProcess to first application process whose unix id is targetPID
+        set frontmost of targetProcess to true
+        if not (frontmost of targetProcess) then error "XEiJ is not frontmost"
+        keystroke "c" using {option down, shift down}
+    end tell
+end run
+APPLESCRIPT
+}
+key() { send_control "typekey $1"; sleep 0.1; }
 # XEiJ's instant typekey drops some keycodes (yen, underline); hold them
 # just under the keyboard auto-repeat delay so exactly one is delivered.
 hold_key() {
-    printf 'presskey %s\n' "$1" > "$PIPE" || fail 'cannot write control pipe'
+    send_control "presskey $1"
     sleep 0.15
-    printf 'releasekey %s\n' "$1" > "$PIPE" || fail 'cannot write control pipe'
+    send_control "releasekey $1"
     sleep 0.1
 }
 shift_key() { # shifted glyph: hold shift, tap the key, release
-    printf 'presskey shift\n' > "$PIPE" || fail 'cannot write control pipe'
+    send_control "presskey shift"
     sleep 0.12
-    printf 'typekey %s\n' "$1" > "$PIPE" || fail 'cannot write control pipe'
+    send_control "typekey $1"
     sleep 0.12
-    printf 'releasekey shift\n' > "$PIPE" || fail 'cannot write control pipe'
+    send_control "releasekey shift"
     sleep 0.1
 }
-type_char() {
+simple_key_name() {
     case "$1" in
-        ' ') key space ;;
-        '-') key minus ;;
-        ':') key colon ;;
-        '.') key period ;;
-        ',') key comma ;;
-        '/') key slash ;;
+        ' ') REPLY=space ;;
+        '-') REPLY=minus ;;
+        ':') REPLY=colon ;;
+        '.') REPLY=period ;;
+        ',') REPLY=comma ;;
+        '/') REPLY=slash ;;
+        ';') REPLY=semicolon ;;
+        $'\n') REPLY=return ;;
+        [a-zA-Z0-9]) REPLY=$1 ;;
+        *) return 1 ;;
+    esac
+}
+type_char() {
+    if simple_key_name "$1"; then
+        key "$REPLY"
+        return
+    fi
+    case "$1" in
         '&') shift_key 6 ;;
         '"') shift_key 2 ;;
         '#') shift_key 3 ;;
@@ -68,27 +127,56 @@ type_char() {
         '(') shift_key 8 ;;
         ')') shift_key 9 ;;
         '_') hold_key underline ;;
-        ';') key semicolon ;;
         '\') hold_key yen ;;
-        $'\n') key return ;;
         *) key "$1" ;;
     esac
 }
-type_cmd() { # pipe writes do not need the app frontmost; only the
-    # Option-Shift-C screen copy in screen() does (S1 speedup)
+type_text() {
     local c
-    for c in ${(s::)1}; do type_char "$c"; done
+    local -a keys=()
+    for c in ${(s::)1}; do
+        if ! simple_key_name "$c"; then
+            for c in ${(s::)1}; do type_char "$c"; done
+            return
+        fi
+        keys+=("$REPLY")
+    done
+    transport keys "$PIPE" "${keys[@]}" ||
+        environment_fail "control input failed while typing: $1"
+}
+type_cmd() {
+    type_text "$1"
     key return
+}
+
+type_checked_cmd() {
+    local command=$1 echo_line deadline
+    type_text "$command"
+    deadline=$((SECONDS + 3))
+    while true; do
+        snap
+        echo_line=$(print -r -- "$s" | awk '/^> / { line=$0 } END { sub(/[[:space:]]+$/, "", line); print line }')
+        if [[ "$echo_line" == "> $command" ]]; then
+            key return
+            return
+        fi
+        # The screen may lag behind the FIFO while the guest drains its keys.
+        [[ "> $command" == "$echo_line"* ]] && (( SECONDS < deadline )) || break
+    done
+    print -u2 -r -- "$s"
+    environment_fail "guest input differs before Enter: expected [$command], saw [$echo_line]"
 }
 screen() {
     # Runs inside a command-substitution subshell, so fail() here would only
     # exit the subshell and the script would continue on a dead capture. On
     # an unrecoverable copy failure, emit the pending marker: the caller's
     # content checks then fail in the main shell with a real diagnostic.
-    local out tries=0
-    osascript -e 'tell application "System Events" to set frontmost of process "java" to true' >/dev/null 2>&1
-    printf '%s' 'SSOS9_SCREEN_COPY_PENDING' | pbcopy
-    if ! osascript -e 'tell application "System Events" to keystroke "c" using {option down, shift down}' >/dev/null 2>&1; then
+    local out tries=0 marker="SSOS9_SCREEN_COPY_PENDING-$RANDOM-$RANDOM"
+    if ! printf '%s' "$marker" | transport run 3 pbcopy; then
+        print -r -- 'SSOS9_SCREEN_COPY_PENDING'
+        return 0
+    fi
+    if ! copy_screen && { sleep 0.3; ! copy_screen; }; then
         print -u2 'WARN: screen copy keystroke failed'
         print -r -- 'SSOS9_SCREEN_COPY_PENDING'
         return 0
@@ -97,23 +185,22 @@ screen() {
     # so check early (0.4 s) and poll at 0.3 s before falling back to the
     # slower retry keystrokes below.
     sleep 0.4
-    out=$(pbpaste)
+    out=$(transport run 3 pbpaste) || out=$marker
     local quick=0
-    while [[ "$out" == 'SSOS9_SCREEN_COPY_PENDING' && $quick -lt 3 ]]; do
+    while [[ ( -z "$out" || "$out" == "$marker" ) && $quick -lt 3 ]]; do
         sleep 0.3
         quick=$((quick + 1))
-        out=$(pbpaste)
+        out=$(transport run 3 pbpaste) || out=$marker
     done
-    while [[ "$out" == 'SSOS9_SCREEN_COPY_PENDING' && $tries -lt 3 ]]; do
+    while [[ ( -z "$out" || "$out" == "$marker" ) && $tries -lt 3 ]]; do
         # Re-assert focus before each retry: a stolen focus sends the copy
         # keystroke to another app and the marker would never clear.
-        osascript -e 'tell application "System Events" to set frontmost of process "java" to true' >/dev/null 2>&1
-        osascript -e 'tell application "System Events" to keystroke "c" using {option down, shift down}' >/dev/null 2>&1
+        copy_screen || break
         sleep $((1 + tries))
-        out=$(pbpaste)
+        out=$(transport run 3 pbpaste) || out=$marker
         tries=$((tries + 1))
     done
-    if [[ "$out" == 'SSOS9_SCREEN_COPY_PENDING' ]]; then
+    if [[ -z "$out" || "$out" == "$marker" ]]; then
         print -u2 'WARN: screen copy did not complete'
         print -r -- 'SSOS9_SCREEN_COPY_PENDING'
         return 0
@@ -126,7 +213,11 @@ snap() { # snap [var]; capture the screen into $s (default) or $var. screen()
     local var=${1:-s} out
     out=$(screen)
     if [[ "$out" == 'SSOS9_SCREEN_COPY_PENDING' ]]; then
-        fail 'screen copy did not complete (XEiJ or clipboard unresponsive)'
+        environment_fail 'screen copy did not complete (XEiJ or clipboard unresponsive)'
+    fi
+    if [[ -n ${SSOS9_XEIJ_SCREEN_LOG:-} ]]; then
+        print -r -- "$out" > "$SSOS9_XEIJ_SCREEN_LOG" ||
+            environment_fail 'cannot write screen evidence'
     fi
     typeset -g "$var"="$out"
 }
@@ -146,34 +237,72 @@ wait_screen() { # wait_screen <pattern> <timeout-seconds>; screen text in $s.
     # capture, so the old fixed 3 s poll dominated the run time.
     local pat=$1 deadline=$(( SECONDS + $2 )) gap=0.5
     while (( SECONDS < deadline )); do
-        s=$(screen)
+        snap
         print -r -- "$s" | grep -Fq -- "$pat" && return 0
         sleep $gap
         (( gap < 2 )) && gap=$(( gap * 2 ))
     done
     return 1
 }
+xeij_pids() {
+    local processes
+    processes=$(ps -axww -o pid= -o command=) || return 1
+    print -r -- "$processes" | awk -v ini="${1:-$XEI_J_INI}" '
+        index($0, " -jar ") && index($0, "/XEiJ.jar ") {
+            option = " -ini " ini
+            start = index($0, option)
+            if (ini == "*" || (start && substr($0, start + length(option)) ~ /^($| )/))
+                print $1
+        }'
+}
 xeij_stop() {
-    pkill -f XEiJ.jar
-    local i=0
-    while pgrep -f XEiJ.jar >/dev/null && (( i < 15 )); do
+    local pids i
+    pids=$(xeij_pids) || return 1
+    [[ -n "$pids" ]] || return 0
+    [[ "$pids" == "$XEI_J_PID" && "$(xeij_pids '*')" == "$XEI_J_PID" ]] || return 1
+    kill -TERM "$XEI_J_PID" || return 1
+    for ((i = 0; i < 15; i++)); do
+        pids=$(xeij_pids) || return 1
+        [[ -z "$pids" ]] && return 0
         sleep 1
-        i=$((i + 1))
     done
-    pgrep -f XEiJ.jar >/dev/null || return 0
-    pkill -9 -f XEiJ.jar
-    sleep 2
-    pgrep -f XEiJ.jar >/dev/null && { print -u2 'FAIL: cannot stop XEiJ'; return 1; }
-    return 0
+    print -u2 'FAIL: XEiJ did not stop'
+    return 1
 }
 xeij_start() {
-    "$HOME/.local/bin/xeij.sh"
-    local i=0
-    while ! [[ -p "$PIPE" ]] && (( i < 30 )); do
+    local running
+    running=$(xeij_pids '*') || return 1
+    [[ -z "$running" ]] || return 1
+    if [[ -n ${SSOS9_XEIJ_JAR:-} && -n ${SSOS9_XEIJ_CGROM:-} ]]; then
+        transport launch "$XEI_J_INI.log" java -jar "$SSOS9_XEIJ_JAR" \
+            -cgrom "$SSOS9_XEIJ_CGROM" -ini "$XEI_J_INI" || return 1
+    else
+        transport run 10 "$XEI_J_LAUNCHER" "$XEI_J_INI" || return 1
+    fi
+    local i candidate
+    for ((i = 0; i < 30; i++)); do
+        candidate=$(xeij_pids) || return 1
+        if [[ "$candidate" == <-> ]]; then
+            XEI_J_PID=$candidate
+            if [[ -p "$PIPE" ]] && transport probe "$PIPE" 0.2 2>/dev/null; then
+                return 0
+            fi
+        fi
         sleep 1
-        i=$((i + 1))
     done
-    [[ -p "$PIPE" ]] || { print -u2 'FAIL: control pipe did not come back'; return 1; }
+    print -u2 'FAIL: XEiJ process or control pipe did not come back'
+    return 1
+}
+
+human68k_mfp_snapshot() {
+    type_cmd 'cls'
+    type_cmd 'f:mfpstate'
+    wait_screen 'MFPSTATE=' 10 || fail 'Human68k MFP snapshot failed' "$s"
+    MFP_SNAPSHOT=$(print -r -- "$s" | grep -Eo 'MFPSTATE=([0-9A-F]{2}/){4}([0-9A-F]{8}/){2}[0-9A-F]{8}')
+    [[ -n "$MFP_SNAPSHOT" ]] || fail 'invalid MFP snapshot' "$s"
+    if ! screen_line "$s" 'A:\\>'; then
+        wait_line 'A:\\>' 8 || fail 'Human68k did not return after MFP snapshot' "$s"
+    fi
 }
 
 run_a2() {
@@ -182,17 +311,24 @@ run_a2() {
     type_cmd 'keywitch -r'
     sleep 1
 
+    local before=''
+    if [[ ${SSOS9_XEIJ_MFP_CHECK:-0} == 1 ]]; then
+        [[ -f "$XEI_J_STAGE/mfpstate.x" ]] || fail 'MFP probe missing from HFS stage'
+        human68k_mfp_snapshot
+        before=$MFP_SNAPSHOT
+    fi
     for ((i = 1; i <= 5; i++)); do
         print "== A2 iteration $i =="
         type_cmd 'cls'
         type_cmd 'f:ssos9'
-        sleep 3
-        snap
-        require "iteration $i startup" "$s" 'SSOS-9: minimal X68000 CLI'
+        wait_screen 'SSOS-9: minimal X68000 CLI' 30 ||
+            fail "iteration $i: startup failed" "$s"
+        if ! screen_line "$s" '> '; then
+            wait_line '> ' 8 || fail "iteration $i: SSOS-9 prompt missing" "$s"
+        fi
         type_cmd 'debug'
-        sleep 1
-        snap
-        require "iteration $i debug" "$s" 'MFP IERB/IMRB/TCDCR/TDDR='
+        wait_screen 'MFP IERB/IMRB/TCDCR/TDDR=' 8 ||
+            fail "iteration $i: no MFP diagnostics" "$s"
         print -r -- "$s" | grep -F 'MFP IERB/IMRB/TCDCR/TDDR='
         # B5-lite: the Timer D interrupt stays consistently enabled (mask
         # 3E3E) across cycles. Register values before launch and after exit
@@ -202,74 +338,72 @@ run_a2() {
             grep -o 'MFP IERB/IMRB/TCDCR/TDDR=[0-9A-F]*' | grep -o '[0-9A-F]*$')
         [[ $mfp == 3E3E* ]] || fail "iteration $i: Timer D mask changed: $mfp" "$s"
         type_cmd 'exit'
-        sleep 3
-        snap
-        require "iteration $i exit" "$s" 'SSOS-9 terminated.'
-        require "iteration $i return" "$s" 'A:\>'
+        wait_screen 'SSOS-9 terminated.' 15 || fail "iteration $i: exit failed" "$s"
+        wait_line 'A:\\>' 8 || fail "iteration $i: Human68k did not return" "$s"
+        type_cmd 'cls'
         type_cmd 'dir a:'
-        sleep 1
-        snap
-        require "iteration $i DOS listing" "$s" '<dir>'
-        require "iteration $i DOS prompt" "$s" 'A:\>'
+        wait_screen '<dir>' 8 || fail "iteration $i: DOS listing missing" "$s"
+        if ! screen_line "$s" 'A:\\>'; then
+            wait_line 'A:\\>' 8 || fail "iteration $i: DOS prompt missing" "$s"
+        fi
+        if [[ -n "$before" ]]; then
+            human68k_mfp_snapshot
+            [[ "$MFP_SNAPSHOT" == "$before" ]] ||
+                fail "iteration $i: MFP state changed ($before -> $MFP_SNAPSHOT)" "$s"
+            print "A2 restored $MFP_SNAPSHOT"
+        fi
         print "PASS A2 iteration $i"
     done
     print 'PASS A2: 5 iterations'
 }
 
-a3_cleanup() {
-    local result=$1
-    [[ -n $A3_BACKUP ]] || return $result
-    print '== A3 restore XEiJ configuration =='
+restore_xeij_ini() {
+    print '== Restore XEiJ configuration =='
     if ! xeij_stop; then
-        print -u2 -- "FAIL: a3: XEiJ still running; backup retained at $A3_BACKUP"
+        print -u2 -- "ENVIRONMENT: XEiJ still running; backup retained at $ini_backup"
         return 1
     fi
-    if cp -p "$A3_BACKUP" "$HOME/XEiJ.ini"; then
-        rm -f "$A3_BACKUP"
-        A3_BACKUP=''
-    else
-        print -u2 -- "FAIL: a3: restore failed; backup retained at $A3_BACKUP"
+    if ! mv -f "$ini_backup" "$XEI_J_INI"; then
+        print -u2 -- "ENVIRONMENT: restore failed; backup retained at $ini_backup"
         return 1
     fi
-    xeij_start || result=1
-    return $result
+    ini_backup=''
+    xeij_start
+}
+
+restart_with_floppy() {
+    local unit=$1 disk=$2 backup
+    [[ -f "$disk" && -f "$XEI_J_INI" ]] ||
+        environment_fail "missing floppy image or XEiJ configuration: $disk"
+    backup=$(mktemp "$XEI_J_INI.ssos9.XXXXXXXX") || environment_fail 'cannot allocate XEiJ backup'
+    if ! cp -p "$XEI_J_INI" "$backup"; then
+        rm -f "$backup"
+        environment_fail 'cannot back up XEiJ configuration'
+    fi
+    ini_backup=$backup
+    xeij_stop || environment_fail 'cannot stop XEiJ'
+    sed -i '' "/^fd${unit}=/d" "$XEI_J_INI" &&
+        printf 'fd%s=%s\n' "$unit" "$disk" >> "$XEI_J_INI" ||
+        environment_fail 'cannot attach floppy in XEiJ configuration'
+    xeij_start || environment_fail 'cannot start XEiJ'
 }
 
 run_a3() {
-    local backup
-    [[ -f "$HOME/tmp/ssos9.xdf" ]] || fail 'a3: missing ~/tmp/ssos9.xdf'
-    [[ -f "$HOME/XEiJ.ini" ]] || fail 'a3: missing ~/XEiJ.ini'
-    backup=$(mktemp "${TMPDIR%/}/ssos9-xeij-ini.XXXXXXXX") || fail 'a3: cannot create backup'
-    if ! cp -p "$HOME/XEiJ.ini" "$backup"; then
-        rm -f "$backup"
-        fail 'a3: cannot back up ~/XEiJ.ini'
-    fi
-    A3_BACKUP=$backup
-    print '== A3 insert ssos9.xdf in FD0 (ini fd0 + restart) =='
-    xeij_stop || fail 'a3: cannot stop XEiJ'
-    sed -i '' '/^fd0=/d' "$HOME/XEiJ.ini" || fail 'a3: cannot remove fd0'
-    printf 'fd0=%s\n' "$HOME/tmp/ssos9.xdf" >> "$HOME/XEiJ.ini" || fail 'a3: cannot set fd0'
-
-    xeij_start || fail 'a3: cannot start XEiJ'
+    print '== A3 insert ssos9.xdf in FD0 =='
+    restart_with_floppy 0 "$XEI_J_STAGE/ssos9.xdf"
     print '== A3 wait for XDF IPL boot =='
     wait_screen 'SSOS-9: minimal X68000 CLI' 60 || fail 'a3: XDF boot banner missing' "$s"
-    sleep 2
-    snap
-    require 'a3 prompt' "$s" '>'
+    wait_line '> ' 15 || fail 'a3: no CLI prompt after IPL boot' "$s"
 
     print '== A3 exit must be rejected (PID 1) =='
     type_cmd 'exit'
-    sleep 2
-    snap
-    if ! print -r -- "$s" | grep -Fq 'Cannot exit the initial SSOS-9 process (PID 1).'; then
+    wait_screen 'Cannot exit the initial SSOS-9 process (PID 1).' 10 ||
         fail 'a3: exit was not rejected' "$s"
-    fi
-    print -r -- "$s" | grep -F 'Cannot exit the initial SSOS-9 process (PID 1).'
-    snap s2
-    require 'a3 prompt alive' "$s2" '>'
+    type_cmd 'version'
+    wait_screen 'SSOS-9 CLI preemptive minimum' 8 ||
+        fail 'a3: CLI did not accept a command after refusing exit' "$s"
 
-    trap - EXIT HUP INT TERM
-    a3_cleanup 0 || fail 'a3: configuration restore failed'
+    restore_xeij_ini || environment_fail 'a3: configuration restore failed'
     wait_screen 'A:\>' 90 || fail 'a3: Human68k did not come back' "$s"
     print 'PASS a3: configuration restored and Human68k returned'
     print 'PASS a3'
@@ -291,7 +425,7 @@ run_b1() {
     # cancels and ticks delta ~= 200 Hz x elapsed seconds.
     type_cmd 'debug'
     sleep 1
-    t1=$(date +%s)
+    t1=$(transport monotonic) || environment_fail 'cannot sample monotonic clock'
     snap
     require 'b1 debug1' "$s" 'ticks='
     n1=$(ticks_of "$s")
@@ -299,17 +433,16 @@ run_b1() {
     sleep 6
     type_cmd 'debug'
     sleep 1
-    t2=$(date +%s)
+    t2=$(transport monotonic) || environment_fail 'cannot sample monotonic clock'
     snap
     require 'b1 debug2' "$s" 'ticks='
     n2=$(ticks_of "$s")
 
-    elapsed=$((t2 - t1))
-    (( elapsed >= 1 )) || elapsed=1
-    expected=$((elapsed * 200))
-    tol=$((expected / 5))
-    delta=$((n2 - n1))
-    print "b1 ticks delta=$delta expected~$expected +/- $tol over ${elapsed}s"
+    local elapsed=$((t2 - t1))
+    local -i expected=$((elapsed * 200.0))
+    local tol=$((expected / 5))
+    local delta=$(((n2 - n1) & 0xffffffff))
+    printf 'b1 ticks delta=%d expected~%d +/- %d over %.3fs\n' "$delta" "$expected" "$tol" "$elapsed"
     if (( delta >= expected - tol && delta <= expected + tol )); then
         print 'PASS b1: tick rate within 200 Hz +/- 20%'
     else
@@ -341,7 +474,7 @@ boot_mount() { # boot SSOS-9 and mount the A: volume (SCSI ID 0)
 }
 guest_reset() { # reboot the guest through the control pipe and wait for the
     # Human68k prompt; drops the Human68k disk cache (track buffer)
-    printf 'reset\n' > "$PIPE" || fail 'cannot write reset to control pipe'
+    send_control "reset"
     wait_screen 'HIOCS' 30 || fail 'guest did not start rebooting' "$s"
     wait_screen 'A:\>' 150 || fail 'Human68k did not come back' "$s"
     sleep 2 # AUTOEXPORT tools can still print just after the prompt
@@ -355,8 +488,9 @@ h68_prep() { # from A:\>: reset keywitch, ensure A:\TEST exists, leave a
     sleep 1
     # Relative paths (dir/mkdir test) keep backslashes out of the typed
     # stream: the held yen key can double under auto-repeat races.
+    type_cmd 'cls'
     type_cmd 'dir test'
-    wait_screen 'A:\>' 8 || fail 'dir test did not complete' "$s"
+    wait_line 'A:\\>' 8 || fail 'dir test did not complete' "$s"
     if print -r -- "$s" | grep -Eq 'ディレクトリ.*見つかり|irectory not found'; then
         print '== create A:\TEST =='
         type_cmd 'mkdir test'
@@ -371,18 +505,22 @@ h68_prep() { # from A:\>: reset keywitch, ensure A:\TEST exists, leave a
     return 0
 }
 place_in_test() { # place_in_test <host-file> <NAME.EXT>; stage on F: and copy
-    # into A:\TEST unless the row already exists (Human68k copy would prompt
-    # on overwrite, and immutable module images keep their first copy).
+    # into A:\TEST. Existing files are replaced only on a disposable profile.
     # Requires a fresh dir listing in $s; leaves $s on the new listing.
     local src=$1 name=$2
     local stem=${name%.*} ext=${name##*.}
     if print -r -- "$s" | tr '\r' '\n' | grep -Eiq "^${stem}[ ]+${ext}"; then
-        print "place: $name already in A:\\TEST (keeping existing copy)"
-        return 0
+        if [[ ! -f "${XEI_J_INI:h}/profile.json" ]]; then
+            print "place: $name already in A:\\TEST (keeping existing copy)"
+            return 0
+        fi
+        # Existing files on a disposable clone can be from older builds.
+        h68_del "$name"
+        h68_absent "$stem" "$ext" 12
     fi
     # macOS HFS+/APFS ignore name case, so a string compare misses the
     # staged file when only the case differs; compare content instead.
-    cmp -s "$src" "$HOME/tmp/$name" || cp "$src" "$HOME/tmp/$name" ||
+    cmp -s "$src" "$XEI_J_STAGE/$name" || cp "$src" "$XEI_J_STAGE/$name" ||
         fail "cannot stage $name in ~/tmp (F:)"
     type_cmd 'cd test'
     type_cmd "copy f:$name $name"
@@ -396,7 +534,9 @@ place_in_test() { # place_in_test <host-file> <NAME.EXT>; stage on F: and copy
 ssos_exit() { # exit SSOS-9 and confirm the Human68k prompt
     type_cmd 'exit'
     wait_screen 'SSOS-9 terminated.' 15 || fail 'SSOS-9 did not terminate' "$s"
-    require 'return to Human68k' "$s" 'A:\>'
+    if ! screen_line "$s" 'A:\\>'; then
+        wait_line 'A:\\>' 8 || fail 'Human68k prompt did not return' "$s"
+    fi
     return 0
 }
 
@@ -412,7 +552,7 @@ screen_line() { # screen_line <screen text> <exact line>; the screen copy
 wait_line() { # wait_line <exact line> <timeout-seconds>; screen in $s
     local deadline=$(( SECONDS + $2 )) gap=0.5
     while (( SECONDS < deadline )); do
-        s=$(screen)
+        snap
         screen_line "$s" "$1" && return 0
         sleep $gap
         (( gap < 2 )) && gap=$(( gap * 2 ))
@@ -422,7 +562,7 @@ wait_line() { # wait_line <exact line> <timeout-seconds>; screen in $s
 wait_row() { # wait_row <name> <ext> <timeout>; dir row in $s, any case
     local deadline=$(( SECONDS + $3 )) gap=0.5
     while (( SECONDS < deadline )); do
-        s=$(screen)
+        snap
         print -r -- "$s" | tr '\r' '\n' | grep -Eiq "^${1}[ ]+${2}" && return 0
         sleep $gap
         (( gap < 2 )) && gap=$(( gap * 2 ))
@@ -474,7 +614,8 @@ h68_del() { # h68_del <NAME.EXT>...; delete exact files in A:\TEST on
     # Human68k (exact names never trigger the wildcard <Y/N> prompt)
     local n
     type_cmd 'cd test'
-    sleep 0.5
+    wait_line 'A:\\[Tt][Ee][Ss][Tt]>' 8 ||
+        fail 'refusing to delete outside A:\TEST' "$s"
     for n in "$@"; do
         type_cmd "del ${(L)n}"
         sleep 1
@@ -506,14 +647,33 @@ h68_absent() { # h68_absent <name> <ext> <timeout>; poll the A:\TEST listing
     fail "$name.$ext still exists in A:\\TEST after ${tmo}s" "$s"
 }
 
+wait_command_result() {
+    local command=$1 expected=$2 deadline=$((SECONDS + $3)) gap=0.5
+    while (( SECONDS < deadline )); do
+        snap
+        if print -r -- "$s" | awk -v command="> $command" -v expected="$expected" '
+            { sub(/[[:space:]]+$/, "") }
+            $0 == command { seen = 1; matched = 0; complete = 0; next }
+            seen && $0 == expected { matched = 1 }
+            seen && $0 == ">" && matched { complete = 1 }
+            END { exit !complete }'
+        then
+            return 0
+        fi
+        sleep $gap
+        (( gap < 2 )) && gap=$(( gap * 2 ))
+    done
+    return 1
+}
+
 run_d1() {
     local base fix upper before after target id s2
-    [[ -f "$HOME/tmp/ssos9.x" ]] || fail 'd1: missing ~/tmp/ssos9.x (run make install)'
+    [[ -f "$XEI_J_STAGE/ssos9.x" ]] || fail 'd1: missing ~/tmp/ssos9.x (run make install)'
     base="d1t$(printf '%05x' $(( $(date +%s) % 1048576 )))"
     fix="D1F$(printf '%05X' $(( ($(date +%s) + 7) % 1048576 )))"
     upper=${(U)base}
     print "d1 test file: $upper.TXT  fixture: $fix.TXT"
-    print "d1 ssos9.x sha256: $(shasum -a 256 "$HOME/tmp/ssos9.x" | awk '{print $1}')"
+    print "d1 ssos9.x sha256: $(shasum -a 256 "$XEI_J_STAGE/ssos9.x" | awk '{print $1}')"
 
     snap
     require 'd1 initial prompt' "$s" 'A:\>'
@@ -527,7 +687,7 @@ run_d1() {
     # given. Reading the fixture back through each smount candidate identifies
     # A:'s SCSI target read-only before any SSOS-9 write. Writes stay inside
     # A:\TEST.
-    printf 'D1FIXTURE' > "$HOME/tmp/$fix.TXT" || fail 'd1: cannot write fixture to ~/tmp (F:)'
+    printf 'D1FIXTURE' > "$XEI_J_STAGE/$fix.TXT" || fail 'd1: cannot write fixture to ~/tmp (F:)'
     h68_prep
     type_cmd 'cd test'
     type_cmd "copy f:$fix.TXT $fix.TXT"
@@ -545,6 +705,14 @@ run_d1() {
     print '== D1 boot SSOS-9 =='
     boot_ssos || fail 'd1: ssos9 boot failed'
     require 'd1 banner' "$s" 'SSOS-9: minimal X68000 CLI'
+
+    if [[ -f "${XEI_J_INI:h}/profile.json" ]] &&
+            ! grep -Eiq '^(sc|si|se)6=.+$' "$XEI_J_INI"; then
+        type_cmd 'smount 6'
+        wait_command_result 'smount 6' 'Unable to mount FAT16.' 15 ||
+            fail 'd1: unconnected SCSI target was not rejected' "$s"
+        print 'PASS d1: unconnected SCSI target rejected'
+    fi
 
     print '== D1 identify A: SCSI target (read-only) =='
     target=''
@@ -565,14 +733,20 @@ run_d1() {
     print "d1: A: identified as SCSI ID $target"
 
     print '== D1 create/read/replace/read =='
-    # Results are asserted through the following sread line so stale
-    # "File written." text from an earlier command cannot pass the check.
-    type_cmd "swrite test/$base.txt hello"
-    type_cmd "sread test/$base.txt"
-    wait_line 'hello' 15 || fail 'd1: create + first read did not return hello' "$s"
-    type_cmd "sreplace test/$base.txt world"
-    type_cmd "sread test/$base.txt"
-    wait_line 'world' 15 || fail 'd1: replace + second read did not return world' "$s"
+    local command="swrite test/$base.txt hello"
+    type_cmd "$command"
+    wait_command_result "$command" 'File written.' 30 ||
+        fail 'd1: create did not report success and return to prompt' "$s"
+    command="sread test/$base.txt"
+    type_cmd "$command"
+    wait_command_result "$command" hello 15 || fail 'd1: first read did not return hello' "$s"
+    command="sreplace test/$base.txt world"
+    type_cmd "$command"
+    wait_command_result "$command" 'File written.' 30 ||
+        fail 'd1: replace did not report success and return to prompt' "$s"
+    command="sread test/$base.txt"
+    type_cmd "$command"
+    wait_command_result "$command" world 15 || fail 'd1: second read did not return world' "$s"
     print 'PASS d1: create/read/replace/read inside SSOS-9'
 
     print '== D1 verify from Human68k after return =='
@@ -583,7 +757,7 @@ run_d1() {
     # SSOS-9 wrote behind the cache stay invisible to dir/type until the cache
     # is dropped. Reboot the guest via the pipe's reset command and verify on
     # the fresh Human68k.
-    printf 'reset\n' > "$PIPE" || fail 'd1: cannot write reset to control pipe'
+    send_control "reset"
     wait_screen 'HIOCS' 30 || fail 'd1: guest did not start rebooting' "$s"
     wait_screen 'A:\>' 150 || fail 'd1: Human68k did not come back' "$s"
     sleep 3
@@ -603,6 +777,7 @@ run_d1() {
     wait_line 'world' 12 || fail 'd1: Human68k does not see world' "$s"
     type_cmd 'cd ..'
     print -r -- "$s" | grep -Fq 'hello' && fail 'd1: old content still visible after replace' "$s"
+    wait_line 'A:\\>' 10 || fail 'd1: Human68k did not return to the root directory' "$s"
     print 'PASS d1: Human68k sees world and the A:\TEST listing is unchanged'
     print 'PASS d1'
     return 0
@@ -647,8 +822,6 @@ run_b2() {
     local pid=$(started_pid "$s")
     [[ -n $pid ]] || fail 'b2: cannot parse counter PID' "$s"
     type_cmd 'trace'
-    sleep 2
-    snap
     # The 64-entry trace scrolls the header off the physical text screen.
     # Inspect the visible tail and require the command to have completed.
     wait_line '> ' 10 || fail 'b2: trace did not return to the prompt' "$s"
@@ -658,9 +831,9 @@ run_b2() {
     print -r -- "$s" | grep -Fq ' switch task=' || fail 'b2: no switch event in trace' "$s"
     print "b2: $events scheduler events with non-empty kinds"
     type_cmd "kill $pid"
-    sleep 1
+    wait_screen 'Kill requested.' 8 || fail "kill PID $pid was not accepted" "$s"
     type_cmd "wait $pid"
-    wait_screen 'exited with status' 8 || fail 'b2: counter was not reaped' "$s"
+    wait_screen "PID $pid exited with status " 8 || fail 'b2: counter was not reaped' "$s"
     ssos_exit
     print 'PASS b2: trace shows scheduler events while counter ran'
 }
@@ -686,17 +859,40 @@ run_b3() {
     (( n2 - n1 > 400 )) || fail "b3: ticks advanced only by $((n2 - n1)) while the shell stayed responsive" "$s"
     print "b3: ticks advanced by $((n2 - n1)) with the spinner running"
     type_cmd 'ps'
-    sleep 2
-    snap
-    require 'b3 ps header' "$s" 'PID PPID STATE NAME MODULE DATA GOT STACK'
+    wait_screen 'PID PPID STATE NAME MODULE DATA GOT STACK' 8 ||
+        fail 'b3: task table did not appear' "$s"
+    if ! screen_line "$s" '> '; then
+        wait_line '> ' 8 || fail 'b3: task table command did not complete' "$s"
+    fi
     print -r -- "$s" | grep -Eq " counter " || fail 'b3: counter task not listed' "$s"
     print 'b3: shell kept typing/debug/ps while counter spun (preemptive)'
-    type_cmd "kill $pid"
-    sleep 1
-    type_cmd "wait $pid"
-    wait_screen 'exited with status' 8 || fail 'b3: counter was not reaped' "$s"
+    type_checked_cmd "kill $pid"
+    wait_screen 'Kill requested.' 8 || fail "kill PID $pid was not accepted" "$s"
+    type_checked_cmd "wait $pid"
+    wait_screen "PID $pid exited with status " 8 || fail 'b3: counter was not reaped' "$s"
     ssos_exit
     print 'PASS b3'
+}
+
+arena_after() {
+    print -r -- "$1" | awk -v marker="$2" '
+        index($0, marker) { seen = 1 }
+        seen && match($0, /arena free_bytes=[0-9]+ largest_free=[0-9]+/) {
+            value = substr($0, RSTART, RLENGTH)
+        }
+        END { if (value != "") print value }'
+}
+
+wait_arena_after() {
+    local marker=$1 deadline=$((SECONDS + $2)) gap=0.5
+    while (( SECONDS < deadline )); do
+        snap
+        REPLY_ARENA=$(arena_after "$s" "$marker")
+        [[ -z "$REPLY_ARENA" ]] || return 0
+        sleep $gap
+        (( gap < 2 )) && gap=$(( gap * 2 ))
+    done
+    return 1
 }
 
 run_b4() {
@@ -710,18 +906,16 @@ run_b4() {
     [[ -n $base ]] || fail 'b4: no arena baseline' "$s"
     type_cmd 'run counter'
     sleep 2 # foreground: the shell blocks while counter spins
-    printf 'presskey ctrl\n' > "$PIPE"; sleep 0.2
-    printf 'typekey c\n' > "$PIPE"; sleep 0.2
-    printf 'releasekey ctrl\n' > "$PIPE"; sleep 0.2
+    send_control "presskey ctrl"; sleep 0.2
+    send_control "typekey c"; sleep 0.2
+    send_control "releasekey ctrl"; sleep 0.2
     wait_line '\^C' 10 || fail 'b4: Ctrl-C not observed' "$s"
     wait_screen 'interrupted' 8 || fail 'b4: foreground task not interrupted' "$s"
     wait_line '> ' 8 || fail 'b4: prompt missing after interrupt' "$s"
     type_cmd 'mem'
-    sleep 1
-    snap
-    local after=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
-    [[ "$after" == "$base" ]] || fail "b4: arena did not return to baseline" \
-        "baseline: $base"$'\n'"after: $after"
+    wait_arena_after 'interrupted' 8 || fail 'b4: no arena sample after interruption' "$s"
+    [[ "$REPLY_ARENA" == "$base" ]] || fail 'b4: arena did not return to baseline' \
+        "baseline: $base"$'\n'"after: $REPLY_ARENA"
     ssos_exit
     print "PASS b4: Ctrl-C reaped the spinner; arena back to $base"
 }
@@ -814,41 +1008,19 @@ run_c4() {
     sleep 1.5
     snap
     print -r -- "$s" | grep -Fq 'arena free_bytes=' && fail 'c4: window 1 shows window 2 output' "$s"
-    # Try Ctrl-] then digit. IOCS encodes ctrl only for letters, so this
-    # prefix may be undeliverable through the emulated keyboard.
-    printf 'presskey ctrl\n' > "$PIPE"; sleep 0.2
-    printf 'presskey rightbracket\n' > "$PIPE"; sleep 0.2
-    printf 'releasekey rightbracket\n' > "$PIPE"; sleep 0.15
-    printf 'releasekey ctrl\n' > "$PIPE"; sleep 0.3
-    key 2
+    # Use the supported XEiJ path: function keys select mux windows directly.
+    key f3
+    sleep 1.5
+    type_cmd 'ps'
+    wait_screen 'PID PPID STATE NAME MODULE DATA GOT STACK' 8 || fail 'c4: window 3 did not run ps' "$s"
+    key f2
     sleep 1.5
     snap
-    if ! print -r -- "$s" | grep -Fq 'arena free_bytes='; then
-        print 'c4: Ctrl-] did not switch; trying the ~ prefix'
-        key return # flush whatever reached the shell prompt
-        sleep 0.5
-        printf 'presskey shift\n' > "$PIPE"; sleep 0.2
-        printf 'presskey caret\n' > "$PIPE"; sleep 0.2
-        printf 'releasekey caret\n' > "$PIPE"; sleep 0.15
-        printf 'releasekey shift\n' > "$PIPE"; sleep 0.4
-        key 2
-        sleep 1.5
-        snap
-        if ! print -r -- "$s" | grep -Fq 'arena free_bytes='; then
-            key return
-            key f1
-            sleep 1
-            ssos_exit
-            fail 'c4: neither Ctrl-] nor ~ delivered a mux prefix through the emulated IOCS keyboard (F-key switching is covered by c3)' "$s"
-        fi
-        print 'c4: Ctrl-] not encodable on this IOCS path; ~ prefix switched'
-    else
-        print 'c4: Ctrl-] then 2 selected window 2'
-    fi
+    print -r -- "$s" | grep -Fq 'arena free_bytes=' || fail 'c4: window 2 output was not retained' "$s"
     key f1
     sleep 1
     ssos_exit
-    print 'PASS c4'
+    print 'PASS c4: F1/F2/F3 select the intended mux windows and retain output'
 }
 
 run_c5() {
@@ -938,7 +1110,7 @@ wait_host_file() { # wait_host_file <case-insensitive NAME.EXT> <timeout>; sets 
     local want=${1:l} tmo=$2 waited=0 name
     while (( waited < tmo )); do
         host_file=''
-        for name in "$HOME"/tmp/*(N); do
+        for name in "$XEI_J_STAGE"/*(N); do
             if [[ "${name:t:l}" == "$want" ]]; then
                 host_file=$name
                 return 0
@@ -955,12 +1127,12 @@ wait_host_file() { # wait_host_file <case-insensitive NAME.EXT> <timeout>; sets 
 # them on target into matching .O files.
 d3_place_and_asm() {
     local suf=$1
-    cp tests/asm/link/start.s "$HOME/tmp/SA$suf.S"
-    cp tests/asm/link/main.s "$HOME/tmp/MB$suf.S"
-    cp tests/asm/link/obj.s "$HOME/tmp/OB$suf.S"
-    place_in_test "$HOME/tmp/SA$suf.S" "SA$suf.S"
-    place_in_test "$HOME/tmp/MB$suf.S" "MB$suf.S"
-    place_in_test "$HOME/tmp/OB$suf.S" "OB$suf.S"
+    cp tests/asm/link/start.s "$XEI_J_STAGE/SA$suf.S"
+    cp tests/asm/link/main.s "$XEI_J_STAGE/MB$suf.S"
+    cp tests/asm/link/obj.s "$XEI_J_STAGE/OB$suf.S"
+    place_in_test "$XEI_J_STAGE/SA$suf.S" "SA$suf.S"
+    place_in_test "$XEI_J_STAGE/MB$suf.S" "MB$suf.S"
+    place_in_test "$XEI_J_STAGE/OB$suf.S" "OB$suf.S"
     boot_mount
     type_cmd "run test/asm test/sa$suf.s test/sa$suf.o"
     wait_screen "Wrote test/sa$suf.o" 25 || fail "d3: asm sa$suf failed" "$s"
@@ -1089,7 +1261,7 @@ run_f1() {
     local pid
     for pid in $p1 $p2 $p3; do
         type_cmd "wait $pid"
-        wait_screen 'exited with status' 8 || fail "f1: PID $pid was not reaped" "$s"
+        wait_screen "PID $pid exited with status " 8 || fail "f1: PID $pid was not reaped" "$s"
     done
     type_cmd 'mem'
     sleep 1
@@ -1140,7 +1312,7 @@ run_f2() {
     done
     max3=$max2
     type_cmd "wait $pid"
-    wait_screen 'exited with status 0' 45 || fail 'f2: bg module did not finish cleanly' "$s"
+    wait_line "PID $pid exited with status 0" 45 || fail 'f2: bg module did not finish cleanly' "$s"
     (( max3 >= 30 )) || fail 'f2: too few records survived the switches' "$s"
     ssos_exit
     print 'PASS f2: background output continued across window switches'
@@ -1165,7 +1337,7 @@ run_g1() {
         type_cmd "kill $pid"
         wait_screen 'Kill requested.' 8 || fail "g1: cycle $i kill failed" "$s"
         type_cmd "wait $pid"
-        wait_screen 'exited with status' 8 || fail "g1: cycle $i reap failed" "$s"
+        wait_screen "PID $pid exited with status " 8 || fail "g1: cycle $i reap failed" "$s"
         print "g1: cycle $i spawn/kill/wait reaped PID $pid"
     done
     type_cmd 'mem'
@@ -1342,8 +1514,8 @@ run_e2() {
     h68_prep
     place_in_test "$asm_module" ASM.S9M
     place_in_test "$ld_module" LD.S9M
-    cp tests/asm/link/badmain.s "$HOME/tmp/$bad.S"
-    place_in_test "$HOME/tmp/$bad.S" "${(U)bad}.S"
+    cp tests/asm/link/badmain.s "$XEI_J_STAGE/$bad.S"
+    place_in_test "$XEI_J_STAGE/$bad.S" "${(U)bad}.S"
     boot_mount
     type_cmd "run test/asm test/$bad.s test/$bad.o"
     wait_screen "Wrote test/$bad.o" 30 || fail 'e2: asm of the negative sample failed' "$s"
@@ -1376,9 +1548,9 @@ run_h3() {
     key f1
     sleep 1.5
     print '== H3 Ctrl-C on the active window only =='
-    printf 'presskey ctrl\n' > "$PIPE"; sleep 0.2
-    printf 'typekey c\n' > "$PIPE"; sleep 0.2
-    printf 'releasekey ctrl\n' > "$PIPE"; sleep 0.5
+    send_control "presskey ctrl"; sleep 0.2
+    send_control "typekey c"; sleep 0.2
+    send_control "releasekey ctrl"; sleep 0.5
     wait_screen '^C' 8 || fail 'h3: window 1 did not consume the Ctrl-C' "$s"
     print -r -- "$s" | grep -Fq 'interrupted' &&
         fail 'h3: Ctrl-C leaked to the hidden window' "$s"
@@ -1388,9 +1560,9 @@ run_h3() {
     print -r -- "$s" | grep -Fq 'interrupted' &&
         fail 'h3: window 2 foreground was interrupted while hidden' "$s"
     print 'h3: hidden foreground survived; interrupting it on its window'
-    printf 'presskey ctrl\n' > "$PIPE"; sleep 0.2
-    printf 'typekey c\n' > "$PIPE"; sleep 0.2
-    printf 'releasekey ctrl\n' > "$PIPE"; sleep 0.5
+    send_control "presskey ctrl"; sleep 0.2
+    send_control "typekey c"; sleep 0.2
+    send_control "releasekey ctrl"; sleep 0.5
     wait_screen 'interrupted' 8 || fail 'h3: window 2 foreground not interrupted' "$s"
     wait_line '> ' 8 || fail 'h3: no prompt after interrupt' "$s"
     key f1
@@ -1454,111 +1626,22 @@ run_h4() {
     print 'PASS h4: sread empty ok, >256 rejected, artifacts cleaned'
 }
 
-h5_cleanup() {
-    local result=$1
-    [[ -n $H5_BACKUP ]] || return $result
-    print '== H5 restore XEiJ configuration =='
-    if ! xeij_stop; then
-        print -u2 -- "FAIL: h5: XEiJ still running; backup retained at $H5_BACKUP"
-        return 1
-    fi
-    if cp -p "$H5_BACKUP" "$HOME/XEiJ.ini"; then
-        rm -f "$H5_BACKUP"
-        H5_BACKUP=''
-    else
-        print -u2 -- "FAIL: h5: restore failed; backup retained at $H5_BACKUP"
-        return 1
-    fi
-    xeij_start || result=1
-    return $result
-}
-h2_cleanup() { # mirror a3_cleanup: restore the ini and bring XEiJ back
-    local result=$1
-    [[ -n $H2_BACKUP ]] || return $result
-    print '== H2 restore XEiJ configuration =='
-    if ! xeij_stop; then
-        print -u2 -- "FAIL: h2: XEiJ still running; backup retained at $H2_BACKUP"
-        return 1
-    fi
-    if cp -p "$H2_BACKUP" "$HOME/XEiJ.ini"; then
-        rm -f "$H2_BACKUP"
-        H2_BACKUP=''
-    else
-        print -u2 -- "FAIL: h2: restore failed; backup retained at $H2_BACKUP"
-        return 1
-    fi
-    xeij_start || result=1
-    return $result
-}
-
-run_h2() {
-    # KNOWN-FAIL (2026-11-14): ini-attached FD1 media IS reachable (a
-    # bootable XDF in FD1 redirects the STD boot and its IPL runs, proving
-    # the boot ROM reads the media), but FDC access from the running system
-    # fails: Human68k `dir e:` hangs in retry and `load 1` fails at the
-    # first B_READ. ss_xdf_read_sector's encoding matches both the
-    # IPL-proven form and the PRO-68K manual (PDA $90-$93 = 2HD DRIVE0-3,
-    # mode $70 = MFM|RETRY|SEEK, D2 = 3/track/side/sector), so the
-    # suspicion is XEiJ's ini-time attach lacking the disk-change
-    # insertion semantics a UI insert provides. Automating this needs an
-    # XEiJ fork with a pipe-driven insert, or a manual UI insert. Opt in
-    # with SSOS9_ITEST_H2=1 to reproduce.
-    [[ ${SSOS9_ITEST_H2:-0} == 1 ]] || fail 'h2: known product gap; set SSOS9_ITEST_H2=1 to reproduce (see docs/test-coverage-and-speedup-plan.md)'
-    local disk=tests/target/build/console.xdf
-    [[ -f "$disk" ]] || fail 'h2: missing tests/target/build/console.xdf (run make -C tests/target)'
-    [[ -f "$HOME/XEiJ.ini" ]] || fail 'h2: missing ~/XEiJ.ini'
-    local backup=$(mktemp "${TMPDIR%/}/ssos9-xeij-ini.XXXXXXXX") || fail 'h2: cannot create backup'
-    cp -p "$HOME/XEiJ.ini" "$backup" || { rm -f "$backup"; fail 'h2: cannot back up ~/XEiJ.ini'; }
-    H2_BACKUP=$backup
-    print '== H2 insert console.xdf in FD1 (ini fd1 + restart) =='
-    xeij_stop || fail 'h2: cannot stop XEiJ'
-    sed -i '' '/^fd1=/d' "$HOME/XEiJ.ini"
-    printf 'fd1=%s\n' "$PWD/$disk" >> "$HOME/XEiJ.ini"
-    xeij_start || fail 'h2: cannot start XEiJ'
-    wait_screen 'A:\>' 150 || fail 'h2: Human68k did not boot' "$s"
-    sleep 2
-    boot_ssos || fail 'h2: ssos9 boot failed'
-    print '== H2 load the console module from real FD1 =='
-    type_cmd 'load 1 console.s9m'
-    wait_screen 'Module loaded.' 15 || fail 'h2: FAT12 load from FD1 failed' "$s"
-    type_cmd 'run console'
-    sleep 2
-    snap
-    print -r -- "$s" | grep -Fq 'Unable to start' && fail 'h2: console module failed to spawn' "$s"
-    key a
-    wait_screen 'KEY: 0061' 8 || fail 'h2: key a not reported after FD load' "$s"
-    key q
-    wait_screen 'exited with status 0' 10 || fail 'h2: module did not quit on q' "$s"
-    ssos_exit
-    trap - EXIT HUP INT TERM
-    h2_cleanup 0 || fail 'h2: configuration restore failed'
-    wait_screen 'A:\>' 150 || fail 'h2: Human68k did not come back after restore' "$s"
-    print 'PASS h2: load 1 exercised the real-floppy FAT12 path'
-}
-
 run_h5() {
     # XDF-IPL boot (no Human68k underneath) + the SCSI volume: place a
     # fixture in A:\TEST from Human68k first, then boot the XDF image via
     # ini fd0 (STD boots FD when inserted) and read the fixture with smount.
-    [[ -f "$HOME/tmp/ssos9.xdf" ]] || fail 'h5: missing ~/tmp/ssos9.xdf (run make install)'
+    [[ -f "$XEI_J_STAGE/ssos9.xdf" ]] || fail 'h5: missing ~/tmp/ssos9.xdf (run make install)'
     local fix="H5F$(printf '%05X' $(( $(date +%s) % 1048576 )))"
-    [[ -f "$HOME/XEiJ.ini" ]] || fail 'h5: missing ~/XEiJ.ini'
+    [[ -f "$XEI_J_INI" ]] || fail 'h5: missing ~/XEiJ.ini'
     snap
     require 'h5 initial prompt' "$s" 'A:\>'
-    printf 'H5FIXTURE' > "$HOME/tmp/$fix.TXT"
+    printf 'H5FIXTURE' > "$XEI_J_STAGE/$fix.TXT"
     h68_prep
-    place_in_test "$HOME/tmp/$fix.TXT" "$fix.TXT"
-    local backup=$(mktemp "${TMPDIR%/}/ssos9-xeij-ini.XXXXXXXX") || fail 'h5: cannot create backup'
-    cp -p "$HOME/XEiJ.ini" "$backup" || { rm -f "$backup"; fail 'h5: cannot back up ~/XEiJ.ini'; }
-    H5_BACKUP=$backup
+    place_in_test "$XEI_J_STAGE/$fix.TXT" "$fix.TXT"
     print '== H5 insert ssos9.xdf in FD0 and boot the XDF image =='
-    xeij_stop || fail 'h5: cannot stop XEiJ'
-    sed -i '' '/^fd0=/d' "$HOME/XEiJ.ini"
-    printf 'fd0=%s\n' "$HOME/tmp/ssos9.xdf" >> "$HOME/XEiJ.ini"
-    xeij_start || fail 'h5: cannot start XEiJ'
+    restart_with_floppy 0 "$XEI_J_STAGE/ssos9.xdf"
     wait_screen 'SSOS-9: minimal X68000 CLI' 90 || fail 'h5: XDF boot banner missing' "$s"
-    sleep 1
-    wait_screen '> ' 15 || fail 'h5: no CLI prompt after IPL boot' "$s"
+    wait_line '> ' 15 || fail 'h5: no CLI prompt after IPL boot' "$s"
     print '== H5 mount the HDD and read the fixture =='
     type_cmd 'smount 0'
     wait_screen 'FAT16 mounted.' 15 || fail 'h5: smount 0 failed under XDF boot' "$s"
@@ -1567,8 +1650,10 @@ run_h5() {
     type_cmd 'exit'
     wait_screen 'Cannot exit the initial SSOS-9 process (PID 1).' 10 ||
         fail 'h5: PID 1 exit not rejected under XDF boot' "$s"
-    trap - EXIT HUP INT TERM
-    h5_cleanup 0 || fail 'h5: configuration restore failed'
+    type_cmd 'version'
+    wait_screen 'SSOS-9 CLI preemptive minimum' 8 ||
+        fail 'h5: CLI did not accept a command after refusing exit' "$s"
+    restore_xeij_ini || environment_fail 'h5: configuration restore failed'
     wait_screen 'A:\>' 150 || fail 'h5: Human68k did not come back' "$s"
     h68_del "$fix.TXT"
     h68_absent "$fix" 'txt' 12
@@ -1595,28 +1680,42 @@ run_h6() {
         type_cmd "kill $pid"
         wait_screen 'Kill requested.' 8 || fail "h6: cycle $i kill failed" "$s"
         type_cmd "wait $pid"
-        wait_screen 'exited with status' 8 || fail "h6: cycle $i reap failed" "$s"
+        wait_screen "PID $pid exited with status " 8 || fail "h6: cycle $i reap failed" "$s"
+        type_cmd 'mem'
+        wait_arena_after "PID $pid exited with status " 8 ||
+            fail "h6: cycle $i missing arena sample after reap" "$s"
+        [[ "$REPLY_ARENA" == "$base" ]] ||
+            fail "h6: cycle $i arena changed ($base -> $REPLY_ARENA)" "$s"
         if (( i % 5 == 0 )); then print "h6: $i cycles done"; fi
     done
-    type_cmd 'mem'
-    sleep 1
-    snap
-    local after=$(print -r -- "$s" | grep -o 'arena free_bytes=[0-9]* largest_free=[0-9]*' | tail -1)
-    [[ "$after" == "$base" ]] || fail 'h6: arena did not return to baseline' \
-        "baseline: $base"$'\n'"after: $after"
     ssos_exit
     print "PASS h6: 25 cycles; arena back to $base"
 }
 
+# Host tests source the transport and cleanup functions without running a case.
+[[ $ZSH_EVAL_CONTEXT == toplevel ]] || return 0
+
+if [[ ${1:-} != --locked ]]; then
+    exec python3 "$TRANSPORT" lock "$XEI_J_LOCK" zsh "$0" --locked "$@"
+fi
+shift
+ini_backup=''
+trap 'finish_case $?' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+XEI_J_PID=$(xeij_pids) || environment_fail 'cannot enumerate XEiJ processes'
+[[ "$XEI_J_PID" == <-> ]] || environment_fail "expected one XEiJ process using $XEI_J_INI"
+[[ "$(xeij_pids '*')" == "$XEI_J_PID" ]] || environment_fail 'multiple XEiJ processes share the control pipe'
+
+backup_files=("$XEI_J_INI".ssos9.????????(N))
+(( ${#backup_files} == 0 )) ||
+    environment_fail "interrupted XEiJ configuration change; retained backup: ${backup_files[*]}"
+
 case ${1:-} in
     a2) run_a2 ;;
-    a3)
-        A3_BACKUP=''
-        trap 'a3_cleanup $?; exit $?' EXIT
-        trap 'exit 129' HUP
-        trap 'exit 130' INT
-        trap 'exit 143' TERM
-        run_a3 ;;
+    a3) run_a3 ;;
     b1) run_b1 ;;
     b2) run_b2 ;;
     b3) run_b3 ;;
@@ -1636,22 +1735,9 @@ case ${1:-} in
     f1) run_f1 ;;
     f2) run_f2 ;;
     g1) run_g1 ;;
-    h2)
-        H2_BACKUP=''
-        trap 'h2_cleanup $?; exit $?' EXIT
-        trap 'exit 129' HUP
-        trap 'exit 130' INT
-        trap 'exit 143' TERM
-        run_h2 ;;
     h3) run_h3 ;;
-    h5)
-        H5_BACKUP=''
-        trap 'h5_cleanup $?; exit $?' EXIT
-        trap 'exit 129' HUP
-        trap 'exit 130' INT
-        trap 'exit 143' TERM
-        run_h5 ;;
+    h5) run_h5 ;;
     h6) run_h6 ;;
     h4) run_h4 ;;
-    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1|b2|b3|b4|c1|c2|c3|c4|c5|d1|d2|d3|d4|e1|e2|e3|f1|f2|g1|h2|h3|h4|h5|h6' ;;
+    *) fail 'usage: tools/emulator-itest.sh a2|a3|b1|b2|b3|b4|c1|c2|c3|c4|c5|d1|d2|d3|d4|e1|e2|e3|f1|f2|g1|h3|h4|h5|h6' ;;
 esac

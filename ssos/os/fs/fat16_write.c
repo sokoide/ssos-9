@@ -28,16 +28,25 @@ static int make_name(const char* name, uint8_t out[11]) {
     return base && (!dot || ext) ? 0 : -1;
 }
 
-static int fat_get(SSFat12* v, uint16_t cluster, uint16_t* value) {
-    uint8_t sector[1024] __attribute__((aligned(4)));
+static int fat_scan_get(SSFat12* v, uint16_t cluster, uint16_t* value,
+                        uint8_t* sector, uint32_t* loaded) {
     uint32_t pos = (uint32_t)cluster * 2u;
-    if (pos / v->sector_size >= v->fat_sectors ||
-        v->read_sector(v->context, v->fat_start + pos / v->sector_size, sector))
-        return -1;
+    uint32_t index = pos / v->sector_size;
+    if (index >= v->fat_sectors) return -1;
+    if (index != *loaded) {
+        if (v->read_sector(v->context, v->fat_start + index, sector)) return -1;
+        *loaded = index;
+    }
     pos %= v->sector_size;
     *value = (uint16_t)(sector[pos] | ((uint16_t)sector[pos + 1] << 8));
     if (v->fat_big_endian) *value = (uint16_t)((*value << 8) | (*value >> 8));
     return 0;
+}
+
+static int fat_get(SSFat12* v, uint16_t cluster, uint16_t* value) {
+    uint8_t sector[1024] __attribute__((aligned(4)));
+    uint32_t loaded = UINT32_MAX;
+    return fat_scan_get(v, cluster, value, sector, &loaded);
 }
 
 static int fat_set(SSFat12* v, SSFatWriteSector write, uint16_t cluster,
@@ -72,15 +81,9 @@ static int has_free_clusters(SSFat12* v, uint32_t needed, uint8_t* sector) {
     uint32_t loaded = UINT32_MAX;
     for (uint32_t cluster = 2; needed && cluster < (uint32_t)v->cluster_count + 2u &&
                                cluster < 0xfff0u; cluster++) {
-        uint32_t pos = cluster * 2u;
-        uint32_t index = pos / v->sector_size;
-        if (index >= v->fat_sectors) return -1;
-        if (index != loaded) {
-            if (v->read_sector(v->context, v->fat_start + index, sector)) return -1;
-            loaded = index;
-        }
-        pos %= v->sector_size;
-        if (!sector[pos] && !sector[pos + 1u]) needed--;
+        uint16_t value;
+        if (fat_scan_get(v, (uint16_t)cluster, &value, sector, &loaded)) return -1;
+        if (!value) needed--;
     }
     return needed ? -1 : 0;
 }
@@ -130,12 +133,13 @@ static __attribute__((noinline)) int write_file_legacy(SSFat12* v, SSFatWriteSec
     uint32_t needed = size / cluster_bytes + (size % cluster_bytes != 0);
     if (needed > v->cluster_count || has_free_clusters(v, needed, sector)) return -1;
     uint16_t first = 0, last = 0;
-    uint32_t offset = 0, allocated = 0;
+    uint32_t offset = 0, allocated = 0, loaded = UINT32_MAX;
     for (uint32_t c = 2; c < (uint32_t)v->cluster_count + 2u &&
                          c < 0xfff0u && allocated < needed; c++) {
         uint16_t value;
-        if (fat_get(v, (uint16_t)c, &value)) goto fail;
+        if (fat_scan_get(v, (uint16_t)c, &value, sector, &loaded)) goto fail;
         if (value) continue;
+        loaded = UINT32_MAX; /* The buffer is reused below for file data. */
         if (fat_set(v, write, (uint16_t)c, 0xffffu)) goto fail;
         if (last && fat_set(v, write, last, (uint16_t)c)) {
             (void)fat_set(v, write, (uint16_t)c, 0);
@@ -272,15 +276,15 @@ int ss_fat16_writer_begin(SSFat12* v, const char* name, int replace,
 }
 
 static int writer_allocate(SSFat12* v, SSFatWriteSector write,
-                           SSFat16Writer* writer) {
+                           SSFat16Writer* writer, uint8_t* sector) {
     uint32_t limit = (uint32_t)v->cluster_count + 2u;
     if (limit > 0xfff0u) limit = 0xfff0u;
     uint32_t start = writer->last ? (uint32_t)writer->last + 1u : 2u;
     if (start >= limit) start = 2;
-    uint32_t c = start;
+    uint32_t c = start, loaded = UINT32_MAX;
     do {
         uint16_t value;
-        if (fat_get(v, (uint16_t)c, &value)) return -1;
+        if (fat_scan_get(v, (uint16_t)c, &value, sector, &loaded)) return -1;
         if (!value) {
             if (fat_set(v, write, (uint16_t)c, 0xffffu)) return -1;
             if (writer->last && fat_set(v, write, writer->last, (uint16_t)c)) {
@@ -306,7 +310,7 @@ int32_t ss_fat16_writer_write(SSFat12* v, SSFatWriteSector write,
     uint32_t done = 0;
     while (done < size) {
         uint32_t within_cluster = writer->size % cluster_bytes;
-        if (!within_cluster && writer_allocate(v, write, writer)) return -1;
+        if (!within_cluster && writer_allocate(v, write, writer, sector)) return -1;
         uint32_t within_sector = writer->size % v->sector_size;
         uint32_t at = v->data_start + ((uint32_t)writer->last - 2u) *
                       v->sectors_per_cluster + within_cluster / v->sector_size;
@@ -342,7 +346,7 @@ int ss_fat16_writer_commit(SSFat12* v, SSFatWriteSector write,
          * matching the legacy path and the FAT convention for empty files.
          * Replacing a file with an empty one therefore releases its whole
          * chain. (Offset-based truncation does not exist in this writer.) */
-        if (!writer->first && writer->size && writer_allocate(v, write, writer))
+        if (!writer->first && writer->size && writer_allocate(v, write, writer, sector))
             return -1;
         if (writer->slot_was_end && writer->human_has_next_sector) {
             if (v->read_sector(v->context, writer->human_next_sector, sector)) return -1;

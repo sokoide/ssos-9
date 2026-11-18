@@ -10,6 +10,13 @@ assembler. The root Makefile exposes:
   and the assembler and linker host unit tests (`test-asm-host`,
   `test-link-host`), including FAT16 create/replace interoperability
   with `mkfs.fat`, `fsck.fat`, and `mcopy` when available.
+- `make test-xeij-transport` exercises the XEiJ runner's FIFO, locking, signal
+  cleanup, and disposable profiles on the host. The root `make test` includes
+  these checks.
+- `make test-emulator` runs the selected cases against a running XEiJ and
+  writes case evidence under `build/xeij/results/`. See the
+  [XEiJ operation guide](../docs/emulator-remote-operation.md) for isolated
+  media and the Timer D restoration probe.
 - `make test-asm-host`: assembler host unit tests against fixed expectations
   (lexer/parser: 341 checks, encoder: 266 checks, S9O1 object output). It
   also builds `build/asm-host`, a host entry point sharing the module's
@@ -117,6 +124,31 @@ the build alone does not establish emulator input or display behavior.
 `background.xdf` contains `BG.S9M`, a 60-record background output test. Load
 it from drive 1, start `run background&`, switch windows during its output,
 and return to inspect the originating window.
+### MPX68K FD1 smoke test (H2, 2026-11-18)
+
+XEiJではフロッピー画像の実行中差し替えを安定して自動化できないため、H2は
+MPX68Kで確認する。`tests/target/build/console.xdf` は変更せず、専用の複製画像
+`/private/tmp/ssos9-mpx-h2/console.xdf` をDrive 1へ挿入した。MPX68KではFD1が
+Human68kの `C:` として見える。手順は次のとおり。
+
+1. MPX68Kを起動し、`keywitch -r` を実行する。これをしないと `:` を入力できない。
+2. FDDメニューからDrive 1へ専用 `console.xdf` を挿入し、`dir c:` で
+   `CONSOLE.S9M` と `SS9CON.X` を確認する。
+3. `C:\SS9CON.X` からSSOS-9を起動し、`load 1 console.s9m` が
+   `Module loaded.` になることを確認する。
+4. `run console` を実行し、キー `a` で `KEY: 0061`、`q` でstatus 0終了を確認する。
+   `exit` でHuman68kの `C:\>` に復帰する。
+5. Drive 1を取り外す。元の `tests/target/build/console.xdf` は実行前後でSHA-256が
+   `c7c642ff6db52df2031557d4004c2a132495037ebaa680f6fa09120f6d5356d6` と一致し、
+   `fsck.fat -n` もエラーなし。専用画像SHA-256は
+   `beefa514cd9db4a437706ebd366458e51193f862d4515d59c023fe8fe2143c81`。
+
+実行したOS画像 `ssos/build/export/ssos9.x` のSHA-256は
+`47003f38fa8570b08f61640b5f7db920cfc47b53d0e25380a5ae020d37f96c99`、
+`CONSOLE.S9M` は `a99975c53946cbefcd4e342280c66dd72fdfec26b9b91caa694a9ddfc540bac8`。
+これはMPX68K上のFDD・Human68k・SSOS-9・実モジュールの結合確認であり、実機の物理FD動作を
+証明するものではない。
+
 To prepare a single data floppy usable for launching from Human68k and loading
 the modules, pass a disposable FAT12 floppy template, a new output path, the
 standalone launcher, and the console module to `prepare_console_image.py`.
@@ -257,12 +289,10 @@ last; the never-written bottom-right cell is not text-copy distinguishable
 and stays a manual check), and C3 (F1/F2/F3 switching retained and restored
 each window's output) all passed against standalone SHA-256
 `6c6cf6c5cd7389d337e3a02cb224aa22d87c02b4dfff50c84e419e6e31cc7058`.
-C4 ran and failed by design on this environment: IOCS encodes ctrl only for
-letter keys (ctrl-c works; ctrl+] never arrives as 0x1d) and shift+caret
-delivers the JIS full-width tilde pair instead of ASCII 0x7e, so neither mux
-prefix is deliverable through the emulated keyboard; the script documents
-this, verifies the stray input harmlessly errors, and exits via F1. F-key
-switching itself is covered by C3. XEiJ `typekey &` also drops the
+C4's initial Ctrl-]/tilde attempt exposed that IOCS keyboard injection does
+not reliably deliver those prefix bytes. The XEiJ test now exercises F1/F2/F3
+only and verifies window selection and retained output; the unsupported
+shortcuts are omitted from the on-screen help. XEiJ `typekey &` also drops the
 ampersand, so the script sends it as shift+6. C5 and D2-D4 are implemented
 but not yet executed. Physical hardware was not tested.
 
@@ -384,9 +414,8 @@ On 2026-11-13, E2 passed: the undefined-symbol negative sample
 and `run test/ld` stopped with `Undefined symbol missing` and exit status 1;
 after a guest reset Human68k showed no output file in `A:\TEST`, and the
 sample plus its object were removed again. With this run every planned
-emulator integration area is implemented and executed except C4, which
-fails by environment (the IOCS keyboard path cannot deliver the mux
-prefixes; F-key switching is covered by C3). Standalone SHA-256
+XEiJ integration area is implemented and executed; C4 now passes using
+F1/F2/F3. Standalone SHA-256
 `3ba86b82f4aec11b7a150085784a67f2659b0086fb1b6ea864a40cbf07537bdd`.
 
 The same session removed backslashes from every Human68k-side typed path:
@@ -424,14 +453,12 @@ gained the trace-ring wraparound (create+start x10 keeps the newest 16
 events oldest-first); t13 asserts CONSOLE_SIZE with the multiplexer
 enabled. Host suites 46/46, QEMU 18/18.
 
-h2 (load 1 CONSOLE.S9M through a real FD1) was implemented and executed
-but fails on a product gap: with media attached to FD1 (verified: a
+Historical XEiJ-only h2 attempt (superseded by the MPX68K manual PASS above):
+`load 1 CONSOLE.S9M` failed in the ini-attached-FD1 path: with media attached to FD1 (verified: a
 bootable XDF in FD1 redirects the STD boot order and its IPL runs), the
 first B_READ of ss_xdf_read_sector fails on real IOCS, so `load` reports
 `disk or FAT12`. This path has only ever run against the QEMU mock; the
-md/position encoding for real 2HD IOCS needs investigation. The h2 area
-is gated behind SSOS9_ITEST_H2=1 so sweeps stay green until the product
-side is fixed. Physical hardware was not tested.
+md/position encoding for real 2HD IOCS needs investigation. This XEiJ-only path was removed from the selectable test list; it is not a product regression. The separate MPX68K GUI-inserted media path passed as recorded above. Physical hardware was not tested.
 
 On 2026-11-14 (second batch), the remaining plan items landed. h5 passed
 (1:08): with a fixture pre-placed in `A:\TEST`, the ini `fd0=ssos9.xdf`
@@ -449,11 +476,7 @@ negatives and added eleven uncovered branches (disk/table/partition-name
 magic, fat_start=0, root_entries=0, BPB total beyond the partition,
 media byte, hidden mismatch, clusters<4085, non-power-of-2 sectors per
 cluster, fat_count=0, plus flags=2 as a legal positive); host suites
-46/46. h2's B_READ encoding was confirmed correct against the PRO-68K
-programmer's manual (PDA $90-$93 = 2HD DRIVE0-3, mode $70, position
-3/track/side/sector), moving its failure firmly into XEiJ's ini-time
-media attach lacking disk-change semantics; it stays gated behind
-SSOS9_ITEST_H2=1. screen() also re-asserts app focus before each copy
+46/46. The earlier XEiJ ini-time FD1 attach did not reproduce GUI disk-change semantics. H2 is now tested manually with MPX68K; see the procedure above. The B_READ encoding matches the PRO-68K programmer's manual (PDA $90-$93 = 2HD DRIVE0-3, mode $70, position 3/track/side/sector). screen() also re-asserts app focus before each copy
 retry, fixing a mid-run clipboard stall where stolen focus sent the retry
 keystroke to another app. Physical hardware was not tested.
 

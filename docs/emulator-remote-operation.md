@@ -265,3 +265,30 @@ ZCode 側は (1) 検証に必要な**改変版 MPX68K のソース変更とビ�
   FDD 起動手順と XEiJ 操作 API 失敗 (`Invalid app`) の記録。
 - XEiJ 付属 `feature.htm` — 制御パイプ仕様の一次情報。
 - `/Volumes/IO512GB/repo/oss/MPX68K` — 改変版の fork (`2ca64ee`、`1ae38bb`)。
+
+## 統合テスト専用の媒体と設定
+
+`tools/xeij-test-profile.py` は元のiniと接続済み媒体を読み、指定した新規ディレクトリに専用ini、媒体の複製、HFS共有先を作る。複製対象は設定の `fdN`、`hdN`、`saN`、`scN`、`seN`、`siN`。読み取り専用指定は保持する。HFSは専用の `hf0` に差し替える。元のXEiJを終了してから、ディスクの全容量分の空き領域を用意して複製する。
+
+```sh
+source ~/.elf2x68k
+make all
+profile_root=$(mktemp -d /tmp/ssos9-xeij.XXXXXXXX)
+python3 tools/xeij-test-profile.py "$HOME/XEiJ.ini" ssos/build/export "$profile_root/run"
+export SSOS9_XEIJ_INI="$(cd "$profile_root/run" && pwd -P)/XEiJ.ini"
+export SSOS9_XEIJ_STAGE="${SSOS9_XEIJ_INI%/*}/hfs"
+```
+
+同じJAR・ROMを使って専用iniを `-ini "$SSOS9_XEIJ_INI"` に指定して起動する。Human68kのプロンプトが表示されたら、同じ環境変数でリポジトリルートから `tools/emulator-itest.sh c1` を実行する。再起動ケースには、実際に使用するJARとROMの絶対パスを `SSOS9_XEIJ_JAR` と `SSOS9_XEIJ_CGROM` に設定する。既存の起動手順を使う場合は、第一引数のiniでXEiJを起動する実行ファイルを `SSOS9_XEIJ_LAUNCHER` で指定できる。
+
+複数ケースは `python3 tools/xeij-suite.py a3 h5` で実行する。通常回帰は `make test-emulator-core`、反復回収は `make test-emulator-soak`。専用プロファイルを設定し、`make verify` でアプリ、`make -C tests/target` でconsoleとbackgroundのfixtureを生成した作業ツリーから `make test-emulator-automated` を実行すると、25個のXEiJ自動回帰を選べる。FD1のH2はMPX68Kで実施する手動試験であり、XEiJのID選択肢には含めない。ランナーと搬送ヘルパーのコピー、ケースのログ、送信キー、最後に採取した画面、実行時間、ini・媒体のハッシュを `build/xeij/results/` に保存する。失敗後のケースは未実行として記録する。iniの横に `XEiJ.ini.ssos9.*` が残った場合は、そのプロファイルを停止してからバックアップを確認する。専用環境なら新規複製で次を実行できる。
+
+制御FIFOとクリップボードは同じログイン環境で共有する。XEiJは一度に一台だけ起動し、テスト中の画面コピーを避ける。ランナーはiniで対象PIDを識別し、ケース単位で排他を取る。媒体を変更するケースを独立に再実行するときは新規プロファイルを作成する。XEiJ終了後に複製媒体とログを検査する。
+
+ホスト側のFIFO、排他、コマンド期限、プロファイル複製の回帰は `make test-xeij-transport`。
+
+### Timer Dと例外ベクタの復元
+
+`make build/xeij/mfpstate.x` でHuman68k用の読み取りプローブをビルドする。専用HFSにコピーし、`SSOS9_XEIJ_MFP_CHECK=1 tools/emulator-itest.sh a2` を実行する。起動前の値と各終了後のIERB、IMRB、TCDCRおよびTimer D・TRAP #0・TRAP #13ベクタを比較する。停止中のTimer DはTDDRも比較する。実行中のカウンタ値や割り込み保留ビットは時間で変わるため比較対象から外す。
+
+プローブはSupervisorに移行し、MFPをバイト単位で読み、偶数番地にあるベクタをロングワードで読む。表示の前にUserモードへ復帰する。アドレスとアクセス幅の根拠はx68k-masterの『Inside X68000』要約「03_割り込み」「04_MFP」、復元対象との対応は [mfp_state.s](../ssos/os/kernel/mfp_state.s)。

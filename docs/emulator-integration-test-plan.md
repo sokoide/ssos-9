@@ -1,7 +1,7 @@
 # XEiJ で確認すべき統合テスト計画
 
 更新日: 2026-11-14。状態: **全領域 (A1〜A3・B1〜B4・C1〜C5・D1〜D4・E1〜E3・F1・F2・G1・H1・H3〜H6)
-実装・実行済み。合格は C4 と H2 を除く全領域 (C4/H2 は環境制限、下記)。Q2 (P3) は未実装。
+実装・実行済み。合格は全自動領域と H2 の MPX68K 手動試験。H2 は XEiJ 自動化対象外。Q2 (P3) は未実装。
 追加テストと高速化の詳細は docs/test-coverage-and-speedup-plan.md**。
 `smount` は Human68k 形式の先頭パーティションのみを受け付け、MS-DOS 型 FAT16 は拒否される。
 パスの 8.3 名照合は大文字小文字を区別しない (Human68k 側の作成・検索の挙動に合わせている)。
@@ -88,7 +88,7 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 | C1 | `help` 全量表示 | `help` → 画面取得 | 画面テキストが host 期待値 (`cli.c` のコマンド表) と一致 | P1 | ○ |
 | C2 | 25 行を超える出力の再描画 | `ps` を反復 or 長出力で 25 行超 → 画面取得 | 物理スクロールせず行が折り返わる。既知の右下セル制限 (空白のまま) も確認 | P0 | ○ |
 | C3 | mux 画面切替と保持 (F1〜F3) | `mux` → F2 で `help`、F3 で `ps`、F1 に戻る。各画面をコピー | 画面ごとの出力が保持され、戻った画面が復元される (t15 の実機相当) | P0 | ○ |
-| C4 | Ctrl-]+数字 による切替 | `presskey ctrl` → `typekey ]` → `releasekey ctrl` → `typekey 2` | 画面 2 に切替わる | P1 | ○ |
+| C4 | F1/F2/F3 による mux 画面選択と出力保持 | 画面 2 で `mem`、画面 3 で `ps`、F2/F1へ戻る | 選択した画面に切り替わり、画面2の出力が保持される | P1 | ○ |
 | C5 | 対話コンソールモジュール (CONSOLE_KEY) | `tests/target` の CONSOLE.S9M を `A:\TEST` に配置し、Human68k 形式 HDD をマウント → module 起動 → 各種キー送信 | `KEY: xxxx` 表示がキーごとに一致 (ASCII は下位 8 bit、特殊キーは scan<<8)。`q` で終了 | P2 | △ (モジュール配置) |
 
 ### D. Human68k 形式 SCSI HDD の実 IOCS 読み書き
@@ -131,7 +131,7 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 | ID | 概要 | 手順 | 合格基準 | 状態 |
 | --- | --- | --- | --- | --- |
 | H1 | B5 完遂 (Timer D マスク機械判定) | a2 の各サイクルで `debug` の IERB/IMRB を検査 | 全サイクルでマスク 3E3E (bit4=Timer D 有効)。レジスタ復帰其のものは Human68k 側から観測不可のため挙動確認が傍証 | 実行済み PASS |
-| H2 | `load 1` 実フロッピ経路 | ini `fd1=console.xdf` + 再起動 → `load 1 console.s9m` → `run console` | モジュールが KEY 表示 | **環境制限 FAIL**: 媒体添付は成立するが実行中のシステムからの FDC アクセスが失敗 (`dir e:` ハング、B_READ 失敗)。xdf.c の符号化 (PDA $90+drive、mode $70、位置 3/track/side/sector) は PRO-68K マニュアルの B_SEEK/B_READ 記載と一致。UI 挿入か XEiJ fork が必要。`SSOS9_ITEST_H2=1` でのみ再現実行 |
+| H2 | `load 1` 実フロッピ経路 | MPX68KでFD1に専用2HD画像を挿入し、Human68kのC:から起動・読出し。SSOS-9で `load 1 console.s9m` → `run console` | モジュールが `KEY: 0061` を表示し、qで終了、Human68kへ復帰 | **MPX68K手動 PASS (2026-11-18)**。XEiJ ini添付はディスク変更通知を再現できず不安定なため自動化対象外。手順とハッシュは `tests/README.md` |
 | H3 | Ctrl-C のウィンドウ間ルーティング | window 2 で foreground `run counter` → F1 → Ctrl-C → F2 確認 → F2 で Ctrl-C | 隠れたウィンドウの foreground は中断されず、自ウィンドウの Ctrl-C でのみ中断される (cli_wait.c はアクティブウィンドウのみ配送) | 実行済み PASS |
 | H4 | sread 境界 | edit で空ファイルと 286 バイトファイルを作成し `sread` | 空ファイルは 0 バイトでエラーなし、286 バイトは `maximum 256 bytes` で拒否 | 実行済み PASS |
 | H5 | XDF IPL 起動 + ストレージ | A:\TEST に fixture を配置後、ini `fd0=ssos9.xdf` + 再起動で XDF 起動 → `smount 0` → `sread` → `exit` 拒否 | fixture が読める、PID 1 exit が拒否される、ini 復元後 Human68k 復帰 | 実行済み PASS (2026-11-14、1:08) |
@@ -192,14 +192,10 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 - C2: `tools/emulator-itest.sh c2`。`ps` ×8 で 25 行超の出力を流し、内部ウィンドウ
   再描画によりプロンプトが最終行に残ることとエラーなしを確認する。右下セルが
   書き込まれないことの確認はテキストコピーでは区別できないため手動確認のまま。
-- C3/C4: `tools/emulator-itest.sh c3|c4`。F1〜F3 と Ctrl-]+数字 の切替え、各画面の
-  出力保持・復元を確認する。C4 は 2026-11-13 に実行したが、この環境
-  (XEiJ + Human68k 3.02 + ASK68K フロントプロセッサ) では IOCS が ctrl を文字キーに
-  のみエンコードし (ctrl-c=0x03 は B4 で実証)、ctrl+]→0x1d は届かない。
-  また shift+caret は ASCII の `~` (0x7e) ではなく JIS 全角チルダの 2 バイト
-  (0x81,0x60) として届くため `~` プレフィックスも自動送信できない。両者を試行して
-  切替わらない場合は F1 に戻って終了し FAIL する。F キー経由の切替え自体は C3 で
-  確認済み。実キーボードでの `~` 切替えは 2026-11-11 の手動実績による。
+- C3/C4: `tools/emulator-itest.sh c3|c4`。mux の選択はF1/F2/F3を使い、各画面の
+  出力保持・復元を確認する。`~1`〜`~3` と Ctrl-]+数字 はXEiJのIOCS入力経路で
+  正しく届かないため、自動・手動のXEiJ操作手順では使わない。C4は画面2の `mem` と
+  画面3の `ps` を実行し、F2/F1へ戻ったときの画面選択と出力保持を検証する。
 - C5: `tools/emulator-itest.sh c5`。`tests/target/build/console.s9m` を `A:\TEST` の
   `CONSOLE.S9M` として配置し (既存なら再配置しない)、`smount 0` 後 `run
   test/console` で実キー入力が `KEY: xxxx` と一致することを確認する。
@@ -244,9 +240,7 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
   status 0 で終了することを確認する。
 - G1: `tools/emulator-itest.sh g1`。`run counter&` → `kill` → `wait` を 5 サイクル
   反復し、`mem` が起動直後の baseline に一致することを確認する。
-- H2: `SSOS9_ITEST_H2=1 tools/emulator-itest.sh h2`。ini `fd1=` + 再起動で
-  console.xdf を挿入するが、実行中システムからの FDC アクセスが失敗するため
-  現状は再現確認用 (上記 H 行参照)。
+- H2 (手動・MPX68K): `tests/README.md` の「MPX68K FD1 smoke test」を参照。
 - H3: `tools/emulator-itest.sh h3`。mux の window 2 で foreground 実行中に F1 で
   Ctrl-C → 隠れたウィンドウの foreground は生存、F2 に切替えて Ctrl-C で中断。
 - H4: `tools/emulator-itest.sh h4`。edit で空ファイル (即 `:wq`) と 7行×40文字の

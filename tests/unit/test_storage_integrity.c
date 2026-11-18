@@ -14,10 +14,12 @@ typedef struct {
     int32_t fail_write;
     unsigned writes;
     int write_before_error;
+    unsigned reads;
 } TestDisk;
 
 static int read_sector(void* context, uint32_t sector, uint8_t* out) {
     TestDisk* disk = context;
+    disk->reads++;
     if (sector >= SECTORS || (int32_t)sector == disk->fail_read) return -1;
     memcpy(out, disk->bytes + sector * disk->sector_size, disk->sector_size);
     return 0;
@@ -37,7 +39,12 @@ static int write_sector(void* context, uint32_t sector, const uint8_t* in) {
 }
 
 static void exercise(uint32_t sector_size, int stream_failure) {
-    TestDisk disk = {calloc(SECTORS, sector_size), sector_size, -1, -1, 0, 0};
+    TestDisk disk = {
+        .bytes = calloc(SECTORS, sector_size),
+        .sector_size = sector_size,
+        .fail_read = -1,
+        .fail_write = -1,
+    };
     assert(disk.bytes);
     uint8_t* boot = disk.bytes;
     uint16_t fat_sectors = sector_size == 512 ? 20 : 10;
@@ -160,7 +167,10 @@ static void exercise(uint32_t sector_size, int stream_failure) {
     }
     memcpy(disk.bytes + mirror * sector_size, disk.bytes + sector_size, fat_bytes);
     assert(ss_storage_writer_begin(&storage, "STREAM.BIN", 1, &writer) == 0);
+    disk.reads = 0;
     assert(ss_storage_writer_write(&storage, &writer, input, sector_size * 2u) == -1);
+    /* A near-full volume is scanned by FAT sector, including the wrap. */
+    assert(disk.reads <= fat_sectors * 2u + 12u);
     assert(!storage.write_failed && !storage.writer);
     assert(ss_storage_read(&storage, "STREAM.BIN", actual, sizeof(actual)) == 100);
     assert(memcmp(input, actual, 100) == 0);
