@@ -141,6 +141,9 @@ Human68K の他の MFP source の enable/mask 状態を変更しません。MFP 
 
 ## 検証の範囲
 
+受入テスト全体の実行順、合否条件、XEiJ/MPX68K手順は
+[受入テスト手順](docs/acceptance-test-plan.md)を参照してください。
+
 ### テストコマンド
 
 - SSOS-9 の機能変更では、基本的に `make test` と `make test-qemu` を変更・実行します。変更箇所に合わせて native と統合テストへケースを追加してください。

@@ -1,5 +1,7 @@
 # Scheduler verification
 
+受入テストを一通り実行する場合は、[統合手順](../docs/acceptance-test-plan.md)を参照してください。
+
 The OS build is preemptive-only and CLI-only. Automated checks exercise the
 scheduler, process/module primitives, 68000 assembly samples, and the MC68000
 assembler. The root Makefile exposes:
