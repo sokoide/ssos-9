@@ -72,7 +72,7 @@ c4は専用XEiJプロファイルでF1/F2/F3を使った自動試験がPASS。h2
 - 現行ビルドの初回連続ランは `a2`、`a3`、`b1`、`b2` が合格し、`b3` の回収で中断した。FIFO送信は `wait 2`、ゲストの入力エコーは `fwafitr e2`。混入元は未特定。入力の不一致を誤ったコマンドの実行前に検出するため、`b3` の `kill`・`wait` はEnter前に入力エコーを照合する。失敗記録は `build/xeij/results/tmpunluh49s/`。
 - 2回目の連続ランでは `b3` の `kill 2` を送信後、画面に `kill` まで表示された段階で照合が停止した。意図したコマンドの先頭と一致する途中のエコーは期限まで待ち、異なる文字列はEnter前にエラーとする。ホストテスト10件と専用XEiJの `b3` 3連続が合格した（`build/xeij/results/tmpzhqxxubb/`）。修正版の全24ケースは `build/xeij/results/tmp5pz5nvhh/` に記録した。
 - 自動24ケースの起動前に、専用iniの媒体・HFS指定を複製台帳と照合する。元画像への差し戻し、元画像との同一inode、専用領域外の共有指定を検出した場合は、ケースを起動せずに終了する。専用XEiJのiniで照合が通り、元画像を指すiniをホストテストで拒否することを確認した。
-- 現行ビルド・同一専用プロファイルでの `make test-emulator-automated` は24/24、終了コード0、総時間2,285.30秒。元ini・元HDD・書込対象外の複製HDDは実行前後でハッシュが一致した。XEiJ終了後、対象ファイルの内容 `world` と対象パーティション外の一致を再確認した。証跡は `build/xeij/results/2026-11-18-sol/full-24/` と `d1-full-offline.log`。最終 `make verify` も合格した。リリース判定の提案値（30回／10回、総時間の中央値・p95）は未測定。
+- 現行ビルド・同一専用プロファイルでの `make test-emulator-automated` は24/24、終了コード0、総時間2,285.30秒。元ini・元HDD・書込対象外の複製HDDは実行前後でハッシュが一致した。XEiJ終了後、対象ファイルの内容 `world` と対象パーティション外の一致を再確認した。証跡は `build/xeij/results/2026-11-18-sol/full-24/` と `d1-full-offline.log`。最終 `make verify` も合格した。30回／10回の反復実行と中央値・p95受け入れ判定を行う `tools/xeij-benchmark.py` および `make test-emulator-benchmark[-short|-full]` は実装済み。実測と速度受け入れ判定は未実施。
 
 - 追加確認: 専用XEiJプロファイルの `c4` はF1/F2/F3でPASSし、画面2の `mem` と画面3の `ps`、F1復帰時の表示保持を確認。画面バナーは `Multiplexer: F1/F2/F3 or Ctrl-] and a digit to switch windows.`。
 - Q2実装: QEMU t15でIOCS領域を80×31に設定し、mux有効中のCONSOLE_SIZEが80×31を返すこと、実editorがstatus行29とcommand行30を使うことを検証。`source ~/.elf2x68k && make test-qemu` は16/16 PASS。

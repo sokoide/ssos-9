@@ -75,4 +75,30 @@ Q1 追加 (QEMU 18/18)。H2 はMPX68K手動試験でPASS、XEiJ自動化対象�
 4. H2 (MPX68KでFD1をGUI挿入する手動確認。XEiJのini添付では代替しない) — PASS
 5. H5, H6, U3, Q2 — 実装・検証済み
 
-ケースの実装・個別PASSは完了。30回／10回の反復と、短回帰20%・フル30%の時間短縮およびp95判定は、統計的なリリース受け入れ測定として未実施。
+ケースの実装・個別PASSは完了。反復測定・比較ハーネス (`tools/xeij-benchmark.py`) と host 回帰テストを追加済み。30回／10回の実測と、短回帰20%・フル30%の時間短縮およびp95判定は、統計的なリリース受け入れ測定として未実施。
+
+## 5. 反復ベンチマークの実行
+
+専用XEiJプロファイルを起動し、実際に使うJARとCGROMを環境変数で固定する。再起動を含むため、JAR/CGROMの絶対パスは必須。各runは結果JSONとログを保存し、失敗runがあれば比較を拒否する。既存runを上書きしないため、baseline/candidateや再測定ごとに異なる結果ディレクトリを指定する。
+
+```sh
+export SSOS9_XEIJ_JAR=/absolute/path/XEiJ.jar
+export SSOS9_XEIJ_CGROM=/absolute/path/CGROM.dat
+make test-emulator-benchmark-short EMULATOR_BENCHMARK_DIR=build/xeij/benchmarks/candidate
+make test-emulator-benchmark-full EMULATOR_BENCHMARK_DIR=build/xeij/benchmarks/candidate
+```
+
+基準版の計測では上記2コマンドの `candidate` を `baseline` に置き換え、候補版と別の結果ディレクトリに保存する。
+
+基準版・候補版を同じホスト、同じ元媒体、同じXEiJ JAR/ROM、同じケース集合で測る。shortは30回、fullは10回。比較ではsuite時間中央値の短縮がそれぞれ20%/30%以上、suite時間p95が悪化しないこと、session reuse部分のp95が悪化しないことを合格条件とし、再起動ケース時間は別集計する。
+
+```sh
+BASELINE_SHORT=build/xeij/benchmarks/baseline/short/candidate/benchmark.json \
+CANDIDATE_SHORT=build/xeij/benchmarks/candidate/short/candidate/benchmark.json \
+make test-emulator-benchmark-compare-short
+BASELINE_FULL=build/xeij/benchmarks/baseline/full/candidate/benchmark.json \
+CANDIDATE_FULL=build/xeij/benchmarks/candidate/full/candidate/benchmark.json \
+make test-emulator-benchmark-compare-full
+```
+
+結果は自動判定だけで完了扱いにせず、測定条件・結果JSON・比較JSONを証跡として確認する。

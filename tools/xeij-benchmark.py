@@ -77,6 +77,8 @@ def evaluate(baseline, candidate, expected_iterations=None):
     """Compare same-case runs and return detailed acceptance metrics."""
     if baseline.get("schema") != SCHEMA or candidate.get("schema") != SCHEMA:
         raise ValueError("unsupported benchmark report schema")
+    if baseline.get("suite") not in ("short", "full"):
+        raise ValueError("unknown benchmark suite group")
     if baseline.get("suite") != candidate.get("suite"):
         raise ValueError("baseline and candidate suite groups differ")
     if baseline.get("cases") != candidate.get("cases"):
@@ -144,6 +146,13 @@ def run_suite(args):
         raise ValueError("iterations must be positive")
     if not args.cases or len(set(args.cases)) != len(args.cases):
         raise ValueError("provide a non-empty list of unique case IDs")
+    if args.require_profile and set(args.cases) & RESTART_CASES:
+        for key in ("SSOS9_XEIJ_JAR", "SSOS9_XEIJ_CGROM"):
+            path = os.environ.get(key)
+            if not path or not Path(path).is_absolute() or not Path(path).is_file():
+                raise ValueError(
+                    f"{key} must be an absolute path to the XEiJ JAR/CGROM used by the measured instance"
+                )
     root = args.results.resolve()
     root.mkdir(parents=True, exist_ok=True)
     report = {
@@ -173,10 +182,11 @@ def run_suite(args):
                 env=os.environ.copy(),
             )
             assert child.stdout is not None
-            for line in child.stdout:
-                log.write(line)
-                sys.stdout.buffer.write(line)
-                sys.stdout.buffer.flush()
+            with child.stdout:
+                for line in child.stdout:
+                    log.write(line)
+                    sys.stdout.buffer.write(line)
+                    sys.stdout.buffer.flush()
             exit_code = child.wait()
         elapsed = time.monotonic() - started
         result_files = sorted(iteration_dir.glob("*/result.json"))
@@ -199,6 +209,7 @@ def run_suite(args):
                 run["status"] = "fail"
                 run["environment_error"] = "host, build artifacts, or original media changed"
                 exit_code = exit_code or 3
+                status = "fail"
         report["runs"].append(run)
         atomic_write(report_path, report)
         if status != "pass":

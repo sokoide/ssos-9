@@ -17,6 +17,14 @@ assembler. The root Makefile exposes:
   writes case evidence under `build/xeij/results/`. See the
   [XEiJ operation guide](../docs/emulator-remote-operation.md) for isolated
   media and the Timer D restoration probe.
+- `make test-xeij-benchmark` checks the repeat-measurement and acceptance
+  calculations on the host. `make test-emulator-benchmark-short` runs 30
+  short suites; `make test-emulator-benchmark-full` runs 10 full suites.
+  Both require a disposable profile plus `SSOS9_XEIJ_JAR` and
+  `SSOS9_XEIJ_CGROM` absolute paths because they include emulator restarts.
+  Compare saved reports with `make test-emulator-benchmark-compare-short`
+  or `...-compare-full`; thresholds and setup are in
+  [the coverage and speedup plan](../docs/test-coverage-and-speedup-plan.md).
 - `make test-asm-host`: assembler host unit tests against fixed expectations
   (lexer/parser: 341 checks, encoder: 266 checks, S9O1 object output). It
   also builds `build/asm-host`, a host entry point sharing the module's

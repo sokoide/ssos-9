@@ -2,8 +2,11 @@
 """Host tests for repeat-run XEiJ benchmark acceptance math."""
 
 import importlib.util
+import json
 from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
 
 TOOL = Path(__file__).resolve().parents[1] / "tools" / "xeij-benchmark.py"
@@ -82,6 +85,63 @@ class BenchmarkMathTest(unittest.TestCase):
         result = BENCHMARK.run_metrics(sample["runs"][0])
         self.assertEqual(result["session_reuse_seconds"], 42.0)
         self.assertEqual(result["emulator_restart_case_seconds"], 5.0)
+
+    def test_rejects_unknown_suite_group(self):
+        baseline = report("other", [100.0] * 10, [40.0] * 10)
+        candidate = report("other", [70.0] * 10, [30.0] * 10)
+        with self.assertRaisesRegex(ValueError, "unknown benchmark suite"):
+            BENCHMARK.evaluate(baseline, candidate)
+
+    def test_repeated_run_identity_change_stops_as_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake_suite = root / "fake-suite.py"
+            fake_suite.write_text(
+                "import argparse, json\n"
+                "from pathlib import Path\n"
+                "p=argparse.ArgumentParser()\n"
+                "p.add_argument('--results', type=Path, required=True)\n"
+                "p.add_argument('cases', nargs='+')\n"
+                "a=p.parse_args()\n"
+                "d=a.results/'suite'; d.mkdir(parents=True)\n"
+                "r={'host':'host','artifacts':{'image':a.results.name},"
+                "'emulator_artifacts':{},'originals_before':{},"
+                "'cases':[{'case':a.cases[0],'status':'pass','seconds':1}],"
+                "'seconds':1,'exit_code':0}\n"
+                "(d/'result.json').write_text(json.dumps(r))\n"
+            )
+            original_suite = BENCHMARK.SUITE
+            BENCHMARK.SUITE = fake_suite
+            try:
+                args = type("Args", (), {
+                    "iterations": 2, "cases": ["a2"], "suite": "short",
+                    "results": root / "results", "require_profile": False,
+                })()
+                self.assertEqual(BENCHMARK.run_suite(args), 3)
+            finally:
+                BENCHMARK.SUITE = original_suite
+            result = json.loads(
+                (root / "results" / "benchmark.json").read_text()
+            )
+            self.assertFalse(result["all_passed"])
+            self.assertEqual(len(result["runs"]), 2)
+            self.assertEqual(result["runs"][-1]["status"], "fail")
+
+    def test_restart_benchmark_requires_emulator_hash_inputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            args = type("Args", (), {
+                "iterations": 1, "cases": ["a3"], "suite": "short",
+                "results": Path(temporary) / "results", "require_profile": True,
+            })()
+            with patch.dict(BENCHMARK.os.environ, {}, clear=True):
+                with self.assertRaisesRegex(ValueError, "SSOS9_XEIJ_JAR"):
+                    BENCHMARK.run_suite(args)
+            with patch.dict(BENCHMARK.os.environ, {
+                "SSOS9_XEIJ_JAR": "README.md",
+                "SSOS9_XEIJ_CGROM": "README.md",
+            }, clear=True):
+                with self.assertRaisesRegex(ValueError, "absolute path"):
+                    BENCHMARK.run_suite(args)
 
 
 if __name__ == "__main__":
