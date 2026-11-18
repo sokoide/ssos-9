@@ -324,6 +324,14 @@ activate the java process once (-10006); a manual retry cleared it. This
 run wrote only the immutable `BG.S9M` into `A:\TEST`. Physical hardware
 was not tested.
 
+On 2026-11-18, C2 was rerun on XEiJ 0.26.10.08 after extending the output to
+nine `ps` commands and asserting that the prompt occupies the last console
+row immediately before the function-key row. It passed in 17.17 seconds
+against standalone SHA-256
+`03718103d57e1d956b635e69c4c5c9f64977718ff2458d3d4df497ae8ee325e0` (full
+result in `build/xeij/results/c2-row31/tmpcpdpwpnk/`). The bottom-right cell remains a
+manual visual check because XEiJ text copy omits it.
+
 On 2026-11-13, the implemented-but-unexecuted storage areas ran in XEiJ.
 C5 passed: the console module (`tests/target/build/console.s9m`, first copy
 in `A:\TEST` kept) reported `KEY: 0061`/`007A`/`0035` for a/z/5 and

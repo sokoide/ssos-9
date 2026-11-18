@@ -942,7 +942,7 @@ run_c2() {
     require 'c2 initial prompt' "$s" 'A:\>'
     boot_ssos || fail 'c2: ssos9 boot failed'
     local i
-    for ((i = 0; i < 8; i++)); do type_cmd 'ps'; done # ~50 lines > 25 rows
+    for ((i = 0; i < 9; i++)); do type_cmd 'ps'; done # reaches the 31st console row
     # The console keeps an internal line window and redraws: the prompt
     # stays visible on the last console row and the function-key row stays
     # the last screen row. (The never-written bottom-right cell cannot be
@@ -951,11 +951,14 @@ run_c2() {
     wait_line '> ' 15 || fail 'c2: prompt missing after long output' "$s"
     local rows=("${(@f)$(print -r -- "$s")}")
     local last=${rows[-1]}
+    local prompt_row=${rows[-2]}
+    print -r -- "$prompt_row" | grep -Fq '> ' || \
+        fail 'c2: prompt is not on the last console row' "$s"
     print -r -- "$last" | grep -Eq '(C|S)[0-9]' || \
         fail 'c2: function-key row is not the last screen row' "$s"
     require 'c2 no errors' "$s" '>'
     ssos_exit
-    print 'PASS c2: >25 lines of output kept the prompt on screen without errors'
+    print 'PASS c2: prompt and function-key row remained visible at 31-row depth'
 }
 
 run_c3() {
