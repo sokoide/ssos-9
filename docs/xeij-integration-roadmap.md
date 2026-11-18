@@ -46,7 +46,7 @@ c4は専用XEiJプロファイルでF1/F2/F3を使った自動試験がPASS。h2
 
 1. **基準測定** — 既存25 XEiJ IDとMPX68K手動H2の状態、ケース別所要時間、個別の未解決理由を記録する。代表ケースは `a2 a3 b1 c3 d2 e1 h5`。
 2. **安定化** — 専用環境、期限付き搬送、観測の鮮度判定、終了時の保全を実装する。失敗注入で回収を確認する。
-3. **未到達経路の解消** — c4のFキー経路を維持し、h2はMPX68K手動試験で管理する。MFP復元の直接観測を優先する。カバレッジ台帳をコード・既存テストと照合し、残りの不足を追加する。
+3. **未到達経路の解消** — c4のFキー経路を維持し、h2はMPX68K手動試験で管理する。MFP復元はa2のHuman68k probeで直接比較済み。カバレッジ台帳をコード・既存テストと照合し、残りの不足を追加する。
 4. **性能改善と運用** — 固定待機を削減し、媒体構成ごとに実行をまとめる。既存のID選択を維持し、通常の短い回帰、全経路を通るフル、反復するソークを明示する。ホスト／QEMUの `make verify` は独立して実行できるようにする。
 
 リリース判定の提案値は以下のとおり。性能は基準測定後に確定する。
@@ -75,4 +75,5 @@ c4は専用XEiJプロファイルでF1/F2/F3を使った自動試験がPASS。h2
 - 現行ビルド・同一専用プロファイルでの `make test-emulator-automated` は24/24、終了コード0、総時間2,285.30秒。元ini・元HDD・書込対象外の複製HDDは実行前後でハッシュが一致した。XEiJ終了後、対象ファイルの内容 `world` と対象パーティション外の一致を再確認した。証跡は `build/xeij/results/2026-11-18-sol/full-24/` と `d1-full-offline.log`。最終 `make verify` も合格した。リリース判定の提案値（30回／10回、総時間の中央値・p95）は未測定。
 
 - 追加確認: 専用XEiJプロファイルの `c4` はF1/F2/F3でPASSし、画面2の `mem` と画面3の `ps`、F1復帰時の表示保持を確認。画面バナーは `Multiplexer: F1/F2/F3 or Ctrl-] and a digit to switch windows.`。
+- Q2実装: QEMU t15でIOCS領域を80×31に設定し、mux有効中のCONSOLE_SIZEが80×31を返すこと、実editorがstatus行29とcommand行30を使うことを検証。`source ~/.elf2x68k && make test-qemu` は16/16 PASS。
 - H2はMPX68Kで実施。keywitchは `keywitch -r` を実行しないと `:` を入力できなかった。FDDメニューからDrive 1へ専用 `console.xdf` を挿入するとHuman68kでは `C:` として見え、`dir c:` で `CONSOLE.S9M` を確認。SS9CON.XからSSOS-9を起動し、`load 1 console.s9m`、`run console`、`KEY: 0061`、q終了、Human68k復帰までPASS。元画像のSHA-256は `c7c642ff...d6d6` で実行前後一致。書込み可能な専用画像SHA-256は `beefa514...c81`。

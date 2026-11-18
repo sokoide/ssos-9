@@ -29,6 +29,7 @@ extern const uint8_t ss_test_link_obj_src[], ss_test_link_obj_src_end[];
 extern const uint8_t ss_test_link_expected[], ss_test_link_expected_end[];
 extern uint8_t ss_test_console_bytes[256];
 extern uint32_t ss_test_console_count;
+extern uint32_t ss_test_console_locate_rows[32];
 extern void ss_test_install_syscall_vector(void);
 extern void ss_test_install_ctrl_c_vector(void);
 extern int32_t ss_test_syscall_roundtrip(void);
@@ -241,9 +242,16 @@ int main(void) {
     store_file("OBJ.S", ss_test_link_obj_src,
                (uint32_t)(ss_test_link_obj_src_end - ss_test_link_obj_src));
 
+    /* Model the supported 31-row text region. The editor must obtain this
+     * live size through CONSOLE_SIZE while running inside the mux. */
+    ss_test_console_offset = 0;
+    ss_test_console_d2 = (79u << 16) | 30u;
     char mux_command[] = "mux";
     if (ss_cli_execute_line(mux_command) != 0)
         fail("mux command");
+    if (call_sys(SS9_SYS_CONSOLE_SIZE, 0) !=
+        (int32_t)((80u << 16) | 31u))
+        fail("31-row mux console size");
     for (unsigned i = 0; i < 40; i++) tick();
     SSProcessId shells[2] = {0, 0};
     for (unsigned i = 0; i < SS_PROCESS_MAX; i++) {
@@ -266,6 +274,9 @@ int main(void) {
         fail("spawn editor");
     ss_cli_set_foreground_pid(edit_pid);
     push_key('n');
+    run_ticks(20);
+    if (!ss_test_console_locate_rows[29] || !ss_test_console_locate_rows[30])
+        fail("editor 31-row status/command layout");
     push_key('i');
     type_editor_text(
         ss_test_link_start_src,

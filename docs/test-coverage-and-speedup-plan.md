@@ -4,7 +4,7 @@
 追加テスト計画と、XEiJ 実行の高速化計画。実装状況は各表の「状態」列で追跡する。
 2026-11-14 実装分: S1〜S4 適用・検証済み (c1 40s→14.7s、b4 20.0s、c3 27.8s、
 d2 1:52、a2 1:12)、H1/H3〜H6 実装・実行 PASS、U1〜U3 追加 (host 46/46)、
-Q1 追加 (QEMU 18/18)。H2 はMPX68K手動試験でPASS、XEiJ自動化対象外。残りは Q2 (P3) のみ未実装。
+Q1 追加 (QEMU 18/18)。H2 はMPX68K手動試験でPASS、XEiJ自動化対象外。Q2は2026-11-18に実装しQEMU t15でPASS。
 
 ## 1. 現状カバレッジの要約
 
@@ -27,7 +27,7 @@ Q1 追加 (QEMU 18/18)。H2 はMPX68K手動試験でPASS、XEiJ自動化対象�
 
 | ID | 内容 | 根拠 | 優先度 | 状態 |
 | --- | --- | --- | --- | --- |
-| H1 | B5 完遂: a2 の各サイクルで `debug` の IERB/IMRB マスク (3E3E) と TCDCR/TDDR 範囲の一貫性を機械判定。レジスタ値の復帰其のものは Human68k 側から観測できないため、A2 の挙動確認と併記で境界を明示する | 計画書 §4 が「B5 は未実装」と自認 | P1 | **実装・PASS** (a2 5 サイクルで 3E3E 一貫) |
+| H1 | B5: Human68k側読み取りプローブで起動前後のIERB/IMRB/TCDCR、Timer D・TRAP #0・#13ベクタを直接比較。停止時のみTDDRも比較 | Timer D割込みとtrap vectorをHuman68k復帰後に読む | P1 | **実装・PASS** (`SSOS9_XEIJ_MFP_CHECK=1`でa2を5反復。各終了後に同一状態) |
 | H2 | `load 1 CONSOLE.S9M` 実フロッピ経路。XEiJでなくMPX68KのGUIからFD1へ専用画像を挿入し、Human68k C:で `SS9CON.X` 起動後、SSOS-9のFAT12読出し・モジュール実行を確認 | XEiJのini時添付ではディスク変更通知が不確実。MPX68KのFDDメニューによる実挿入を採用 | P1 | **MPX68K手動 PASS (2026-11-18)**。`load 1 console.s9m`成功、`KEY: 0061`、q終了、Human68k復帰。詳細は `tests/README.md` |
 | H3 | Ctrl-C のウィンドウ間ルーティング: window 2 で foreground `run counter`、F1 に切替えて Ctrl-C → **window 2 の PID は中断されず** (cli_wait.c はアクティブウィンドウのみ配送)、window 2 に切り替えて Ctrl-C で回収。挙動を固定期待値として文書化 | 実 IOCS での配送先確認 | P2 | **実装・PASS** |
 | H4 | sread 境界: (a) edit で空ファイルを作成し sread → 0 バイトでエラーなし、(b) 編集で 300 バイト超のファイルを作り sread → `maximum 256 bytes` 拒否。作成後は exact 名で cleanup | CLI sread の上限の実確認 | P2 | **実装・PASS** (7行×40文字=286バイトで拒否確認) |
@@ -47,7 +47,7 @@ Q1 追加 (QEMU 18/18)。H2 はMPX68K手動試験でPASS、XEiJ自動化対象�
 | ID | 内容 | 根拠 | 優先度 | 状態 |
 | --- | --- | --- | --- | --- |
 | Q1 | t13: CONSOLE_SIZE の mux 有効時契約 (`ss_cli_console_mux_enable()` 後も 25 行既定を返す) | 新 syscall の非 mux 側のみ検証済み | P2 | **実装・PASS** |
-| Q2 | t15: set_rows で高行数にした際の edit レイアウト追補 | 薄い追補 | P3 | 未実装 |
+| Q2 | t15: B_CONSOLを31行に設定し、CONSOLE_SIZEと実editorのstatus/command行を検査 | 高さ可変時のlayout回帰 | P3 | **実装・PASS** (QEMU t15、80×31、status row 29 / command row 30) |
 
 ## 3. XEiJ 実行の高速化 (S 系、`tools/emulator-itest.sh`)
 
@@ -72,5 +72,7 @@ Q1 追加 (QEMU 18/18)。H2 はMPX68K手動試験でPASS、XEiJ自動化対象�
 1. S1〜S4 + 検証 (c1, b4, c3, d2)
 2. H1, H3, H4 (既存関数への小追加) + d2/d3/c1 での回帰
 3. U1, U2 (`make test`)、Q1 (`make test-qemu`)
-4. H2 (MPX68KでFD1をGUI挿入する手動確認。XEiJのini添付では代替しない)
-5. H5, H6, U3, Q2 は任意追従
+4. H2 (MPX68KでFD1をGUI挿入する手動確認。XEiJのini添付では代替しない) — PASS
+5. H5, H6, U3, Q2 — 実装・検証済み
+
+ケースの実装・個別PASSは完了。30回／10回の反復と、短回帰20%・フル30%の時間短縮およびp95判定は、統計的なリリース受け入れ測定として未実施。

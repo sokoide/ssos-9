@@ -67,6 +67,7 @@ void tty_putu(unsigned value) {
 /* Captured IOCS bytes let the process integration test inspect console writes. */
 uint8_t ss_test_console_bytes[256];
 uint32_t ss_test_console_count;
+uint32_t ss_test_console_locate_rows[32];
 int _iocs_b_putc(int ch);
 void _iocs_b_print(const char* text) {
     while (*text) _iocs_b_putc((uint8_t)*text++);
@@ -123,8 +124,13 @@ __attribute__((weak)) int32_t ss_system_close_fd(uint32_t owner, uint32_t fd) {
     (void)owner; (void)fd; return -1;
 }
 __attribute__((weak)) void ss_system_close_process_files(uint32_t owner) { (void)owner; }
-void _iocs_b_clr_st(void) {}
+void _iocs_b_clr_st(void) {
+    memset(ss_test_console_locate_rows, 0,
+           sizeof(ss_test_console_locate_rows));
+}
 void _iocs_b_locate(int x, int y) {
     (void)x;
-    (void)y;
+    if (y >= 0 && y < (int)(sizeof(ss_test_console_locate_rows) /
+                            sizeof(ss_test_console_locate_rows[0])))
+        ss_test_console_locate_rows[y]++;
 }

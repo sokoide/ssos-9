@@ -371,10 +371,12 @@ backs `ss9_console_size()`. The editor now lays out `rows - 2` text lines
 plus one status row and one command row at the bottom of the region: on the
 31 kHz text screen it fills 31 rows above the function-key row (verified on
 XEiJ: status on console row 29, command row 30), and synthetic harnesses
-still report 25 rows so t15 and the host editor tests are unchanged in
-behavior. The host app test gained a 31-row scenario asserting the shifted
-layout, and t13 asserts the syscall contract (80<<16|25 with the QEMU
-default region, nonzero request rejected). Host suites 45/45, QEMU 18/18.
+still report 25 rows by default. The host app test gained a 31-row scenario
+asserting the shifted layout, and t13 asserts the syscall contract
+(80<<16|25 with the QEMU default region, nonzero request rejected). QEMU t15
+now also supplies an 80x31
+B_CONSOL region and verifies the mux CONSOLE_SIZE result and the real editor's
+status/command cursor rows 29/30. Host suites 45/45; QEMU 16/16 on 2026-11-18.
 D2 rerun with the new editor passed (standalone SHA-256
 `3ba86b82f4aec11b7a150085784a67f2659b0086fb1b6ea864a40cbf07537bdd`,
 editor module `1d13a860713223979809609055702febbe70cd64b0f1e829f88fd7de7e6baa9a`).

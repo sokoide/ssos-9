@@ -5,20 +5,27 @@ SUBDIRS := tools/makedisk
 ASM_FORMATTER ?= asmfmt
 CLANG_FORMAT ?= clang-format
 
-.PHONY: $(TOPTARGETS) all debug format loc test test-asm test-link test-qemu test-emulator test-emulator-list verify verify-check
+.PHONY: $(TOPTARGETS) all debug format loc test test-asm test-link test-qemu test-emulator test-emulator-list test-emulator-benchmark test-emulator-benchmark-short test-emulator-benchmark-full test-emulator-benchmark-compare-short test-emulator-benchmark-compare-full verify verify-check
+
+EMULATOR_SHORT_REPEATS ?= 30
+EMULATOR_FULL_REPEATS ?= 10
+EMULATOR_BENCHMARK_DIR ?= build/xeij/benchmarks
 
 usage:
 	@echo "SSOS-9 build targets (preemptive only):"
 	@echo "  make all              Build the preemptive OS (.x and .xdf)"
 	@echo "  make install          Build and copy preemptive .x/.xdf files to ~/tmp"
-	@echo "  make test             Run native tests"
+	@echo "  make test             Run native tests and XEiJ harness unit tests"
 	@echo "  make test-asm         Run m68k assembly samples under QEMU"
 	@echo "  make test-link        Run linker host and golden tests"
 	@echo "  make test-qemu        Run scheduler tests under QEMU"
 	@echo "  make test-emulator    Run XEiJ integration tests against a running emulator"
 	@echo "                        (select with EMULATOR_TESTS=\"a2 b1\", list with make test-emulator-list)"
-	@echo "  make test-emulator-automated  Run 24 cases using a prepared disposable profile"
+	@echo "  make test-emulator-automated  Run all cases using a prepared disposable profile"
 	@echo "  make test-emulator-soak       Run the 25-cycle process recovery case"
+	@echo "  make test-emulator-benchmark  Run 30 short / 10 full repeats (long-running)"
+	@echo "  make test-emulator-benchmark-compare-short  Compare short timing reports"
+	@echo "  make test-emulator-benchmark-compare-full   Compare full timing reports"
 	@echo "  make verify           Run automated verification and report hardware checks"
 	@echo "  make clean            Remove build outputs"
 	@echo "  make format           Format Markdown, C, and assembly sources"
@@ -61,12 +68,14 @@ loc:
 	gocloc --not-match-d='node_modules|build|\.git' .
 
 # Native C tests and QEMU asm samples. See tests/README.md.
-test: test-xeij-transport
+test: test-xeij-transport test-xeij-benchmark
 	$(MAKE) -C tests test
 
-.PHONY: test-xeij-transport
+.PHONY: test-xeij-transport test-xeij-benchmark
 test-xeij-transport:
 	python3 tests/xeij_transport_test.py
+test-xeij-benchmark:
+	python3 tests/xeij_benchmark_test.py
 
 test-asm:
 	$(MAKE) -C tests test-asm
@@ -106,6 +115,28 @@ test-emulator-soak: EMULATOR_TESTS = h6
 test-emulator-core test-emulator-soak: test-emulator
 test-emulator-automated:
 	python3 tools/xeij-suite.py --require-profile $(EMULATOR_AUTOMATED_TESTS)
+
+test-emulator-benchmark:
+	$(MAKE) test-emulator-benchmark-short
+	$(MAKE) test-emulator-benchmark-full
+
+test-emulator-benchmark-short:
+	python3 tools/xeij-benchmark.py run --suite short --iterations $(EMULATOR_SHORT_REPEATS) \
+		--results $(EMULATOR_BENCHMARK_DIR)/short/candidate --require-profile $(EMULATOR_CORE_TESTS)
+
+test-emulator-benchmark-full:
+	python3 tools/xeij-benchmark.py run --suite full --iterations $(EMULATOR_FULL_REPEATS) \
+		--results $(EMULATOR_BENCHMARK_DIR)/full/candidate --require-profile $(EMULATOR_AUTOMATED_TESTS)
+
+test-emulator-benchmark-compare-short:
+	python3 tools/xeij-benchmark.py compare --iterations $(EMULATOR_SHORT_REPEATS) \
+		--baseline $(BASELINE_SHORT) --candidate $(CANDIDATE_SHORT) \
+		--output $(EMULATOR_BENCHMARK_DIR)/short/comparison.json
+
+test-emulator-benchmark-compare-full:
+	python3 tools/xeij-benchmark.py compare --iterations $(EMULATOR_FULL_REPEATS) \
+		--baseline $(BASELINE_FULL) --candidate $(CANDIDATE_FULL) \
+		--output $(EMULATOR_BENCHMARK_DIR)/full/comparison.json
 
 .PHONY: test-emulator-list $(addprefix test-emulator-,$(EMULATOR_ALL_TESTS))
 test-emulator-list:

@@ -1,7 +1,7 @@
 # XEiJ で確認すべき統合テスト計画
 
 更新日: 2026-11-14。状態: **全領域 (A1〜A3・B1〜B4・C1〜C5・D1〜D4・E1〜E3・F1・F2・G1・H1・H3〜H6)
-実装・実行済み。合格は全自動領域と H2 の MPX68K 手動試験。H2 は XEiJ 自動化対象外。Q2 (P3) は未実装。
+実装・実行済み。合格は全自動領域と H2 の MPX68K 手動試験。H2 は XEiJ 自動化対象外。Q2 (P3) はt15で実装・PASS。
 追加テストと高速化の詳細は docs/test-coverage-and-speedup-plan.md**。
 `smount` は Human68k 形式の先頭パーティションのみを受け付け、MS-DOS 型 FAT16 は拒否される。
 パスの 8.3 名照合は大文字小文字を区別しない (Human68k 側の作成・検索の挙動に合わせている)。
@@ -79,7 +79,7 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 | B2 | trace にスケジューライベント | `run counter` 中に `trace` | `trace` の画面に見える末尾で10件以上の有効なイベントと切替を確認し、プロンプトへの復帰を確認 (64件の出力ではヘッダは画面外へ流れる) | P0 | ○ |
 | B3 | 実割り込みによる preemptive 動作 | `run counter` (foreground) 中に画面を 2 回取得 | カウンタが進み、かつプロンプト入力が可能 (shell が止まっていない) | P0 | ○ |
 | B4 | Ctrl-C の実キー経路 | busy foreground (`run counter`) に対し `presskey ctrl` → `typekey c` → `releasekey ctrl` | kill され `wait` で回収、`mem` が baseline に復帰 | P1 | ○ |
-| B5 | 終了時 MFP 状態復帰 | A2 の `debug` 記録と、終約後の Human68k 動作で確認 | Timer D 関連ビットが起動前状態に戻る (IERB/IMRB の bit4、TCDCR) | P1 | ○ (A2 に内包) |
+| B5 | 終了時 MFP 状態復帰 | A2起動前と各終了後にHuman68k読み取りプローブを実行 | IERB/IMRB/TCDCR、Timer D・TRAP #0・#13ベクタが一致。停止時のTDDRも一致 | P1 | ○ (`SSOS9_XEIJ_MFP_CHECK=1`) |
 
 ### C. 実 IOCS コンソール・キー入力
 Ç
@@ -130,7 +130,7 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 
 | ID | 概要 | 手順 | 合格基準 | 状態 |
 | --- | --- | --- | --- | --- |
-| H1 | B5 完遂 (Timer D マスク機械判定) | a2 の各サイクルで `debug` の IERB/IMRB を検査 | 全サイクルでマスク 3E3E (bit4=Timer D 有効)。レジスタ復帰其のものは Human68k 側から観測不可のため挙動確認が傍証 | 実行済み PASS |
+| H1 | B5: Timer D・例外ベクタの終了時復元を直接比較 | `SSOS9_XEIJ_MFP_CHECK=1`でa2を実行し、Human68kプローブを起動前と各終了後に実行 | IERB/IMRB/TCDCR、Timer D・TRAP #0・#13ベクタ一致。停止時TDDR一致 | **実行済み PASS** (a2 5反復、2026-11-18) |
 | H2 | `load 1` 実フロッピ経路 | MPX68KでFD1に専用2HD画像を挿入し、Human68kのC:から起動・読出し。SSOS-9で `load 1 console.s9m` → `run console` | モジュールが `KEY: 0061` を表示し、qで終了、Human68kへ復帰 | **MPX68K手動 PASS (2026-11-18)**。XEiJ ini添付はディスク変更通知を再現できず不安定なため自動化対象外。手順とハッシュは `tests/README.md` |
 | H3 | Ctrl-C のウィンドウ間ルーティング | window 2 で foreground `run counter` → F1 → Ctrl-C → F2 確認 → F2 で Ctrl-C | 隠れたウィンドウの foreground は中断されず、自ウィンドウの Ctrl-C でのみ中断される (cli_wait.c はアクティブウィンドウのみ配送) | 実行済み PASS |
 | H4 | sread 境界 | edit で空ファイルと 286 バイトファイルを作成し `sread` | 空ファイルは 0 バイトでエラーなし、286 バイトは `maximum 256 bytes` で拒否 | 実行済み PASS |
@@ -141,7 +141,7 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 
 - A2: `tools/emulator-itest.sh a2`。各回の画面とMFP表示を確認し、
   Human68k復帰後に `dir a:` を実行する。A: の一覧に `<dir>` が必要。
-  終了前後のMFP値を直接比較するB5は未実装。
+  `SSOS9_XEIJ_MFP_CHECK=1`を付けた場合は `mfpstate.x` で起動前と終了後の状態を直接比較する。結果は下記記録参照。
 - B1: `tools/emulator-itest.sh b1`。SSOS-9 を起動し、`debug` の `ticks=`
   (8 桁大文字 HEX) を 2 回取得。2 回の typing 間隔を実測し、
   `delta ≈ 200 Hz × elapsed` (±20%) を判定する。typing と画面コピーの
