@@ -949,7 +949,20 @@ run_c2() {
     # distinguished from blank padding in a text copy; that part of C2
     # stays a manual check.)
     wait_line '> ' 15 || fail 'c2: prompt missing after long output' "$s"
-    local rows=("${(@f)$(print -r -- "$s")}")
+    # wait_line matches a mid-burst frame while the guest is still draining
+    # the typed ps burst; settle until the prompt reaches the last console
+    # row before asserting on the captured rows.
+    local rows settled=0 deadline=$(( SECONDS + 15 ))
+    while (( SECONDS < deadline )); do
+        snap
+        rows=("${(@f)$(print -r -- "$s")}")
+        if print -r -- "${rows[-2]}" | grep -Fq '> '; then
+            settled=1
+            break
+        fi
+        sleep 0.5
+    done
+    (( settled )) || fail 'c2: prompt did not settle on the last console row' "$s"
     local last=${rows[-1]}
     local prompt_row=${rows[-2]}
     print -r -- "$prompt_row" | grep -Fq '> ' || \
