@@ -187,7 +187,7 @@ source ~/.elf2x68k
 make -C tests/target
 ```
 
-`tests/target/build/console.xdf` を直接変更せず、複製をDrive 1へ挿入してください。MPX68KではDrive 1がHuman68kの `C:` として見えます。
+`tests/target/build/console.xdf` を直接変更せず、複製をDrive 1へ挿入してください。MPX68KではDrive 1がHuman68kの `C:` として見えます。`build/console.xdf` には `CONSOLE.S9M` のみが入っており `SS9CON.X` ランチャは含まれないため、手順3の `C:\SS9CON.X` 起動に沿うなら `tests/target/prepare_console_image.py`（手順は `tests/README.md`）で複製を作成して使用します。2026-11-18現在、`/Applications/MPX68K.app` はMonitorSocket付きフォークビルドで、`~/mpx68k_monitor.sock` への `PAUSE`/`MOUNTFDD`/`EJECTFDD`/`RESUME` と macOSのキー送信・screencapture により自動実行できます（詳細は `AGENTS.md` と `tests/README.md`）。
 
 1. MPX68Kを起動し `keywitch -r` を実行します。これを実行しないと `:` が入力できない場合があります。
 2. FDDメニューからDrive 1にconsole imageを挿入し、`dir c:` で `CONSOLE.S9M` と `SS9CON.X` を確認します。

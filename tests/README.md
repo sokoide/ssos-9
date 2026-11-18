@@ -159,6 +159,29 @@ Human68kの `C:` として見える。手順は次のとおり。
 これはMPX68K上のFDD・Human68k・SSOS-9・実モジュールの結合確認であり、実機の物理FD動作を
 証明するものではない。
 
+### MPX68K FD1 automated smoke test (H2, 2026-11-18, second run)
+
+同じ日に行った2回目のH2は自動実行した。`/Applications/MPX68K.app` をMonitorSocket付き
+フォークビルド（`oss/MPX68K` @ `4fc9e85`、未署名、バイナリ SHA-256
+`dc80e57c1eea930fd6ce131059a3c33128f200fa6939a68388a79602910e545b`）へ置き換え、
+`~/Library/Preferences/NANKIN.X68000.plist` に `monitorSocketEnabled=true` と
+`AutoMountMode_v1=lastSession`（旧Ctrl試験ドメイン `dev.ssos9.mpxctrltest` から
+`DiskMountState_v1` を移植、bookmark解決失敗時はfilePathへフォールバック）を設定して
+FD0 (HUMAN302.xdf) からHuman68kを起動した。FD挿入は `~/mpx68k_monitor.sock` への
+`PAUSE`/`MOUNTFDD 1 <image>`/`EJECTFDD`/`RESUME`、キーは osascript keystroke
+（`keywitch -r` 後）、画面は `screencapture -R` で確認した。
+
+使用イメージは `prepare_console_image.py tests/target/build/console.xdf <out>
+ssos/build/export/ssos9.x tests/target/build/console.s9m` で作成した複製
+（SHA-256 `022272e474f40ee70432b595bd027370cd3608b32217054e3cc0a0d1f9fe2220`、
+実行前後で不変、`fsck.fat -n` エラーなし）。`dir c:` でCONSOLE.S9Mを確認し、
+`C:\SS9CON.X` からSSOS-9起動、`load 1 console.s9m` → `Module loaded.`、
+`run console` → `KEY: 0061`、`q` → `PID 2 exited with status 0`、`exit` →
+`SSOS-9 terminated.` でHuman68kへ復帰（今回の構成ではブートドライブがFD0のため
+復帰プロンプトは `A:¥>`、FD1媒体自体は `C:` として認識）。`build/console.xdf` 単体には
+`SS9CON.X` が含まれないため、H2用イメージは必ず `prepare_console_image.py` で作る。
+画面証拠は `build/g4/`（mpx-load.png、mpx-keya-top.png、mpx-q.png、mpx-exit.png）。
+
 To prepare a single data floppy usable for launching from Human68k and loading
 the modules, pass a disposable FAT12 floppy template, a new output path, the
 standalone launcher, and the console module to `prepare_console_image.py`.
