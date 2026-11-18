@@ -1,19 +1,19 @@
 # X68000 エミュレータ (XEiJ / MPX68K) を ZCode から操作する方法と限界
 
-更新日: 2026-11-12 (同日、稼働中 XEiJ での実測を反映)。対象: macOS 上の ZCode (CLI agent)、
+更新日: 2026-11-18 (MPX68K MonitorSocket フォークビルドの実測を反映)。対象: macOS 上の ZCode (CLI agent)、
 XEiJ 0.26.10.08 (`/Users/scott/NoBackup/Emu/emulators/x68000/XEiJ_0261008/XEiJ.jar`、
 起動は `~/.local/bin/xeij.sh` = `-ini ~/XEiJ.ini`)、
-MPX68K (`/Applications/MPX68K.app`、fork ソース `/Volumes/IO512GB/repo/oss/MPX68K`)。
+MPX68K (`/Applications/MPX68K.app`、fork ソース `/Volumes/IO512GB/repo/oss/MPX68K`。2026-11-18 より MonitorSocket 付きフォークビルド、下記参照)。
 
 ## 結論
 
 | | XEiJ | MPX68K |
 | --- | --- | --- |
-| ZCode からの操作 | **条件付きで自動運転可** (下記実測) | **不可**。外部入力経路なし (fork 改造で自作は可能) |
+| ZCode からの操作 | **条件付きで自動運転可** (下記実測) | **条件付きで可** (2026-11-18 以降: MonitorSocket フォークビルドの Unix ソケットで FD 挿入・メモリ/CPU 操作。キー注入は osascript keystroke、リセットコマンドなし) |
 | ファイル連携 | **双方向可**。`~/tmp` がゲストの F: (HFS) | 不可 (ディスクイメージ経由のみ) |
-| 画面の読み取り | **可**。Option-Shift-C → クリップボード → `pbpaste` | 不可 (ユーザーが観察・報告) |
+| 画面の読み取り | **可**。Option-Shift-C → クリップボード → `pbpaste` (テキスト) | **ピクセルのみ可**。`screencapture -R` (テキスト画面の文字列読取は不可、判定は画像解析または人間) |
 | 起動 | 可能 (`java -jar` / `xeij.sh`) | 可能 (`open`) |
-| ZCode の関与の形 | キー送信・ファイル・画面・事後検証 | **改変版ビルドの作成** + 検証ディスク + 報告の判定 |
+| ZCode の関与の形 | キー送信・ファイル・画面・事後検証 | FD 挿入系テスト (H2) と MonitorSocket 白箱検証。25 ケース XEiJ スイートの置き換え先ではない (下記) |
 
 **統合テストの第一候補は XEiJ** (ファイル双方向と画面テキスト読取が最初から揃う)。
 キー入力の自動化だけが未達で、(A) macOS のキー操作送信/補助アクセス権限の付与、
@@ -182,7 +182,47 @@ Bash から書き込めるため ZCode から送信可能だが、「ZCode が�
 
 ## MPX68K
 
-### 結論 (MPX68K)
+### MonitorSocket フォークビルド (2026-11-18 実測、現行構成)
+
+2026-11-18 から `/Applications/MPX68K.app` は MonitorSocket (commit `7f3b4d9`) を含む
+未署名フォークビルド (`oss/MPX68K` @ `4fc9e85`、バイナリ SHA-256
+`dc80e57c1eea930fd6ce131059a3c33128f200fa6939a68388a79602910e545b`) で、XEiJ の
+pastepipe に相当する外部操作経路を持つ。ビルドは `README.scott.md` の xcodebuild 手順
+(`-derivedDataPath /private/tmp/MPX68K-Build CODE_SIGNING_ALLOWED=NO`)。
+
+- **ソケット**: 起動時に UserDefaults の `monitorSocketEnabled=true` が有効なら
+  `~/mpx68k_monitor.sock` (Unix ドメイン、行指向 UTF-8、応答は本文 + `OK` / `ERROR`)。
+  コマンド: `DIAG PAUSE RESUME STATUS REGS READ READB READW READD WRITE WRITEW WRITED
+  SETPC SETD SETA SETSR TRACE TRACER STEPTO MOUNTFDD EJECTFDD HW HELP QUIT`。
+  `MOUNTFDD <drive 0-1> <絶対パス>` と `EJECTFDD <drive>` は `PAUSE` 後に実行する。
+  **キー注入とリセットのコマンドはない**。
+- **キー注入**: `osascript keystroke` (System Events、unix id で前面化)。
+  ゲストで先に `keywitch -r` を実行しないと `:` が化ける。`USKeyboardLayout=true` 推奨。
+- **画面**: `screencapture -x -R"X,Y,W,H"`。ウィンドウ座標は System Events の
+  position/size から取得。テキストとして読めないため判定は人間の目視または画像解析。
+- **設定**: 未署名のためサンドボックスなし。prefs は
+  `~/Library/Preferences/NANKIN.X68000.plist` を**明示パスで**編集する
+  (`defaults <bundle-id>` はコンテナへ解決されるため)。現行設定:
+  `monitorSocketEnabled=true`、`AutoMountMode_v1=lastSession`、`DiskMountState_v1`
+  (旧 `dev.ssos9.mpxctrltest` ドメインから移植。security-scoped bookmark は他アプリから
+  解決不可だが `filePath` へフォールバックするため FD0 HUMAN302.xdf が復元される)。
+- **ドライブ対応** (実測): Human68k は FD0 からブートしプロンプトは `A:`。
+  FD1 媒体は `C:` として見える。
+- **H2 自動実行**: `tests/target/prepare_console_image.py` で `SS9CON.X`+`CONSOLE.S9M`
+  の複製イメージを作り (プレーンな `build/console.xdf` にはランチャがない)、
+  `MOUNTFDD 1` → `C:\SS9CON.X` → `load 1 console.s9m` → `run console` → `KEY: 0061`
+  → `q` (status 0) → `exit` まで自動実行済み。手順と記録は `tests/README.md`、
+  証拠は `build/g4/`。
+- **分担方針**: 25 ケース XEiJ スイートをここへ移すことは推奨しない。テキスト画面の
+  読取経路がなくアサーションがピクセル判定に落ちることに加え、キー注入が前面化必須、
+  再起動・プロファイル・媒体ハッシュ証跡の仕組みがない。MPX68K は FD 挿入系 (H2) と、
+  `PAUSE` + `READ/REGS/TRACE` を使った白箱検証 (メモリ・レジスタの直接アサーション) の
+  拡張先とする。
+
+### 結論 (MPX68K) — 2026-11-12 時点のリリース版に関する記録
+
+以下は MonitorSocket 導入前 (リリース版) の記録。現行のフォークビルドについては
+上記の節を参照。
 
 ZCode が MPX68K の GUI (起動後の画面・キー入力) を操作した事実は記録上ない。
 実行、ディスク挿入、物理キーボードによるキー入力、画面の観察はすべてユーザーが行い、
