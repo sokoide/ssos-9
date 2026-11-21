@@ -2,7 +2,10 @@
  * 1 (mux window 0), assemble and link it on screen 2 with the real asm
  * and ld modules, then execute the linked PROG image on screen 3 through
  * the shell's FAT16 fallback. Covers the Phase 4 completion item: edit
- * on one screen, assemble/link on another, run on a third, over FAT16. */
+ * on one screen, assemble/link on another, run on a third, over FAT16.
+ * Screen 2 then runs the mux shell lifecycle: background child + wait,
+ * shell exit, sibling windows keep answering, and the root `mux` reaps
+ * the zombie and respawns the shell. */
 
 #include "../../../ssos/os/app/cli.h"
 #include "../../../ssos/os/app/cli_console.h"
@@ -36,8 +39,9 @@ extern int32_t ss_test_syscall_roundtrip(void);
 
 /* The mux queue holds 64 keys per window and the longest typed line is
  * "run ld PROG.S9M START.O MAIN.O OBJ.O\r" (38 events), so the fake
- * keyboard queue is deeper than t13's eight-key fixture. */
-static uint8_t fake_keys[128];
+ * keyboard queue is deeper than t13's eight-key fixture. Entries are
+ * 16-bit so scan<<8 events (cursor keys, DEL) drive the real key path. */
+static uint16_t fake_keys[128];
 static uint8_t fake_key_head;
 static uint8_t fake_key_count;
 
@@ -78,14 +82,16 @@ int _iocs_b_keysns(void) { return fake_key_count; }
 int _iocs_b_keyinp(void) {
     if (fake_key_count == 0)
         return 0;
-    uint8_t key = fake_keys[fake_key_head++ % sizeof(fake_keys)];
+    uint16_t key = fake_keys[fake_key_head++ %
+                             (sizeof(fake_keys) / sizeof(fake_keys[0]))];
     fake_key_count--;
     return key;
 }
 
-static void push_key(uint8_t key) {
-    uint8_t tail =
-        (uint8_t)((fake_key_head + fake_key_count) % sizeof(fake_keys));
+static void push_key(uint16_t key) {
+    uint16_t tail =
+        (uint16_t)((fake_key_head + fake_key_count) %
+                   (sizeof(fake_keys) / sizeof(fake_keys[0])));
     fake_keys[tail] = key;
     fake_key_count++;
 }
@@ -153,6 +159,23 @@ static void switch_screen(uint8_t window) {
 static void type_line(const char* line) {
     while (*line) push_key((uint8_t)*line++);
     push_key('\r');
+}
+
+/* Types "wait <pid>" so the mux shell takes the interactive
+ * ss_cli_wait_pid path instead of the subshell polling branch. */
+static void type_wait_line(SSProcessId pid) {
+    char digits[12];
+    unsigned count = 0;
+    uint32_t value = pid;
+    do {
+        digits[count++] = (char)('0' + value % 10);
+        value /= 10;
+    } while (value != 0);
+    char line[24] = "wait ";
+    unsigned used = 5;
+    while (count != 0) line[used++] = digits[--count];
+    line[used] = '\0';
+    type_line(line);
 }
 
 /* Feeds editor text in chunks: the editor consumes roughly one key per
@@ -363,6 +386,97 @@ int main(void) {
     SSModuleId prog_module;
     if (ss_module_find("PROG", &prog_module) != SS_ERR_ID)
         fail("PROG unload registry");
+
+    /* Mux shell lifecycle on screen 2: a background child is waited through
+     * the interactive ss_cli_wait_pid path, the shell exits, screens 1 and
+     * 3 keep answering, and the root `mux` reaps the zombie and respawns
+     * the screen 2 shell. */
+    switch_screen(1);
+    ss_test_console_count = 0;
+    type_line("help&");
+    wait_console("Started command as PID ");
+    SSProcessId builtin_pid = 0;
+    for (unsigned i = 0; i < SS_PROCESS_MAX; i++) {
+        SSProcessSnapshot child;
+        if (ss_process_snapshot_at(i, &child) == SS_OK &&
+            child.ppid == shells[0])
+            builtin_pid = child.pid;
+    }
+    if (!builtin_pid)
+        fail("screen 2 background child");
+    run_ticks(80); /* let the help text finish before reusing the capture */
+    ss_test_console_count = 0;
+    type_wait_line(builtin_pid);
+    wait_console("exited with status 0");
+    ss_test_console_count = 0;
+    type_line("exit");
+    wait_console("SSOS-9 terminated.");
+    unsigned became_zombie = 0;
+    for (unsigned i = 0; i < 400 && !became_zombie; i++) {
+        tick();
+        SSProcessSnapshot exited_shell;
+        if (ss_process_snapshot(shells[0], &exited_shell) == SS_OK &&
+            exited_shell.state == SS_PROCESS_ZOMBIE)
+            became_zombie = 1;
+    }
+    if (!became_zombie)
+        fail("screen 2 shell zombie");
+
+    /* Screens 1 and 3 must keep answering while screen 2 is closed. The
+     * root CLI is this harness's PID 1 task, so it answers through a
+     * direct ss_cli_execute_line, and screen 3 through its live shell. */
+    switch_screen(0);
+    ss_test_console_count = 0;
+    char version_command[] = "version";
+    if (ss_cli_execute_line(version_command) != 0 ||
+        !console_contains("SSOS-9 CLI preemptive minimum"))
+        fail("root shell after screen 2 exit");
+    switch_screen(2);
+    ss_test_console_count = 0;
+    type_line("version");
+    wait_console("SSOS-9 CLI preemptive minimum");
+
+    /* The root `mux` reaps the zombie shell and respawns the window. */
+    char mux_respawn[] = "mux";
+    if (ss_cli_execute_line(mux_respawn) != 0)
+        fail("mux respawn command");
+    run_ticks(40);
+    SSProcessId respawned[2] = {0, 0};
+    for (unsigned i = 0; i < SS_PROCESS_MAX; i++) {
+        SSProcessSnapshot process;
+        if (ss_process_snapshot_at(i, &process) == SS_OK && process.ppid == 1 &&
+            process.name[0] == 's' && process.name[1] == 'h' &&
+            process.console_id >= 1 && process.console_id <= 2)
+            respawned[process.console_id - 1] = process.pid;
+    }
+    if (!respawned[0] || respawned[0] == shells[0] || respawned[1] != shells[1])
+        fail("mux zombie reap and respawn");
+    shells[0] = respawned[0];
+    switch_screen(1);
+    ss_test_console_count = 0;
+    type_line("version");
+    wait_console("SSOS-9 CLI preemptive minimum");
+
+    /* The line editor's delete branches through the real shell_loop:
+     * "versioz" + BS -> "versio", 'n' -> "version", DEL undoes the n,
+     * and retyping it lands on version again. 0x7f is the classic
+     * spelling of delete; the X68000 keyboard's real DEL (scan 0x37)
+     * runs in the next sequence. */
+    ss_test_console_count = 0;
+    type_line("versioz\bn\x7fn");
+    wait_console("SSOS-9 CLI preemptive minimum");
+    /* The real cursor keys and DEL (scan<<8): "version" + LEFT + 'z'
+     * -> "versiozn", DEL removes the n, BS removes the z, and 'n' lands
+     * on version again. */
+    ss_test_console_count = 0;
+    for (const char* p = "version"; *p; p++) push_key((uint8_t)*p);
+    push_key(0x3B00);
+    push_key('z');
+    push_key(0x3700);
+    push_key(0x08);
+    push_key('n');
+    push_key('\r');
+    wait_console("SSOS-9 CLI preemptive minimum");
 
     /* Reclaim: reap the mux shells, unload the tools, and require the
      * arena to return to its pre-mux baseline. */

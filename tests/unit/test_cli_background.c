@@ -763,6 +763,161 @@ TEST(interactive_shell_does_not_poison_exit_status) {
     ASSERT_EQ(status, 1);
 }
 
+/* U4: the messages printed by ss_cli_execute_line itself, before any
+ * command or background child is started. */
+
+TEST(cli_execute_line_rejects_long_line) {
+    setup_shell();
+    /* SS_CLI_LINE_MAX includes the terminating NUL, so 96 characters are
+     * already too long; one byte shorter still runs the trimmed command. */
+    char line[SS_CLI_LINE_MAX + 1u];
+    memset(line, ' ', sizeof(line));
+    line[sizeof(line) - 1u] = '\0';
+    memcpy(line, "version", 7u);
+    ASSERT_EQ(ss_cli_execute_line(line), 0);
+    ASSERT_STR_EQ(output, "Command too long.\r\n");
+    SSProcessSnapshot snapshot;
+    ASSERT_EQ(ss_process_snapshot(2, &snapshot), SS_ERR_ID);
+    output[0] = '\0';
+    line[strlen(line) - 1u] = '\0';
+    ASSERT_EQ(ss_cli_execute_line(line), 0);
+    ASSERT_STR_EQ(output, "SSOS-9 CLI preemptive minimum\r\n");
+}
+
+TEST(cli_execute_line_reports_parse_errors) {
+    setup_shell();
+    uint32_t baseline = ss_memory_free_bytes();
+    /* The parser capacity is SS_PROCESS_MAX_ARGS + 1 tokens; the 18th token
+     * trips SS_CLI_PARSE_LIMIT before any command name is inspected. */
+    char too_many[] = "a b c d e f g h i j k l m n o p q r";
+    ASSERT_EQ(ss_cli_execute_line(too_many), 0);
+    ASSERT_STR_EQ(output, "Too many arguments.\r\n");
+    SSProcessSnapshot snapshot;
+    ASSERT_EQ(ss_process_snapshot(2, &snapshot), SS_ERR_ID);
+    const char* forms[] = {"&&", "foo & bar", "&"};
+    for (unsigned i = 0; i < sizeof(forms) / sizeof(forms[0]); i++) {
+        char line[32];
+        strcpy(line, forms[i]);
+        output[0] = '\0';
+        ASSERT_EQ(ss_cli_execute_line(line), 0);
+        ASSERT_STR_EQ(output, "Syntax error.\r\n");
+        ASSERT_EQ(ss_process_snapshot(2, &snapshot), SS_ERR_ID);
+    }
+    ASSERT_EQ(ss_memory_free_bytes(), baseline);
+}
+
+TEST(cli_execute_line_empty_line_is_silent) {
+    setup_shell();
+    char empty[] = "";
+    ASSERT_EQ(ss_cli_execute_line(empty), 0);
+    ASSERT_STR_EQ(output, "");
+    char blank[] = "   ";
+    ASSERT_EQ(ss_cli_execute_line(blank), 0);
+    ASSERT_STR_EQ(output, "");
+    SSProcessSnapshot snapshot;
+    ASSERT_EQ(ss_process_snapshot(2, &snapshot), SS_ERR_ID);
+}
+
+/* Unknown commands reserve their status only in kernel-entry children; the
+ * interactive root shell keeps its own exit status clean (R-05, covered by
+ * interactive_shell_does_not_poison_exit_status). The lines below contain
+ * no trailing '&', so execute_line itself spawns nothing. */
+static void* cli_line_entry(void* argument) {
+    (void)ss_cli_execute_line(argument);
+    return NULL;
+}
+
+TEST(cli_execute_line_unknown_status_reserved) {
+    setup_shell();
+    const char* commands[] = {"frobnicate", "frobnicate now"};
+    const uint16_t expected[] = {127, 2};
+    const char* messages[] = {"Unknown command. Type 'help'.",
+                              "Unknown command or invalid arguments."};
+    for (unsigned i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
+        SSProcessId pid;
+        ASSERT_EQ(ss_process_spawn_kernel(1, "cli", cli_line_entry,
+                                          commands[i],
+                                          (uint16_t)(strlen(commands[i]) + 1u),
+                                          &pid), SS_OK);
+        output[0] = '\0';
+        execute_child(pid);
+        ASSERT_NOT_NULL(strstr(output, messages[i]));
+        uint16_t status;
+        ASSERT_EQ(ss_process_wait(1, pid, &status), SS_OK);
+        ASSERT_EQ(status, expected[i]);
+    }
+}
+
+/* Line editor: cursor keys and DEL arrive as scan<<8 IOCS events; BS and
+ * the classic 0x7f spelling delete before the cursor. Exact echo bytes. */
+TEST(cli_edit_key_cursor_and_delete) {
+    setup_shell();
+    char line[SS_CLI_LINE_MAX];
+    unsigned used = 0, cursor = 0;
+    unsigned cap = (unsigned)sizeof(line);
+    for (const char* p = "abc"; *p; p++)
+        ASSERT_EQ(ss_cli_edit_key(*p, line, &used, &cursor, cap), 1);
+    ASSERT_STR_EQ(line, "abc");
+    ASSERT_STR_EQ(output, "abc");
+    /* LEFT twice then RIGHT once: the cursor sits on the last character. */
+    output[0] = '\0';
+    ASSERT_EQ(ss_cli_edit_key(0x3B00, line, &used, &cursor, cap), 1);
+    ASSERT_EQ(ss_cli_edit_key(0x3B00, line, &used, &cursor, cap), 1);
+    ASSERT_EQ(cursor, 1u);
+    ASSERT_EQ(ss_cli_edit_key(0x3D00, line, &used, &cursor, cap), 1);
+    ASSERT_EQ(cursor, 2u);
+    ASSERT_STR_EQ(output, "\b\bc");
+    /* DEL deletes forward at the cursor: "abc" -> "ab", the Human68k
+     * prompt behavior. The tail reprint is empty, so the echo just erases
+     * the removed character. */
+    output[0] = '\0';
+    ASSERT_EQ(ss_cli_edit_key(0x3700, line, &used, &cursor, cap), 1);
+    ASSERT_STR_EQ(line, "ab");
+    ASSERT_STR_EQ(output, " \b");
+    /* BS mid-line removes the character before the cursor and redraws the
+     * shorter tail, leaving the visible cursor where it was. */
+    output[0] = '\0';
+    ASSERT_EQ(ss_cli_edit_key(0x3B00, line, &used, &cursor, cap), 1);
+    ASSERT_EQ(ss_cli_edit_key(0x08, line, &used, &cursor, cap), 1);
+    ASSERT_STR_EQ(line, "b");
+    ASSERT_STR_EQ(output, "\b\bb \b\b");
+    /* Inserting at the head shifts the tail and steps the cursor back. */
+    output[0] = '\0';
+    ASSERT_EQ(ss_cli_edit_key('a', line, &used, &cursor, cap), 1);
+    ASSERT_STR_EQ(line, "ab");
+    ASSERT_STR_EQ(output, "ab\b");
+    /* 0x7f deletes before the cursor exactly like BS at the end. */
+    ASSERT_EQ(ss_cli_edit_key(0x3D00, line, &used, &cursor, cap), 1);
+    output[0] = '\0';
+    ASSERT_EQ(ss_cli_edit_key(0x7f, line, &used, &cursor, cap), 1);
+    ASSERT_STR_EQ(line, "a");
+    ASSERT_STR_EQ(output, "\b \b");
+}
+
+TEST(cli_edit_key_bounds_and_unknown) {
+    setup_shell();
+    char line[8];
+    unsigned used = 0, cursor = 0;
+    /* Edge no-ops on an empty line are still consumed. */
+    ASSERT_EQ(ss_cli_edit_key(0x3B00, line, &used, &cursor, 8u), 1);
+    ASSERT_EQ(ss_cli_edit_key(0x3D00, line, &used, &cursor, 8u), 1);
+    ASSERT_EQ(ss_cli_edit_key(0x3700, line, &used, &cursor, 8u), 1);
+    ASSERT_EQ(used, 0u);
+    ASSERT_STR_EQ(output, "");
+    /* The capacity counts the terminating NUL: three bytes fill it. */
+    for (const char* p = "abc"; *p; p++)
+        ASSERT_EQ(ss_cli_edit_key(*p, line, &used, &cursor, 8u), 1);
+    ASSERT_EQ(ss_cli_edit_key('d', line, &used, &cursor, 4u), 0);
+    ASSERT_STR_EQ(line, "abc");
+    ASSERT_EQ(used, 3u);
+    /* DEL at the end of the line is a consumed no-op. */
+    ASSERT_EQ(ss_cli_edit_key(0x3700, line, &used, &cursor, 8u), 1);
+    ASSERT_STR_EQ(line, "abc");
+    /* Other special keys (F5 scan 0x67) are not consumed. */
+    ASSERT_EQ(ss_cli_edit_key(0x6700, line, &used, &cursor, 8u), 0);
+    ASSERT_STR_EQ(line, "abc");
+}
+
 void run_cli_background_tests(void) {
     RUN_TEST(process_reaper_claims_before_hook_and_release);
     RUN_TEST(process_syscall_memory_ownership);
@@ -779,6 +934,12 @@ void run_cli_background_tests(void) {
     RUN_TEST(orphan_cycles_keep_slot_count_stable);
     RUN_TEST(killed_child_wait_reports_kill_status);
     RUN_TEST(interactive_shell_does_not_poison_exit_status);
+    RUN_TEST(cli_execute_line_rejects_long_line);
+    RUN_TEST(cli_execute_line_reports_parse_errors);
+    RUN_TEST(cli_execute_line_empty_line_is_silent);
+    RUN_TEST(cli_execute_line_unknown_status_reserved);
+    RUN_TEST(cli_edit_key_cursor_and_delete);
+    RUN_TEST(cli_edit_key_bounds_and_unknown);
     RUN_TEST(cli_background_cancel_during_output_releases_console);
     RUN_TEST(cli_kernel_child_allocation_and_task_failure_roll_back);
     RUN_TEST(cli_scsi_mount_write_read);

@@ -24,6 +24,19 @@ void* memcpy(void* dst, const void* src, size_t size) {
     return dst;
 }
 
+void* memmove(void* dst, const void* src, size_t size) {
+    uint8_t* out = dst;
+    const uint8_t* in = src;
+    if (out < in) {
+        while (size-- != 0) *out++ = *in++;
+    } else if (out > in) {
+        out += size;
+        in += size;
+        while (size-- != 0) *--out = *--in;
+    }
+    return dst;
+}
+
 size_t strlen(const char* text) {
     size_t n = 0;
     while (text[n]) n++;

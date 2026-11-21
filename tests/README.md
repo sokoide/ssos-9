@@ -19,6 +19,12 @@ assembler. The root Makefile exposes:
   writes case evidence under `build/xeij/results/`. See the
   [XEiJ operation guide](../docs/emulator-remote-operation.md) for isolated
   media and the Timer D restoration probe.
+- `make test-mpx68k-h2` runs the H2 FD1 real-floppy case on a running
+  MonitorSocket MPX68K via `tools/mpx68k-h2.sh`: eleven gates with verdicts
+  from a Swift + Vision OCR helper over `screencapture` evidence (exit 2 =
+  OCR unavailable, 3 = environment), including the 3-cluster
+  `load 1 edit.s9m` check and the missing-file/no-media load error paths,
+  with EJECTFDD/SHA-256/`fsck.fat -n` cleanup on every exit path.
 - `make test-xeij-benchmark` checks the repeat-measurement and acceptance
   calculations on the host. `make test-emulator-benchmark-short` runs 30
   short suites; `make test-emulator-benchmark-full` runs 10 full suites.
@@ -181,6 +187,19 @@ ssos/build/export/ssos9.x tests/target/build/console.s9m` で作成した複製
 復帰プロンプトは `A:¥>`、FD1媒体自体は `C:` として認識）。`build/console.xdf` 単体には
 `SS9CON.X` が含まれないため、H2用イメージは必ず `prepare_console_image.py` で作る。
 画面証拠は `build/g4/`（mpx-load.png、mpx-keya-top.png、mpx-q.png、mpx-exit.png）。
+
+### H2 runner (2026-11-21)
+
+上の自動化手順は `tools/mpx68k-h2.sh`（root から `make test-mpx68k-h2`）として
+スクリプト化した。ランナーは `prepare_console_image.py --module
+apps/edit/build/edit.s9m` で専用イメージを作り、11 ゲートを実行する:
+起動確認、MOUNTFDD、`dir c:`、SSOS-9 起動、**3クラスタ `load 1 edit.s9m`**
+（登録時の CRC 検証でチェーン末尾まで読めたことを証明）、`load 1 console.s9m`、
+`run console` の a/q、`nosuch.s9m` と媒体なし (EJECTFDD 後) の load 負例、
+Human68k 復帰。判定は `screencapture` の証拠 PNG を Swift + Vision OCR で
+読み取る（`swift` なしや権限不足は UNVERIFIED、exit 2）。後片付け
+（EJECTFDD、イメージ SHA-256 と `fsck.fat -n`）は全終了経路で trap が実行する。
+このスクリプトでの実ゲスト実行はまだ行っていない。
 
 To prepare a single data floppy usable for launching from Human68k and loading
 the modules, pass a disposable FAT12 floppy template, a new output path, the
@@ -541,3 +560,75 @@ returned the arena to its original free and largest-block sizes after 25
 cycles. The installed `ssos9.x` SHA-256 was
 `03718103d57e1d956b635e69c4c5c9f64977718ff2458d3d4df497ae8ee325e0`.
 This does not cover optional test IDs or physical hardware.
+
+On 2026-11-21, a second coverage-review round landed the following test
+additions; host and QEMU suites pass on the integrated tree
+(native 55/55 including ASan/UBSan, QEMU 17/17), while every
+live-emulator execution is pending because no XEiJ or MPX68K was running.
+The a2 MFP probe (`tests/xeij/mfp_snapshot.c`) now also reports
+IERA/IMRA/TACR/VR and the Timer A/KEY/CRTC ($138/$13C) vectors, so the
+`SSOS9_XEIJ_MFP_CHECK=1` string comparison covers everything
+`mfp_state.s` saves and restores except TADR (a running Timer A counter
+is not a stable comparison value). MFPSTATE is now 8 byte fields plus 7
+dwords; the itest extraction strips screen wrap before matching the
+fixed-length pattern. C1 additionally runs `uptime`, `modules`, `clear`,
+and `version` so every help-table command has a real-IOCS pass. New
+opt-in area c6 checks BS/DEL line editing through real IOCS ("helq"+BS
+completes to help, "cleax"+DEL to clear); the `bs`/`del` typekey names
+are unverified, so the first live run either passes or pins a missing key
+name the way the yen case did. QEMU t15 gained the mux shell lifecycle
+(window 2 waits its own background child through `ss_cli_wait_pid`, exits
+alone, windows 1/3 keep answering, and the root `mux` reaps the zombie
+and respawns), and new t17 drives CLI `smount`/`swrite`/`sread` through
+the production human68k probe/attach path with an MS-DOS partition
+rejection, instead of the replaced mount the earlier cases use. Native
+tests gained four `ss_cli_execute_line` message cases (command too long,
+too many arguments, syntax error, unknown-command exit statuses 127/2,
+empty line). The MPX68K H2 procedure became `tools/mpx68k-h2.sh`
+(`make test-mpx68k-h2`); see the H2 runner section above.
+
+On 2026-11-21 (same day, live XEiJ runs against the user-started running
+instance; XEiJ version not independently confirmed), the new emulator
+areas passed with `ssos9.x` SHA-256
+`47003f38fa8570b08f61640b5f7db920cfc47b53d0e25380a5ae020d37f96c99`
+(unchanged from 2026-11-18; this round modified no product code) and the
+extended probe `build/xeij/mfpstate.x` SHA-256
+`4e1d2d0dab272b178c705d21678adf578fc70295a34c86af1f7da49634ebd257`
+staged as `~/tmp/mfpstate.x`. C1 passed with uptime/modules/clear/version
+after one script fix: the modules assert must expect the `counter
+builtin` registry row — hello resolves through the run fallback and is
+not a registered shared image. C6's first runs produced the DEL finding:
+`typekey del` and held `presskey/releasekey del` both deliver nothing
+(the shell received "cleaxr" twice), consistent with the X68000 keyboard
+having no DEL key, so c6 now covers BS only (`typekey bs` delivers; a
+double-BS mid-word edit completes "version"), and the 0x7f branch runs
+synthetically in QEMU t15 (typed "versioz"+BS+'n'+DEL+'n' through the
+real shell_loop; QEMU suite 17/17 again). A2 with
+`SSOS9_XEIJ_MFP_CHECK=1` passed all five iterations comparing the full
+extended snapshot —
+`2E/2E/70/00/18/18/08/40/44FF0770/20FF0770/00FF1B48/4DFF0770/000F58CE/4EFF0770/4FFF0770`
+(IERB/IMRB/TCDCR/TDDR, IERA/IMRA/TACR/VR, then the Timer D, TRAP #0,
+TRAP #13, Timer A, KEY, and CRTC $138/$13C vectors) — identical before
+and after every exit. Physical hardware was not tested.
+
+Also on 2026-11-21, the user reported that Human68k's own prompt accepts
+"abc" + left-cursor + DEL (yielding "ab") while SSOS-9 ignored both keys.
+A key-code probe (console module driven with real host key events through
+osascript key codes; the control pipe has no names for these keys)
+measured the IOCS events on XEiJ: left 0x3B00, right 0x3D00, DEL 0x3700;
+the mac delete key maps to X68000 BS (0x08). The old shell_loop filtered
+everything outside 0x20-0x7f, so scan<<8 keys never reached the editor
+and the 0x7f branch never fires from real keys — the earlier same-day
+note that "DEL is not deliverable" was a control-pipe limitation, not a
+missing key. Fix: `ss_cli_edit_key` (cli.c/cli.h) now maintains a cursor —
+left/right move, DEL deletes forward at the cursor, BS and 0x7f delete
+before it, mid-line insert/delete redraw the tail — and shell_loop
+delegates to it. The QEMU stub string.h gained memmove. Verified: two
+new unit cases assert the exact echo byte streams (native 57/57), QEMU
+t15 drives the scan-key codes through the real shell_loop with a
+16-bit key queue (17/17), and c6 gained a real-key sequence
+("version" + left + z + DEL + BS + n) that completes the command again.
+C6 and C1 passed live against the fixed `ssos9.x` SHA-256
+`3723528ba57ad2d7965fee558bc6815b55a3acbfeda929627b1602c86980928b`.
+The MPX68K H2 runner remains unexecuted against a live emulator;
+physical hardware was not tested.

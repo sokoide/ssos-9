@@ -20,12 +20,14 @@ TIMEOUT_SECS ?= 2
 t13_process_spawn_TIMEOUT_SECS = 6
 t14_link_run_TIMEOUT_SECS = 6
 t15_mux_flow_TIMEOUT_SECS = 10
+t17_human68k_cli_mount_TIMEOUT_SECS = 6
 
 SSOS = ../../../ssos/os
 TESTS = t01_round_robin t02_register_save t03_sleep_wakeup \
 	t04_main_task_register t05_timerd_cadence t06_idle_sleep t07_task_reap \
 	t08_cancel_waiting t09_arena t10_module_image t11_module_registry \
-	t12_interrupted_start t13_process_spawn t14_link_run t15_mux_flow t16_human68k_volume
+	t12_interrupted_start t13_process_spawn t14_link_run t15_mux_flow t16_human68k_volume \
+	t17_human68k_cli_mount
 COMMON_OBJS = stub.o sched.o syscall.o syscall_entry.o wakeups.o main_task.o arena.o image.o module.o builtin.o process.o \
 	system_arena_local.o preempt_ctx_switch.o
 # COMMON_OBJS with the threshold-1 Timer D port (switch every tick) for the
@@ -93,6 +95,12 @@ t16_scsi.o: $(SSOS)/fs/scsi.c
 	$(CC) $(CFLAGS) -c $< -o $@
 t16_scsi_volume.o: $(SSOS)/fs/scsi_volume.c
 	$(CC) $(CFLAGS) -c $< -o $@
+# scsi_iocs.c needs the real toolchain <x68k/iocs.h> (struct iocs_readcap
+# and the _iocs_s_* prototypes), not the QEMU stub, so the toolchain include
+# path goes first for this object only; the _iocs_s_* symbols resolve to the
+# mocks inside t17_human68k_cli_mount.o at link time.
+t17_scsi_iocs.o: $(SSOS)/fs/scsi_iocs.c
+	$(CC) -I$(XELF_BASE)/m68k-elf/include $(CFLAGS) -c $< -o $@
 ../../../examples/hello/build/hello.s9m: FORCE
 	$(MAKE) -C ../../../examples/hello all
 ../../../examples/hello/build/hello-data.xdf: ../../../examples/hello/build/hello.s9m
@@ -156,6 +164,11 @@ t15_mux_flow.elf: t15_mux_flow.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o 
 
 t16_human68k_volume.elf: t16_human68k_volume.o t16_human68k_volume_impl.o t16_scsi.o t16_scsi_volume.o t13_fat12.o t13_fat16_write.o t13_storage.o $(COMMON_OBJS) ../common/linker.ld
 	$(CC) $(CFLAGS) t16_human68k_volume.o t16_human68k_volume_impl.o t16_scsi.o t16_scsi_volume.o t13_fat12.o t13_fat16_write.o t13_storage.o $(COMMON_OBJS) $(LDFLAGS) -o $@
+
+# The CLI mounts through the production scsi_iocs.c path with only the
+# low-level IOCS SCSI calls mocked inside the test object.
+t17_human68k_cli_mount.elf: t17_human68k_cli_mount.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o t16_human68k_volume_impl.o t16_scsi.o t16_scsi_volume.o t17_scsi_iocs.o $(COMMON_OBJS) ../common/linker.ld
+	$(CC) $(CFLAGS) t17_human68k_cli_mount.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o t16_human68k_volume_impl.o t16_scsi.o t16_scsi_volume.o t17_scsi_iocs.o $(COMMON_OBJS) $(LDFLAGS) -o $@
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@

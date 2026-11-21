@@ -84,6 +84,15 @@ end run
 APPLESCRIPT
 }
 key() { send_control "typekey $1"; sleep 0.1; }
+# Real host key event to the frontmost XEiJ (macOS key code). The control
+# pipe has no key names for the cursor or DEL keys, so c6 routes those
+# through System Events instead; typing itself keeps using the pipe.
+host_keycode() {
+    osascript \
+        -e 'tell application "System Events" to set frontmost of first process whose unix id is '"$XEI_J_PID"' to true' \
+        -e "tell application \"System Events\" to key code $1" > /dev/null 2>&1
+    sleep 0.25
+}
 # XEiJ's instant typekey drops some keycodes (yen, underline); hold them
 # just under the keyboard auto-repeat delay so exactly one is delivered.
 hold_key() {
@@ -298,7 +307,13 @@ human68k_mfp_snapshot() {
     type_cmd 'cls'
     type_cmd 'f:mfpstate'
     wait_screen 'MFPSTATE=' 10 || fail 'Human68k MFP snapshot failed' "$s"
-    MFP_SNAPSHOT=$(print -r -- "$s" | grep -Eo 'MFPSTATE=([0-9A-F]{2}/){4}([0-9A-F]{8}/){2}[0-9A-F]{8}')
+    # The MFPSTATE line (8 byte fields + 7 dword fields) exceeds the
+    # 80-column text screen, so the copy wraps it. Strip whitespace and row
+    # breaks first: the wrapped halves join back into the exact-length
+    # byte/dword pattern below. Padding only trails the value, so no
+    # captured byte can be lost or reordered.
+    MFP_SNAPSHOT=$(print -r -- "$s" | tr -d ' \r\n\t' |
+        grep -Eo 'MFPSTATE=([0-9A-F]{2}/){8}([0-9A-F]{8}/){6}[0-9A-F]{8}')
     [[ -n "$MFP_SNAPSHOT" ]] || fail 'invalid MFP snapshot' "$s"
     if ! screen_line "$s" 'A:\\>'; then
         wait_line 'A:\\>' 8 || fail 'Human68k did not return after MFP snapshot' "$s"
@@ -932,9 +947,81 @@ run_c1() {
     local got=$(norm_text "$s")
     local want=$(norm_text "$HELP_EXPECTED")
     [[ "$got" == *"$want"* ]] || fail 'c1: help text differs from the cli.c command table' "$s"
+    # uptime/modules/clear had never run in any area; spot-check them here
+    # so every command in the help table has at least one real-IOCS pass.
+    type_cmd 'uptime'
+    wait_screen 'worker wakes: ' 8 || fail 'c1: uptime header missing' "$s"
+    print -r -- "$s" | grep -Eq 'worker wakes: [0-9]+' ||
+        fail 'c1: uptime count missing' "$s"
+    type_cmd 'modules'
+    wait_screen 'REFS' 8 || fail 'c1: modules header missing' "$s"
+    # The builtin registry image is counter; hello is resolved by the run
+    # fallback, not registered as a shared image.
+    require 'c1 modules builtin counter row' "$s" 'counter builtin'
+    type_cmd 'clear'
+    sleep 1
+    snap
+    print -r -- "$s" | grep -Fq 'Commands:' &&
+        fail 'c1: clear left the previous output on screen' "$s"
+    type_cmd 'version'
+    wait_screen 'SSOS-9 CLI preemptive minimum' 8 ||
+        fail 'c1: version missing after clear' "$s"
     require 'c1 prompt alive' "$s" '>'
     ssos_exit
-    print 'PASS c1: full help text matches the command table (wrap-normalized)'
+    print 'PASS c1: help/uptime/modules/clear/version match the command table'
+}
+
+run_c6() {
+    # E2 emulator half: BS/cursor/DEL key delivery through real IOCS and
+    # the line-editor echo (the editor logic itself is unit-covered, and
+    # the 0x08/0x7f branches also run through the real shell_loop in QEMU
+    # t15). Findings 2026-11-21: typekey bs delivers; the control pipe has
+    # no key name for cursor keys or DEL (instant typekey del and held
+    # presskey/releasekey del reached nothing), but real host key events
+    # deliver them — measured codes: left 0x3B00, right 0x3D00, DEL
+    # 0x3700 — and the shell editor consumes them since the same day.
+    snap
+    require 'c6 initial prompt' "$s" 'A:\>'
+    boot_ssos || fail 'c6: ssos9 boot failed'
+    # "helq" + BS deletes the q; "p" then completes "help".
+    type_text 'helq'
+    key bs
+    type_text 'p'
+    key return
+    sleep 2
+    snap
+    local want=$(norm_text "$HELP_EXPECTED")
+    [[ "$(norm_text "$s")" == *"$want"* ]] ||
+        fail 'c6: BS did not delete the trailing character' "$s"
+    # Double deletion mid-word: "versioz" + BS + BS + "on" -> "version".
+    type_text 'versioz'
+    key bs
+    key bs
+    type_text 'on'
+    key return
+    sleep 2
+    snap
+    print -r -- "$s" | grep -Fq 'SSOS-9 CLI preemptive minimum' ||
+        fail 'c6: double BS did not edit the line into version' "$s"
+    # Real cursor and DEL keys through host key events (mac key codes:
+    # left 123, forward delete 117): "version" + LEFT + 'z' inserts
+    # before the n, DEL (scan 0x37) removes the n, BS removes the z, and
+    # 'n' completes the command again — the "abc" LEFT DEL -> "ab"
+    # Human68k behavior.
+    type_text 'version'
+    host_keycode 123
+    type_text 'z'
+    host_keycode 117
+    key bs
+    type_text 'n'
+    key return
+    sleep 2
+    snap
+    print -r -- "$s" | grep -Fq 'SSOS-9 CLI preemptive minimum' ||
+        fail 'c6: cursor-left and DEL did not edit the line' "$s"
+    require 'c6 prompt alive' "$s" '>'
+    ssos_exit
+    print 'PASS c6: BS, cursor-left, and DEL editing reached the guest'
 }
 
 run_c2() {
@@ -1741,6 +1828,7 @@ case ${1:-} in
     c3) run_c3 ;;
     c4) run_c4 ;;
     c5) run_c5 ;;
+    c6) run_c6 ;;
     d1) run_d1 ;;
     d2) run_d2 ;;
     d3) run_d3 ;;

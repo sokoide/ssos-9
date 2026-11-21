@@ -680,9 +680,69 @@ int ss_cli_execute_line(char* line) {
     return 0;
 }
 
+/* X68000 IOCS special-key events reach the shell as scan<<8 with a zero
+ * low byte (ss_cli_console_read_key). The line editor honors the cursor
+ * and DEL keys Human68k's own prompt accepts: left 0x3B, right 0x3D, and
+ * DEL 0x37, which deletes the character at the cursor (verified on XEiJ,
+ * 2026-11-21). BS 0x08 — and the classic 0x7f spelling — delete before
+ * the cursor. */
+#define SS_CLI_KEY_DEL 0x3700
+#define SS_CLI_KEY_LEFT 0x3B00
+#define SS_CLI_KEY_RIGHT 0x3D00
+
+int ss_cli_edit_key(int key, char* line, unsigned* used, unsigned* cursor,
+                    unsigned capacity) {
+    if (key == SS_CLI_KEY_LEFT) {
+        if (*cursor != 0) {
+            (*cursor)--;
+            print("\b");
+        }
+        return 1;
+    }
+    if (key == SS_CLI_KEY_RIGHT) {
+        if (*cursor != *used) {
+            (*cursor)++;
+            /* Reprint the tail so every byte lands where it already is,
+             * then step the visible cursor back to its own place. */
+            print(&line[*cursor]);
+            for (unsigned i = *cursor + 1u; i < *used; i++) print("\b");
+        }
+        return 1;
+    }
+    if (key == SS_CLI_KEY_DEL || key == 0x08 || key == 0x7f) {
+        /* A delete key with nothing to delete is still consumed. */
+        if ((key == SS_CLI_KEY_DEL && *cursor != *used) ||
+            ((key == 0x08 || key == 0x7f) && *cursor != 0)) {
+            if (key == 0x08 || key == 0x7f) {
+                (*cursor)--;
+                print("\b");
+            }
+            memmove(&line[*cursor], &line[*cursor + 1u],
+                    *used - *cursor - 1u);
+            (*used)--;
+            line[*used] = '\0';
+            print(&line[*cursor]);
+            print(" ");
+            for (unsigned i = *cursor; i <= *used; i++) print("\b");
+        }
+        return 1;
+    }
+    if (key >= 0x20 && key < 0x7f && *used + 1u < capacity) {
+        memmove(&line[*cursor + 1u], &line[*cursor], *used - *cursor);
+        line[(*cursor)++] = (char)key;
+        (*used)++;
+        line[*used] = '\0';
+        print(&line[*cursor - 1u]);
+        for (unsigned i = *cursor; i < *used; i++) print("\b");
+        return 1;
+    }
+    return 0;
+}
+
 static int shell_loop(void) {
     char line[SS_CLI_LINE_MAX];
     unsigned used = 0;
+    unsigned cursor = 0;
     for (;;) {
         /* Cheap and idempotent: reclaim orphan zombies while the shell
          * idles at the prompt or runs the next command. */
@@ -691,6 +751,7 @@ static int shell_loop(void) {
             return 0;
         if (ss_cli_poll_ctrl_c()) {
             used = 0;
+            cursor = 0;
             print("^C\r\n> ");
             continue;
         }
@@ -707,19 +768,15 @@ static int shell_loop(void) {
                 return 0;
             }
             used = 0;
+            cursor = 0;
             print("> ");
         } else if (key == 0x03) {
             used = 0;
+            cursor = 0;
             print("^C\r\n> ");
-        } else if (key == 0x08 || key == 0x7f) {
-            if (used != 0) {
-                used--;
-                print("\b \b");
-            }
-        } else if (key >= 0x20 && key < 0x7f && used + 1 < sizeof(line)) {
-            line[used++] = (char)key;
-            char echo[2] = {(char)key, '\0'};
-            print(echo);
+        } else {
+            (void)ss_cli_edit_key(key, line, &used, &cursor,
+                                  (unsigned)sizeof(line));
         }
     }
 }

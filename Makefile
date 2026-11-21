@@ -5,7 +5,7 @@ SUBDIRS := tools/makedisk
 ASM_FORMATTER ?= asmfmt
 CLANG_FORMAT ?= clang-format
 
-.PHONY: $(TOPTARGETS) all debug format loc test test-asm test-link test-qemu test-emulator test-emulator-list test-emulator-benchmark test-emulator-benchmark-short test-emulator-benchmark-full test-emulator-benchmark-compare-short test-emulator-benchmark-compare-full verify verify-check
+.PHONY: $(TOPTARGETS) all debug format loc test test-asm test-link test-qemu test-emulator test-emulator-list test-mpx68k-h2 test-emulator-benchmark test-emulator-benchmark-short test-emulator-benchmark-full test-emulator-benchmark-compare-short test-emulator-benchmark-compare-full verify verify-check
 
 EMULATOR_SHORT_REPEATS ?= 30
 EMULATOR_FULL_REPEATS ?= 10
@@ -23,6 +23,8 @@ usage:
 	@echo "                        (select with EMULATOR_TESTS=\"a2 b1\", list with make test-emulator-list)"
 	@echo "  make test-emulator-automated  Run all cases using a prepared disposable profile"
 	@echo "  make test-emulator-soak       Run the 25-cycle process recovery case"
+	@echo "  make test-mpx68k-h2   Run the H2 FD1 real-floppy case on a running MPX68K"
+	@echo "                        (tools/mpx68k-h2.sh; needs monitor socket + OCR)"
 	@echo "  make test-emulator-benchmark  Run 30 short / 10 full repeats (long-running)"
 	@echo "  make test-emulator-benchmark-compare-short  Compare short timing reports"
 	@echo "  make test-emulator-benchmark-compare-full   Compare full timing reports"
@@ -101,9 +103,10 @@ test-qemu:
 # always-green core that never writes the real HDD and never needs staged
 # fixtures (a3's XDF boot restarts XEiJ and transiently edits ~/XEiJ.ini,
 # restoring both afterwards). Opt in for the rest: c5..e2/f2/h4 stage or
-# write A:\TEST and h5 restarts XEiJ and touches the mounted HDD. The h2
-# real-floppy regression is manual in MPX68K; see tests/README.md.
-EMULATOR_ALL_TESTS = a2 a3 b1 b2 b3 b4 c1 c2 c3 c4 c5 \
+# write A:\TEST and h5 restarts XEiJ and touches the mounted HDD, and c6
+# is newly added. The h2 real-floppy regression runs on MPX68K via
+# make test-mpx68k-h2 (tools/mpx68k-h2.sh).
+EMULATOR_ALL_TESTS = a2 a3 b1 b2 b3 b4 c1 c2 c3 c4 c5 c6 \
 	d1 d2 d3 d4 e1 e2 e3 f1 f2 g1 h3 h4 h5 h6
 EMULATOR_CORE_TESTS = a2 a3 b1 b2 b3 b4 c1 c2 c3 c4 e3 f1 g1 h3 h6
 EMULATOR_AUTOMATED_TESTS = $(EMULATOR_ALL_TESTS)
@@ -113,6 +116,8 @@ EMULATOR_TESTS ?= $(EMULATOR_CORE_TESTS)
 test-emulator-core: EMULATOR_TESTS = $(EMULATOR_CORE_TESTS)
 test-emulator-soak: EMULATOR_TESTS = h6
 test-emulator-core test-emulator-soak: test-emulator
+test-mpx68k-h2:
+	tools/mpx68k-h2.sh
 test-emulator-automated:
 	python3 tools/xeij-suite.py --require-profile $(EMULATOR_AUTOMATED_TESTS)
 
@@ -152,6 +157,7 @@ test-emulator-list:
 	@echo "  c3  mux F1-F3 switching with per-screen retention"
 	@echo "  c4  F1/F2/F3 mux window switching and output retention"
 	@echo "  c5  console module key reporting (stages CONSOLE.S9M in A:\\TEST)"
+	@echo "  c6  BS/cursor/DEL line editing via real IOCS keys"
 	@echo "  d1  create/read/replace on Human68k-formatted SCSI HDD"
 	@echo "  d2  editor save and reopen on target HDD"
 	@echo "  d3  on-target asm output byte-compared with host build"
