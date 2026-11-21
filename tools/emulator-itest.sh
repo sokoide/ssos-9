@@ -90,7 +90,8 @@ key() { send_control "typekey $1"; sleep 0.1; }
 host_keycode() {
     osascript \
         -e 'tell application "System Events" to set frontmost of first process whose unix id is '"$XEI_J_PID"' to true' \
-        -e "tell application \"System Events\" to key code $1" > /dev/null 2>&1
+        -e "tell application \"System Events\" to key code $1" > /dev/null ||
+        environment_fail "host key event failed: $1"
     sleep 0.25
 }
 # XEiJ's instant typekey drops some keycodes (yen, underline); hold them
@@ -1003,25 +1004,39 @@ run_c6() {
     snap
     print -r -- "$s" | grep -Fq 'SSOS-9 CLI preemptive minimum' ||
         fail 'c6: double BS did not edit the line into version' "$s"
-    # Real cursor and DEL keys through host key events (mac key codes:
-    # left 123, forward delete 117): "version" + LEFT + 'z' inserts
-    # before the n, DEL (scan 0x37) removes the n, BS removes the z, and
-    # 'n' completes the command again — the "abc" LEFT DEL -> "ab"
-    # Human68k behavior.
+    # Clear the preceding version result so only this edit can satisfy the check.
+    type_cmd 'clear'
+    local clear_deadline=$(( SECONDS + 8 ))
+    while true; do
+        snap
+        if screen_line "$s" '> ' &&
+            ! print -r -- "$s" | grep -Fq 'SSOS-9 CLI preemptive minimum'; then
+            break
+        fi
+        (( SECONDS < clear_deadline )) ||
+            fail 'c6: clear did not return to a fresh prompt' "$s"
+        sleep 0.25
+    done
+    # Wait for the FIFO input to reach the guest before sending host events.
     type_text 'version'
+    wait_line '> version' 8 || fail 'c6: initial version echo missing' "$s"
+    # LEFT twice then RIGHT puts the cursor before the final n.
     host_keycode 123
+    host_keycode 123
+    host_keycode 124
     type_text 'z'
+    wait_line '> versiozn' 8 || fail 'c6: cursor movement or insertion echo differs' "$s"
     host_keycode 117
+    wait_line '> versioz' 8 || fail 'c6: forward delete echo differs' "$s"
     key bs
     type_text 'n'
+    wait_line '> version' 8 || fail 'c6: final version echo differs' "$s"
     key return
-    sleep 2
-    snap
-    print -r -- "$s" | grep -Fq 'SSOS-9 CLI preemptive minimum' ||
-        fail 'c6: cursor-left and DEL did not edit the line' "$s"
+    wait_command_result 'version' 'SSOS-9 CLI preemptive minimum' 10 ||
+        fail 'c6: cursor keys and DEL did not edit the line' "$s"
     require 'c6 prompt alive' "$s" '>'
     ssos_exit
-    print 'PASS c6: BS, cursor-left, and DEL editing reached the guest'
+    print 'PASS c6: BS, left/right cursor keys, and DEL reached the guest'
 }
 
 run_c2() {

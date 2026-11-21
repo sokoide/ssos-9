@@ -199,7 +199,15 @@ apps/edit/build/edit.s9m` で専用イメージを作り、11 ゲートを実行
 Human68k 復帰。判定は `screencapture` の証拠 PNG を Swift + Vision OCR で
 読み取る（`swift` なしや権限不足は UNVERIFIED、exit 2）。後片付け
 （EJECTFDD、イメージ SHA-256 と `fsck.fat -n`）は全終了経路で trap が実行する。
-このスクリプトでの実ゲスト実行はまだ行っていない。
+2026-11-21 に MonitorSocket 付き MPX68K で 11/11 PASS。Human68k の
+`A:` から `c:ss9con.x` を起動し、終了後に `A:` へ戻った。G6 では画面上に
+二つのロード成功行が揃うことを確認した。元イメージと専用イメージの
+SHA-256、および `fsck.fat -n` の終了コードで整合性を確認した。
+証跡は `build/mpx68k-h2/results-20261121-151912/`。
+使用した `ssos9.x` の SHA-256 は
+`cb5977ed972ac3baf7d30942ce1f1437699b33fa127464d5d41db7093ae55727`。
+同じビルドで XEiJ の c6 を実行し、左右キーの移動後の挿入、DEL の
+画面エコー、編集した `version` の応答を確認した。
 
 To prepare a single data floppy usable for launching from Human68k and loading
 the modules, pass a disposable FAT12 floppy template, a new output path, the

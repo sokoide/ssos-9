@@ -5,7 +5,7 @@
 2026-11-21 追加・実行済み: C6 (BS/←/DEL の実キー配信 PASS。typekey に名前の無い ←/DEL は host key event
 (osascript key code) で届き、IOCS 0x3B00/0x3D00/0x3700 を実測。shell 行編集も同日修正でこれらを消費)、
 H1 プローブ拡張 (IERA/IMRA/TACR/VR + Timer A/KEY/CRTC ベクタ、TADR は動作カウンタのため除外。拡張 15 項目で 5 反復 PASS)、
-c1 拡張 (uptime/modules/clear/version)。H2 のランナー化 (`tools/mpx68k-h2.sh`) は live 実行が残件。
+c1 拡張 (uptime/modules/clear/version)。H2 ランナー (`tools/mpx68k-h2.sh`) は実 MPX68K で 11/11 PASS。
 追加テストと高速化の詳細は docs/test-coverage-and-speedup-plan.md**。
 `smount` は Human68k 形式の先頭パーティションのみを受け付け、MS-DOS 型 FAT16 は拒否される。
 パスの 8.3 名照合は大文字小文字を区別しない (Human68k 側の作成・検索の挙動に合わせている)。
@@ -94,7 +94,7 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 | C3 | mux 画面切替と保持 (F1〜F3) | `mux` → F2 で `help`、F3 で `ps`、F1 に戻る。各画面をコピー | 画面ごとの出力が保持され、戻った画面が復元される (t15 の実機相当) | P0 | ○ |
 | C4 | F1/F2/F3 による mux 画面選択と出力保持 | 画面 2 で `mem`、画面 3 で `ps`、F2/F1へ戻る | 選択した画面に切り替わり、画面2の出力が保持される | P1 | ○ |
 | C5 | 対話コンソールモジュール (CONSOLE_KEY) | `tests/target` の CONSOLE.S9M を `A:\TEST` に配置し、Human68k 形式 HDD をマウント → module 起動 → 各種キー送信 | `KEY: xxxx` 表示がキーごとに一致 (ASCII は下位 8 bit、特殊キーは scan<<8)。`q` で終了 | P2 | △ (モジュール配置) |
-| C6 | BS/←/DEL 行編集の実キー配信とエコー | `helq`+BS+`p` (→ help)、`versioz`+BS×2+`on` (→ version)、`version`+←+`z`+DEL+BS+`n` (→ version。←/DEL は osascript key code 123/117 の実キーイベント、IOCS 0x3B00/0x3700) | 各完成コマンドが実行される。制御パイプ (`typekey`/`presskey`) に ←/DEL の名前は無いが実キーイベントは届く (2026-11-21 実測。当初「DEL 配信不能」と結論したのは pipe 名の局限で、キー自体は存在する) | P2 | **実行済み PASS** (2026-11-21、修正後ビルド) |
+| C6 | BS/←/→/DEL 行編集の実キー配信とエコー | `helq`+BS+`p` (→ help)、`versioz`+BS×2+`on` (→ version)、`clear` で前の応答を消去し、`version`+←×2+→+`z`+DEL+BS+`n` (→ version。←/→/DEL は osascript key code 123/124/117 の実キーイベント、IOCS 0x3B00/0x3D00/0x3700) | 各完成コマンドが実行される。制御パイプ (`typekey`/`presskey`) に ←/DEL の名前は無いが実キーイベントは届く (2026-11-21 実測。当初「DEL 配信不能」と結論したのは pipe 名の局限で、キー自体は存在する) | P2 | **実行済み PASS** (2026-11-21、修正後ビルド) |
 
 ### D. Human68k 形式 SCSI HDD の実 IOCS 読み書き
 
@@ -136,7 +136,7 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 | ID | 概要 | 手順 | 合格基準 | 状態 |
 | --- | --- | --- | --- | --- |
 | H1 | B5: Timer D・例外ベクタの終了時復元を直接比較 | `SSOS9_XEIJ_MFP_CHECK=1`でa2を実行し、Human68kプローブを起動前と各終了後に実行 | 2026-11-21拡張後: IERB/IMRB/TCDCR/TDDR (停止時) + IERA/IMRA/TACR/VR + Timer D・TRAP #0・#13・Timer A・KEY・CRTC($138/$13C) ベクタ一致。TADR は Timer A 動作カウンタのため比較対象外 | **実行済み PASS (旧項目 2026-11-18、拡張 15 項目で 5 反復 2026-11-21)** |
-| H2 | `load 1` 実フロッピ経路 | MPX68KでFD1に専用2HD画像を挿入し、Human68kのC:から起動・読出し。SSOS-9で `load 1 console.s9m` → `run console` | モジュールが `KEY: 0061` を表示し、qで終了、Human68kへ復帰。2026-11-21 から `tools/mpx68k-h2.sh` (`make test-mpx68k-h2`) が3クラスタ `load 1 edit.s9m` と load 負例を含む11ゲートを自動判定 (スクリプトでの live 実行は未実施) | **MPX68K手動 PASS (2026-11-18)**。XEiJ ini添付はディスク変更通知を再現できず不安定なため自動化対象外。手順とハッシュは `tests/README.md` |
+| H2 | `load 1` 実フロッピ経路 | MPX68KでFD1に専用2HD画像を挿入し、Human68kのC:から起動・読出し。SSOS-9で `load 1 console.s9m` → `run console` | モジュールが `KEY: 0061` を表示し、qで終了、Human68kへ復帰。2026-11-21 から `tools/mpx68k-h2.sh` (`make test-mpx68k-h2`) が3クラスタ `load 1 edit.s9m` と load 負例を含む11ゲートを自動判定 (実 MPX68K で 11/11 PASS) | **MPX68K 自動 PASS (2026-11-21)**。XEiJ ini添付はディスク変更通知を再現できず不安定なため自動化対象外。手順とハッシュは `tests/README.md` |
 | H3 | Ctrl-C のウィンドウ間ルーティング | window 2 で foreground `run counter` → F1 → Ctrl-C → F2 確認 → F2 で Ctrl-C | 隠れたウィンドウの foreground は中断されず、自ウィンドウの Ctrl-C でのみ中断される (cli_wait.c はアクティブウィンドウのみ配送) | 実行済み PASS |
 | H4 | sread 境界 | edit で空ファイルと 286 バイトファイルを作成し `sread` | 空ファイルは 0 バイトでエラーなし、286 バイトは `maximum 256 bytes` で拒否 | 実行済み PASS |
 | H5 | XDF IPL 起動 + ストレージ | A:\TEST に fixture を配置後、ini `fd0=ssos9.xdf` + 再起動で XDF 起動 → `smount 0` → `sread` → `exit` 拒否 | fixture が読める、PID 1 exit が拒否される、ini 復元後 Human68k 復帰 | 実行済み PASS (2026-11-14、1:08) |
@@ -245,8 +245,8 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
   status 0 で終了することを確認する。
 - G1: `tools/emulator-itest.sh g1`。`run counter&` → `kill` → `wait` を 5 サイクル
   反復し、`mem` が起動直後の baseline に一致することを確認する。
-- C6: `tools/emulator-itest.sh c6`。BS は `key bs` (typekey 経由)、←/DEL は
-  `host_keycode` (osascript の実キーイベント。mac key code 123=←, 117=DEL) で
+- C6: `tools/emulator-itest.sh c6`。BS は `key bs` (typekey 経由)、←/→/DEL は
+  `host_keycode` (osascript の実キーイベント。mac key code 123=←, 124=→, 117=DEL) で
   送り、削除・挿入を含めてコマンドを完成させ、結果 (help/version 表示) で配信と
   行編集を判定する。制御パイプには ←/DEL の key name が無い (typekey/presskey
   `del` は届かない) ためこの分担であり、IOCS 値は 0x3B00/0x3D00/0x3700 を実測済み。

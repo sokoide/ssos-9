@@ -701,11 +701,9 @@ int ss_cli_edit_key(int key, char* line, unsigned* used, unsigned* cursor,
     }
     if (key == SS_CLI_KEY_RIGHT) {
         if (*cursor != *used) {
+            char echo[2] = {line[*cursor], '\0'};
             (*cursor)++;
-            /* Reprint the tail so every byte lands where it already is,
-             * then step the visible cursor back to its own place. */
-            print(&line[*cursor]);
-            for (unsigned i = *cursor + 1u; i < *used; i++) print("\b");
+            print(echo);
         }
         return 1;
     }

@@ -113,9 +113,9 @@ make test-emulator-benchmark-compare-full
 | ID | 内容 | 層 | 状態 (2026-11-21) |
 | --- | --- | --- | --- |
 | E1 | a2 の MFP 比較を保存・復帰対象の全項目へ拡張: IERA/IMRA/TACR/VR + Timer A/KEY/CRTC($138/$13C) ベクタを `mfpstate.x` と itest 抽出に追加。TADR は Timer A 動作カウンタのため除外 | XEiJ | **実行済み PASS** (2026-11-21、拡張 15 項目で 5 反復・全反復同一 snapshot) |
-| M1 | H2 を `tools/mpx68k-h2.sh` (`make test-mpx68k-h2`) にランナー化: 11ゲート、Swift/Vision OCR による判定、EJECTFDD/SHA-256/fsck.fat の後片付け、exit 0/1/2/3 | MPX68K | **実装済み** (オフライン検証: イメージ生成・mtype バイト一致・OCR・UNVERIFIED/FAIL/ENVIRONMENT 経路。live 実行は未実施) |
-| M2 | FAT12 マルチクラスタ実IOCS読み: `--module` で edit.s9m (3028 B = 3クラスタ) を配置し `load 1 edit.s9m`。登録時 CRC で全チェーン読取りを証明 (BG.S9M 282 B / console.s9m 351 B は単一クラスタで不適) | MPX68K | **実装済み** (ランナー G5。live 実行は未実施) |
-| M3 | load 負例の実経路: `load 1 nosuch.s9m` (file or cluster chain エラー) と媒体なし (EJECTFDD 後、disk or FAT12 エラー)。ドライブ番号範囲外は unit で検査可能なため対象外 | MPX68K | **実装済み** (ランナー G9/G10。live 実行は未実施) |
+| M1 | H2 を `tools/mpx68k-h2.sh` (`make test-mpx68k-h2`) にランナー化: 11ゲート、Swift/Vision OCR による判定、EJECTFDD/SHA-256/fsck.fat の後片付け、exit 0/1/2/3 | MPX68K | **実装済み** (オフライン検証: イメージ生成・mtype バイト一致・OCR・UNVERIFIED/FAIL/ENVIRONMENT 経路。2026-11-21 に実 MPX68K で 11/11 PASS) |
+| M2 | FAT12 マルチクラスタ実IOCS読み: `--module` で edit.s9m (3028 B = 3クラスタ) を配置し `load 1 edit.s9m`。登録時 CRC で全チェーン読取りを証明 (BG.S9M 282 B / console.s9m 351 B は単一クラスタで不適) | MPX68K | **実装済み** (ランナー G5、2026-11-21 PASS) |
+| M3 | load 負例の実経路: `load 1 nosuch.s9m` (file or cluster chain エラー) と媒体なし (EJECTFDD 後、disk or FAT12 エラー)。ドライブ番号範囲外は unit で検査可能なため対象外 | MPX68K | **実装済み** (ランナー G9/G10、2026-11-21 PASS) |
 | Q3 | t15 に mux シェルのライフサイクルを追加: ウィンドウ2で自分の子を `ss_cli_wait_pid` 経由で wait → ウィンドウ2だけ exit → 1・3 が応答継続 → ルート `mux` が zombie 回収+再生成。非対話 wait 分岐は `wait 2&` の unit で既カバーのため対象外 | QEMU | **PASS** (t15、17/17) |
 | Q4 | 新 t17: CLI `smount`/`swrite`/`sread` を本番 human68k probe/attach 経路で接続 (t13/t14/t15 は mount 置換で probe バイパス、t16 は関数直叩き)。MS-DOS パーティション拒否の負例付き | QEMU | **PASS** (t17、17/17) |
 | U4 | `ss_cli_execute_line` 直下メッセージ 4 ケース: Command too long (96/95 境界含む) / Too many arguments・Syntax error / 空行 / Unknown command の文言と exit status 127/2 | unit | **PASS** (native 55/55、ASan/UBSan でも 55/55) |
@@ -129,8 +129,7 @@ XEiJ が論理 1024 を返すため未観測」と記録し、「原理的に不
 統合時の検証: `zsh -n` 両スクリプト、`make test` (native、asm 266 checks、
 link 364 checks + wrap 34)、`make test-qemu` (17/17) すべて成功。live XEiJ 実行は
 a2 (MFP_CHECK 5 反復)・c1・c6 が 2026-11-21 PASS (下記行編集修正の前後で実施、
-詳細とハッシュは `tests/README.md`)。H2 ランナーの live 実行のみ残件
-(MPX68K 未起動のため)。
+詳細とハッシュは `tests/README.md`)。H2 ランナーは同日のレビュー修正後に実 MPX68K で 11/11 PASS。
 
 ## 7. CLI 行編集の ←/→/DEL 対応 (2026-11-21、E2 の実機検証から発覚した修正)
 

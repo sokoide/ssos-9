@@ -866,7 +866,7 @@ TEST(cli_edit_key_cursor_and_delete) {
     ASSERT_EQ(cursor, 1u);
     ASSERT_EQ(ss_cli_edit_key(0x3D00, line, &used, &cursor, cap), 1);
     ASSERT_EQ(cursor, 2u);
-    ASSERT_STR_EQ(output, "\b\bc");
+    ASSERT_STR_EQ(output, "\b\bb");
     /* DEL deletes forward at the cursor: "abc" -> "ab", the Human68k
      * prompt behavior. The tail reprint is empty, so the echo just erases
      * the removed character. */
