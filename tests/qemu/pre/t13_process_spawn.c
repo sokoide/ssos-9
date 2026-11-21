@@ -15,7 +15,7 @@
 
 static SSTask main_tcb;
 static uint8_t image[124];
-static uint8_t fake_keys[8];
+static uint16_t fake_keys[8];
 static uint8_t fake_key_head;
 static uint8_t fake_key_count;
 extern void ss_test_install_syscall_vector(void);
@@ -101,14 +101,14 @@ int _iocs_b_keysns(void) { return fake_key_count; }
 int _iocs_b_keyinp(void) {
     if (fake_key_count == 0)
         return 0;
-    uint8_t key = fake_keys[fake_key_head++ % sizeof(fake_keys)];
+    uint16_t key = fake_keys[fake_key_head++ % (sizeof(fake_keys) / sizeof(fake_keys[0]))];
     fake_key_count--;
     return key;
 }
 
-static void push_key(uint8_t key) {
+static void push_key(uint16_t key) {
     uint8_t tail =
-        (uint8_t)((fake_key_head + fake_key_count) % sizeof(fake_keys));
+        (uint8_t)((fake_key_head + fake_key_count) % (sizeof(fake_keys) / sizeof(fake_keys[0])));
     fake_keys[tail] = key;
     fake_key_count++;
 }
@@ -896,14 +896,12 @@ int main(void) {
     push_key('B');
     push_key(27);
     run_ticks(80);
-    push_key('~');
-    push_key('2');
+    push_key(0x6400);
     run_ticks(20);
     if (ss_cli_console_mux_active() != 1)
         fail("editor key switch away");
     run_ticks(80);
-    push_key('~');
-    push_key('1');
+    push_key(0x6300);
     run_ticks(20);
     if (ss_cli_console_mux_active() != 0)
         fail("editor key switch back");

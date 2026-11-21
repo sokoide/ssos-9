@@ -86,12 +86,10 @@ static int next_cluster(SSFat12* v, uint16_t cluster, uint16_t* next,
  * are case-insensitive, so match stored 8.3 names case-insensitively.
  * SSOS-9 always stores names it creates uppercase.
  *
- * Reserved directory-entry bytes 0x0C-0x15 (reverse-engineered layout,
- * pending confirmation on a real Human68k medium, review item X-03):
- * 0x0C-0x0D hold case flags for the stored name and 0x0E-0x15 hold the
- * 18+3 extended name of a long-named entry. Case-flag bytes are therefore
- * match-irrelevant; nonzero bytes in 0x0E-0x15 mark an extended-name entry
- * that must stay invisible to 8.3 lookup. */
+ * Human68k 3.02 puts the long-name suffix in bytes 0x0C-0x15, even
+ * when just one byte follows the eight-byte base name. Accept legacy
+ * low-valued metadata in 0x0C-0x0D, but reject name bytes there or any
+ * nonzero byte in the rest of the suffix field. */
 static uint8_t up_ascii(uint8_t c) {
     return (c >= 'a' && c <= 'z') ? (uint8_t)(c - ('a' - 'A')) : c;
 }
@@ -160,9 +158,7 @@ int ss_fat_locate(SSFat12* v, const char* path, SSFatLocation* loc) {
                     while (j < 11 && up_ascii(e[j]) == wanted[j]) j++;
                     if (j != 11) continue;
                     if (v->human68k) {
-                        /* 0x0C-0x0D are case flags (match-irrelevant);
-                         * nonzero 0x0E-0x15 marks an 18+3 extended-name
-                         * entry that a plain 8.3 lookup must not see. */
+                        if (e[12] >= 0x20u || e[13] >= 0x20u) continue;
                         for (j = 14; j < 22 && !e[j]; j++) {}
                         if (j != 22) continue;
                     }

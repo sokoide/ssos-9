@@ -24,42 +24,19 @@ int main(void) {
     assert(ss_mux_key_pop(&mux, 1) == 'b');
     assert(ss_mux_key_pop(&mux, 0) == 'a');
     assert(ss_mux_key_pop(&mux, 0) == -1);
-    uint8_t prefix = 0;
-    /* Ctrl-] (0x1d) is the other mux prefix; the emulated IOCS keyboard
-     * cannot deliver it, so this unit path is its only coverage. */
-    assert(ss_mux_key_event(&mux, &prefix, 0x1d) == 0 && prefix == 0x1d);
-    /* active is window 1 already, so selecting 2 again is a no-op; then a
-     * real switch back to window 1 (index 0) and a non-digit after the
-     * prefix must deliver the prefix key followed by the key itself. */
-    assert(ss_mux_key_event(&mux, &prefix, '2') == 0 && mux.active == 1);
-    assert(prefix == 0);
-    assert(ss_mux_key_event(&mux, &prefix, 0x1d) == 0 && prefix == 0x1d);
-    assert(ss_mux_key_event(&mux, &prefix, '1') == 1 && mux.active == 0);
-    assert(ss_mux_key_event(&mux, &prefix, 0x1d) == 0 && prefix == 0x1d);
-    assert(ss_mux_key_event(&mux, &prefix, 'x') == 0 && prefix == 0);
-    assert(ss_mux_key_pop(&mux, 0) == 0x1d);
-    assert(ss_mux_key_pop(&mux, 0) == 'x');
-    assert(ss_mux_key_event(&mux, &prefix, '~') == 0 && prefix == '~');
-    assert(ss_mux_key_event(&mux, &prefix, '3') == 1 && mux.active == 2);
-    assert(ss_mux_key_event(&mux, &prefix, '~') == 0);
-    assert(ss_mux_key_event(&mux, &prefix, '~') == 0 && prefix == 0);
-    assert(ss_mux_key_pop(&mux, 2) == '~');
-    assert(ss_mux_key_event(&mux, &prefix, 0x6300) == 1 && mux.active == 0);
+    assert(ss_mux_key_event(&mux, 0x6400) == 0 && mux.active == 1);
+    assert(ss_mux_key_event(&mux, 0x6500) == 1 && mux.active == 2);
+    assert(ss_mux_key_event(&mux, 0x6300) == 1 && mux.active == 0);
+    const uint16_t input[] = {0x1d, '2', '~', '3', 0x3b00};
+    for (unsigned i = 0; i < sizeof(input) / sizeof(input[0]); i++)
+        assert(ss_mux_key_event(&mux, input[i]) == 0 && mux.active == 0);
+    for (unsigned i = 0; i < sizeof(input) / sizeof(input[0]); i++)
+        assert(ss_mux_key_pop(&mux, 0) == input[i]);
     for (unsigned i = 0; i < SS_MUX_KEY_CAPACITY; i++)
         assert(ss_mux_key_push(&mux, (uint8_t)i) == 0);
-    assert(ss_mux_key_push(&mux, 0) == -1);
-    /* A pending prefix plus a full queue: the prefix itself is retained
-     * (a switch consumes no queue slot) but pushing it into a full queue
-     * fails and the event is reported as an error. */
-    assert(ss_mux_key_event(&mux, &prefix, '~') == 0 && prefix == '~');
-    assert(ss_mux_key_event(&mux, &prefix, '3') == 1 && mux.active == 2);
-    assert(prefix == 0);
-    /* Back to the window whose queue is full, then a non-digit after the
-     * prefix: delivering the prefix into the full queue must fail. */
-    assert(ss_mux_key_event(&mux, &prefix, '~') == 0 && prefix == '~');
-    assert(ss_mux_key_event(&mux, &prefix, '1') == 1 && mux.active == 0);
-    assert(ss_mux_key_event(&mux, &prefix, '~') == 0 && prefix == '~');
-    assert(ss_mux_key_event(&mux, &prefix, 'x') == -1);
+    assert(ss_mux_key_event(&mux, 'x') == -1);
+    assert(ss_mux_key_event(&mux, 0x6500) == 1 && mux.active == 2);
+    assert(ss_mux_key_event(&mux, 0x6300) == 1 && mux.active == 0);
     for (unsigned i = 0; i < SS_MUX_KEY_CAPACITY; i++)
         assert(ss_mux_key_pop(&mux, 0) == (int)i);
     assert(ss_mux_select(&mux, SS_MUX_WINDOWS) == -1);

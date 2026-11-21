@@ -313,6 +313,9 @@ finish() { # EXIT trap: eject, integrity checks, one-line summary.
     exit "$result"
 }
 
+# Host tests source the same recovery functions without touching the emulator.
+[[ $ZSH_EVAL_CONTEXT == toplevel ]] || return 0
+
 # Preflight: MPX68K, monitor socket, tools, build artifacts.
 typeset -a mpids=(${(f)"$(pgrep -f "$APP.app/Contents/MacOS/$APP( |\$)")"})
 (( ${#mpids} >= 1 )) || environment_fail "$APP is not running (start it, boot Human68k from FD0, wait for A:)"
@@ -406,7 +409,6 @@ type_text 'a'
 wait_screen '0061' 10 07-key-a ||
     gate_fail G7 'key a did not report KEY: 0061' "$s"
 gate_pass G7 'KEY: 0061 after key a'
-
 print '== H2 G8: key q exits with status 0 =='
 type_text 'q'
 # Vision occasionally recognizes Latin I as Cyrillic І.

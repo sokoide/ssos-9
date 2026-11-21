@@ -143,8 +143,7 @@ static void wait_console(const char* needle) {
 
 /* Types "~<digit>" and waits for the multiplexer to select the window. */
 static void switch_screen(uint8_t window) {
-    push_key('~');
-    push_key((uint8_t)('1' + window));
+    push_key((uint16_t)((0x63u + window) << 8));
     for (unsigned i = 0; i < 400; i++) {
         if (ss_cli_console_mux_active() == window) {
             run_ticks(40);

@@ -53,7 +53,7 @@ int ss_mux_write(SSMux* mux, uint8_t window, const uint8_t* data, uint32_t size)
 int ss_mux_key_push(SSMux* mux, uint16_t key);
 int ss_mux_key_pop(SSMux* mux, uint8_t window);
 /* Feed one IOCS key event; returns 1 when the active window changes. */
-int ss_mux_key_event(SSMux* mux, uint8_t* prefix, uint16_t event);
+int ss_mux_key_event(SSMux* mux, uint16_t event);
 int ss_mux_clear(SSMux* mux, uint8_t window);
 int ss_mux_locate(SSMux* mux, uint8_t window, uint8_t x, uint8_t y);
 

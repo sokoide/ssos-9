@@ -8,7 +8,6 @@
 
 static uint8_t console_busy;
 static uint8_t mux_enabled;
-static uint8_t mux_prefix;
 static SSMux mux;
 
 static void redraw(void) {
@@ -67,7 +66,6 @@ void ss_cli_console_mux_enable(void) {
     ss_mux_init(&mux);
     (void)ss_mux_set_rows(&mux, region.rows);
     (void)ss_mux_set_columns(&mux, region.columns);
-    mux_prefix = 0;
     mux_enabled = 1;
     redraw();
     ss_iocs_unlock();
@@ -201,8 +199,8 @@ int ss_cli_console_read_key(void) {
     } else {
         while (_iocs_b_keysns() > 0) {
             if (mux.windows[mux.active].key_count >=
-                SS_MUX_KEY_CAPACITY - (mux_prefix ? 1u : 0u)) break;
-            int event_result = ss_mux_key_event(&mux, &mux_prefix,
+                SS_MUX_KEY_CAPACITY) break;
+            int event_result = ss_mux_key_event(&mux,
                                                 (uint16_t)_iocs_b_keyinp());
             if (event_result < 0) break;
             if (event_result > 0) redraw();

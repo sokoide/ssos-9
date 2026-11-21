@@ -202,7 +202,7 @@ X-01は静的な対象範囲確認を先行し、安全な測定手順が確定�
 | F-01 | 完了 | `lk_obj_header` 全フィールド個別上限(`LINK_RELOC_MAX=4096` 隣接で 4095)+ layout 減算形。`tests/unit/test_link_wrap.c` 34 checks、ASan/UBSan クリーン、旧実装への対照実験で UBSan が OOB を検出 |
 | B-01 | 完了 | linker.ld ASSERT(0x43C00)、makedisk OS 上限 211,968 検査、boot コメント修正。境界値実測(211,968 受理/211,969 拒否) |
 | B-02 | 完了 | NULL 初期化、boot>1024 エラー、`%u`。open をサイズ検査後に移動し過大入力時に出力を生成しない設計に |
-| F-02 | 実装済み・媒体互換性未確認 | スキップ条件を e[14..21] 非ゼロのみに狭める。ケースフラグ付きエントリ発見・18+3 不可視のテスト追加。実バイト配置は X-03 待ち |
+| F-02 | 実装済み・媒体互換性未確認 | スキップ条件を e[14..21] 非ゼロのみに狭める。ケースフラグ付きエントリ発見・18+3 不可視のテスト追加。実バイト配置は2026-11-21にX-03で採取。継続は `0x0C` から始まり、9・10文字名の誤一致も修正。採取結果はカバレッジ計画§8 |
 | F-03 | 実装済み・媒体互換性未確認 | `fat_set` 全コピー書込、`ss_storage_fat_copies_match()` 共有、アタッチ不一致拒否(専用 probe 温存)。mkfs.fat 実イメージ + fsck 4/4。非原子契約を storage.h に文書化 |
 | K-01 | 完了 | `process_orphan[]` + `ss_process_reap_orphans()`(REAPING 中は触らない)。shell_loop と前景待ちループから呼出。通常の子の wait 結果を壊さないことを検証 |
 | T-01 | 完了 | check-context.py 全面再実装: 関数全文比較(handler/switch 含む)、EOI は厳密 4 行パターンのみ正規化+件数アサート(3==3==3)、`--selftest` で 6 種改変検出、`tests/Makefile test-context` 経由で test/verify に自動組み込み |

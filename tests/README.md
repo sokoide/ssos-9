@@ -350,7 +350,7 @@ and stays a manual check), and C3 (F1/F2/F3 switching retained and restored
 each window's output) all passed against standalone SHA-256
 `6c6cf6c5cd7389d337e3a02cb224aa22d87c02b4dfff50c84e419e6e31cc7058`.
 C4's initial Ctrl-]/tilde attempt exposed that IOCS keyboard injection does
-not reliably deliver those prefix bytes. The XEiJ test now exercises F1/F2/F3
+not reliably deliver those prefix bytes. The supported window selectors are F1/F2/F3. C4 exercises F1/F2/F3
 only and verifies window selection and retained output; the unsupported
 shortcuts are omitted from the on-screen help. XEiJ `typekey &` also drops the
 ampersand, so the script sends it as shift+6. C5 and D2-D4 are implemented

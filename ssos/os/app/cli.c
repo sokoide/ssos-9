@@ -561,7 +561,7 @@ static void start_mux(void) {
     if (!mux_started) {
         mux_started = 1;
         ss_cli_console_mux_enable();
-        print("Multiplexer: F1/F2/F3 or Ctrl-] and a digit to switch windows.\r\n");
+        print("Multiplexer: F1/F2/F3 to switch windows.\r\n");
     }
     for (uint8_t id = 1; id < SS_PROCESS_CONSOLE_COUNT; id++) {
         SSProcessSnapshot existing;

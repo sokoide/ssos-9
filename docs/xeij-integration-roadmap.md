@@ -35,7 +35,7 @@
 | --- | --- | --- |
 | Human68k起動と復帰、XDF IPL | a2、a3、h5 | 同じHuman68kセッションで起動・終了を反復し、終了後に入力とディスクアクセスを確認。デバッガ等でTimer Dの所有レジスタとベクタを起動前後に採取し復元を比較。IPLではPID 1の終了拒否後も操作可能であることを確認 |
 | MFP Timer Dと実割込み | b1–b4、f1、g1、h6 | 単調時計でtick増分を測定し、固定プロファイルで200 Hzの許容範囲を適用。CPU占有中に別タスクと入力が進むことを観測し、連続切替後にタスク・arenaが基準へ戻ることを確認 |
-| IOCS入力・画面・mux | c1–c5、f2、h3 | 実キー入力のコード、修飾キー、Ctrl-C配送先、長い出力と各画面の再描画を確認。mux切替はF1/F2/F3で確認する。`~1`〜`~3` と Ctrl-]+数字はXEiJのIOCS入力経路で正しく届かないため、XEiJの自動化では用いない |
+| IOCS入力・画面・mux | c1–c5、f2、h3 | 実キー入力のコード、修飾キー、Ctrl-C配送先、長い出力と各画面の再描画を確認。mux切替のF1/F2/F3を確認する |
 | IOCSフロッピー・FAT12 | 対象外 (MPX68K手動) | MPX68K FDD GUIでFD1へ専用画像を挿入し、Human68k C:からSSOS-9を起動。`load 1` と実モジュール起動を確認。手順・ハッシュは `tests/README.md` |
 | IOCS SCSI・Human68k形式HDD | d1–d4、h4、h5 | 専用複製で作成・上書き・読出しを行い、ゲスト停止後にホストから内容と対象外ファイルを照合。別パーティションを保全すること、未接続または未対応媒体で拒否することを確認。対応する両起動経路を通す |
 | 実画面・実媒体を伴うアプリ通し | d2–d4、e1–e3、f2 | 実キー操作で編集・保存・再読込し、asm/ldの出力をホストの期待バイト列と照合。ディスクfallbackで起動したプログラムの出力を確認。未定義シンボルでは出力が生成されずシェルが継続することを判定 |
@@ -74,6 +74,6 @@ c4は専用XEiJプロファイルでF1/F2/F3を使った自動試験がPASS。h2
 - 自動24ケースの起動前に、専用iniの媒体・HFS指定を複製台帳と照合する。元画像への差し戻し、元画像との同一inode、専用領域外の共有指定を検出した場合は、ケースを起動せずに終了する。専用XEiJのiniで照合が通り、元画像を指すiniをホストテストで拒否することを確認した。
 - 現行ビルド・同一専用プロファイルでの `make test-emulator-automated` は24/24、終了コード0、総時間2,285.30秒。元ini・元HDD・書込対象外の複製HDDは実行前後でハッシュが一致した。XEiJ終了後、対象ファイルの内容 `world` と対象パーティション外の一致を再確認した。証跡は `build/xeij/results/2026-11-18-sol/full-24/` と `d1-full-offline.log`。最終 `make verify` も合格した。30回／10回の反復実行と中央値・p95受け入れ判定を行う `tools/xeij-benchmark.py` および `make test-emulator-benchmark[-short|-full]` は実装済み。実測と速度受け入れ判定は未実施。
 
-- 追加確認: 専用XEiJプロファイルの `c4` はF1/F2/F3でPASSし、画面2の `mem` と画面3の `ps`、F1復帰時の表示保持を確認。画面バナーは `Multiplexer: F1/F2/F3 or Ctrl-] and a digit to switch windows.`。
+- 追加確認: 専用XEiJプロファイルの `c4` はF1/F2/F3でPASSし、画面2の `mem` と画面3の `ps`、F1復帰時の表示保持を確認。現行仕様では画面バナーに F1/F2/F3 を案内する。
 - Q2実装: QEMU t15でIOCS領域を80×31に設定し、mux有効中のCONSOLE_SIZEが80×31を返すこと、実editorがstatus行29とcommand行30を使うことを検証。`source ~/.elf2x68k && make test-qemu` は16/16 PASS。
 - H2はMPX68Kで実施。keywitchは `keywitch -r` を実行しないと `:` を入力できなかった。FDDメニューからDrive 1へ専用 `console.xdf` を挿入するとHuman68kでは `C:` として見え、`dir c:` で `CONSOLE.S9M` を確認。SS9CON.XからSSOS-9を起動し、`load 1 console.s9m`、`run console`、`KEY: 0061`、q終了、Human68k復帰までPASS。元画像のSHA-256は `c7c642ff...d6d6` で実行前後一致。書込み可能な専用画像SHA-256は `beefa514...c81`。

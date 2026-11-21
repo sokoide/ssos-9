@@ -6,18 +6,94 @@
 #include <string.h>
 
 static uint8_t* disk;
+static int disk_bytes = 10240000;
 static int block_bytes = 512;
 static int fail_lba = -1;
 static int rd(int lba, int count, int target, int code, void* out) {
-    if (lba < 0 || lba >= 10240000 / block_bytes || count != 1 || target != 0 || code != (block_bytes == 512 ? 1 : 2)) return -1;
+    if (lba < 0 || lba >= disk_bytes / block_bytes || count != 1 || target != 0 || code != (block_bytes == 512 ? 1 : 2)) return -1;
     memcpy(out, disk + (uint32_t)lba * (uint32_t)block_bytes, (size_t)block_bytes); return 0;
 }
 static int wr(int lba, int count, int target, int code, const void* in) {
-    if (lba < 0 || lba >= 10240000 / block_bytes || count != 1 || target != 0 || code != (block_bytes == 512 ? 1 : 2) || lba == fail_lba) return -1;
+    if (lba < 0 || lba >= disk_bytes / block_bytes || count != 1 || target != 0 || code != (block_bytes == 512 ? 1 : 2) || lba == fail_lba) return -1;
     memcpy(disk + (uint32_t)lba * (uint32_t)block_bytes, in, (size_t)block_bytes); return 0;
 }
 static void b16(uint8_t* p, uint16_t n) { p[0] = n >> 8; p[1] = n; }
 static void b32(uint8_t* p, uint32_t n) { p[0] = n >> 24; p[1] = n >> 16; p[2] = n >> 8; p[3] = n; }
+static void test_human68k_captured_entries(void) {
+    /* Human68k 3.02 COPY on an XEiJ HDS clone, 2026-11-21.
+     * See docs/test-coverage-and-speedup-plan.md for the byte evidence. */
+    static const uint8_t entries[][32] = {
+        {0x70, 0x32, 0x73, 0x6d, 0x61, 0x6c, 0x6c, 0x20,
+         0x62, 0x69, 0x6e, 0x20, 0x00, 0x00, 0x00, 0x00,
+         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x7c,
+         0x75, 0x5d, 0xb2, 0x23, 0xb8, 0x0b, 0x00, 0x00},
+        {0x70, 0x32, 0x6c, 0x6f, 0x6e, 0x67, 0x66, 0x69,
+         0x62, 0x69, 0x6e, 0x20, 0x6c, 0x65, 0x6e, 0x61,
+         0x6d, 0x65, 0x61, 0x62, 0x63, 0x00, 0x11, 0x7c,
+         0x75, 0x5d, 0xc3, 0x23, 0xb8, 0x0b, 0x00, 0x00},
+        {0x70, 0x32, 0x61, 0x62, 0x63, 0x31, 0x32, 0x33,
+         0x62, 0x69, 0x6e, 0x20, 0x78, 0x00, 0x00, 0x00,
+         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x73, 0x7c,
+         0x75, 0x5d, 0xc2, 0x23, 0xb8, 0x0b, 0x00, 0x00},
+        {0x70, 0x32, 0x61, 0x62, 0x63, 0x31, 0x32, 0x34,
+         0x62, 0x69, 0x6e, 0x20, 0x79, 0x7a, 0x00, 0x00,
+         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x73, 0x7c,
+         0x75, 0x5d, 0xc7, 0x23, 0xb8, 0x0b, 0x00, 0x00},
+    };
+    static const char record[] = "SSOS-9 Human68k media fixture\n";
+    block_bytes = 1024;
+    disk_bytes = 19000 * block_bytes;
+    disk = calloc(1, (size_t)disk_bytes);
+    assert(disk);
+    memcpy(disk, "X68SCSI1", 8);
+    uint8_t* table = disk + 2u * 1024u;
+    memcpy(table, "X68K", 4);
+    memcpy(table + 16, "Human68k", 8);
+    b32(table + 24, 32);
+    b32(table + 28, 18900);
+    uint8_t* boot = disk + 32u * 1024u;
+    b16(boot + 0x12, 1024);
+    boot[0x14] = 2;
+    boot[0x15] = 2;
+    b16(boot + 0x16, 1);
+    b16(boot + 0x18, 512);
+    boot[0x1c] = 0xf7;
+    boot[0x1d] = 19;
+    b32(boot + 0x1e, 18900);
+    b32(boot + 0x22, 32);
+    uint8_t* fat = disk + 33u * 1024u;
+    memcpy(fat, "\xf7\xff\xff\xff", 4);
+    memcpy(fat + 19u * 1024u, fat, 4); /* Captured FAT2 words are zero. */
+    b16(fat + 9138u * 2u, 0x23c1);
+    b16(fat + 9153u * 2u, 0xffff);
+    b16(fat + 9155u * 2u, 0x23c4);
+    b16(fat + 9156u * 2u, 0xffff);
+    b16(fat + 9154u * 2u, 0x23c6);
+    b16(fat + 9158u * 2u, 0xffff);
+    b16(fat + 9159u * 2u, 0x23c8);
+    b16(fat + 9160u * 2u, 0xffff);
+    uint8_t* root = disk + 71u * 1024u;
+    memcpy(root, entries, sizeof(entries));
+    uint8_t expected[3000], actual[3000];
+    for (unsigned i = 0; i < sizeof(expected); i++)
+        expected[i] = (uint8_t)record[i % (sizeof(record) - 1u)];
+    uint8_t* data = root + 16u * 1024u;
+    memcpy(data + (9138u - 2u) * 2048u, expected, 2048);
+    memcpy(data + (9153u - 2u) * 2048u, expected + 2048, sizeof(expected) - 2048);
+
+    SSScsiDevice device = {rd, wr, 19000, 0, 19000, 1024, 0};
+    SSScsiVolume volume = {0};
+    assert(ss_scsi_volume_attach(&volume, &device) == 0);
+    assert(ss_storage_read(&volume.storage, "P2SMALL.BIN", actual, sizeof(actual)) ==
+           (int)sizeof(actual));
+    assert(!memcmp(actual, expected, sizeof(actual)));
+    SSFatLocation loc;
+    assert(ss_fat_locate(&volume.storage.volume, "P2LONGFI.BIN", &loc) == 0 && !loc.found);
+    assert(ss_fat_locate(&volume.storage.volume, "P2ABC123.BIN", &loc) == 0 && !loc.found);
+    assert(ss_fat_locate(&volume.storage.volume, "P2ABC124.BIN", &loc) == 0 && !loc.found);
+    free(disk);
+}
+
 int main(void) {
     disk = calloc(10000, 1024); assert(disk);
     memcpy(disk, "X68SCSI1", 8);
@@ -138,9 +214,8 @@ int main(void) {
                             (const uint8_t*)"WORLD", 5, 1) == 0);
     assert(ss_storage_read(&volume.storage, "TEST/INTEL", out, 8) == 5 &&
            !memcmp(out, "WORLD", 5));
-    /* F-02: real Human68k media keep case flags in reserved bytes 0x0C-0x0D
-     * and the 18+3 extended name in 0x0E-0x15. Case flags alone must not
-     * hide an entry; extended-name bytes must (layout pending X-03). */
+    /* Low-valued metadata stays tolerated in 0x0C-0x0D. The captured
+     * Human68k entries also cover short and long name suffixes. */
     unsigned intel_off = 0;
     for (unsigned i = 0; i < 1024; i += 32)
         if (!memcmp(dir + i, "intel      ", 11)) { intel_off = i; break; }
@@ -170,6 +245,7 @@ int main(void) {
     assert(next_dir[0] == 0);
     assert(ss_storage_read(&volume.storage, "TEST/BOUND.TXT", out, 8) == 5 && !memcmp(out, msg, 5));
     free(disk);
+    test_human68k_captured_entries();
     puts("Human68k storage tests passed");
     return 0;
 }

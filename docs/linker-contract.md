@@ -188,7 +188,7 @@ tests/qemu/pre/
 - ホスト driver (`make -C tests test-link-host`): `tests/unit/link_host_main.c` が stdio 版 LinkIo を束縛し、ターゲットと同じ CLI で `link-host OUTPUT IN1 [IN2...]` として動く。単体試験 (`test_asm_*` に相当する手組みベクトル) の代わりに、次のゴールデンが検査を担う。
 - ゴールデン (`make -C tests test-link-golden`、`tests/link_golden.py`): 2 レベル。(1) クロス比較: `tests/asm/link/golden/gcross` を `link-host` と `m68k-xelf-ld` の両方でリンクし text バイト一致を要求する。比較可能なのは限定 profile (text 連結と PC16 折り畳み、定数 data、全オブジェクトの text 長が 4 の倍数 — GNU ld は .text を 4 整列する) のみ。(2) self-vector: スクリプト内の独立 mini-linker が、サンプル 3 本 (A5 変位折り畳み、跨ぎ PC16、CODE32 fixup を含む) の期待 S9M1 (header 全 field、code、init data、fixup、CRC) を計算して出力とバイト比較。`badmain.s` は未解決シンボル診断と出力ファイル未作成を要求する。
 - QEMU on-target (`tests/qemu/pre/t14_link_run.c`): FAT16 上にソースを保存し、実 S9M1 `asm` で START.O/MAIN.O/OBJ.O/BADMAIN.O を生成、実 `ld` で (1) `PROG.S9M` を生成してホストゴールデンと全バイト比較、(2) 登録して spawn し exit status 27 と `LNK\n` 出力を確認、(3) 未解決シンボルの負例でエラーメッセージと出力ファイル未作成を確認、(4) unload 後の arena 復帰を確認する。registry 未登録の `PROG` に対する CLI `run` の FAT16 フォールバック (`ssos/os/app/cli.c` の `load_disk_module`) も t14 が通す。
-- mux 統合 (完了条件、t15): 画面 1 で `edit` により `START.S` を新規作成・保存 (残りのリンク入力 `MAIN.S`/`OBJ.S` は fixture として事前保存)、画面 2 で `asm` → `ld`、画面 3 で `run`、という mux キーイベント (`~1`/`~2`/`~3`) をまたぐ一連の操作を QEMU で検証する。Phase 3 の t13 が edit/asm で採る駆動方法 (実 S9M1 + mux キーイベント + FAT16) を流用する。
+- mux 統合 (完了条件、t15): 画面 1 で `edit` により `START.S` を新規作成・保存 (残りのリンク入力 `MAIN.S`/`OBJ.S` は fixture として事前保存)、画面 2 で `asm` → `ld`、画面 3 で `run`、という mux キーイベント (F1/F2/F3) をまたぐ一連の操作を QEMU で検証する。Phase 3 の t13 が edit/asm で採る駆動方法 (実 S9M1 + mux キーイベント + FAT16) を流用する。
 - 実機検証は別途記録する (本契約の範囲では未実施)。
 
 ## 設計判断と代替案

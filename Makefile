@@ -71,14 +71,17 @@ loc:
 	gocloc --not-match-d='node_modules|build|\.git' .
 
 # Native C tests and QEMU asm samples. See tests/README.md.
-test: test-xeij-transport test-xeij-benchmark
+test: test-xeij-transport test-xeij-benchmark test-mpx68k-h2-host
 	$(MAKE) -C tests test
 
-.PHONY: test-xeij-transport test-xeij-benchmark
+.PHONY: test-xeij-transport test-xeij-benchmark test-mpx68k-h2-host
 test-xeij-transport:
 	python3 tests/xeij_transport_test.py
 test-xeij-benchmark:
 	python3 tests/xeij_benchmark_test.py
+
+test-mpx68k-h2-host:
+	python3 tests/mpx68k_h2_test.py
 
 test-asm:
 	$(MAKE) -C tests test-asm

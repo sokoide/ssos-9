@@ -45,7 +45,7 @@ MS-DOS 型 FAT12 に限る。実機・Human68K 形式との互換性は未検証
 - `trace`: 直近 16 件の task create/start/sleep/wake/switch/exit を表示
 - `clear`: IOCS テキスト画面を消去
 - `version`: OS 名を表示
-- `mux`: 3 つの全画面コンソールを起動。F1/F2/F3、または Ctrl-] の後に 1～3 を押して画面を選択する。
+- `mux`: 3 つの全画面コンソールを起動。F1/F2/F3を押して画面を選択する。
 - `exit`: `.x` は Human68K へ戻る。`.xdf` は初期プロセスの終了を拒否する
 
 末尾の `&` は全コマンドで共通に解析し、直前の空白は不要です。

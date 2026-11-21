@@ -38,7 +38,7 @@ Q1 追加 (QEMU 18/18)。H2 はMPX68K手動試験でPASS、XEiJ自動化対象�
 
 | ID | 内容 | 根拠 | 優先度 | 状態 |
 | --- | --- | --- | --- | --- |
-| U1 | mux: 0x1d (Ctrl-]) プレフィックス経路、キュー満杯 + prefix 保留の相互作用 (`CAPACITY - (prefix?1:0)` ガード)。c4 で実 IOCS 経路が不能になった分、unit が唯一の守り | test_mux は `~` のみ | P2 | **実装・PASS** (no-op switch・実switch・非 digit push・満杯 push 失敗) |
+| U1 | F1/F2/F3による切替、一般キーの配送、満杯時の拒否 | 旧プレフィックスは廃止 | P2 | unitで検査 |
 | U2 | scheduler: trace リングのラップアラウンド (>16 イベントで最古 16 件が oldest-first)。B2 は実機暗黙確認のみ | 決定論的検証欠落 | P2 | **実装・PASS** (create+start 10 ペア→CREATE 8 + START 8) |
 | U3 | human68k_volume 陰性 8 ケースの内訳監査 (fat_start=0、clusters<4085、total>partition、media=0xf7 以外等)、抜けがあれば補填 | 現状でも充分の可能性 | P3 | **実装・PASS**: 監査の結果 11 分岐が未カバーと判明し補填 (disk id、table id、partition 名、fat_start=0、root_entries=0、total>partition、media、hidden 不一致、clusters<4085、spc 非べき乗、fat_count=0 + flags=2 の正当ケース)。host 46/46 |
 
@@ -121,7 +121,7 @@ make test-emulator-benchmark-compare-full
 | U4 | `ss_cli_execute_line` 直下メッセージ 4 ケース: Command too long (96/95 境界含む) / Too many arguments・Syntax error / 空行 / Unknown command の文言と exit status 127/2 | unit | **PASS** (native 55/55、ASan/UBSan でも 55/55) |
 | E3 | c1 に `uptime`/`modules`/`clear`/`version` のスポット確認を追加 (help 表の全コマンドに実IOCS経路を1回以上与える) | XEiJ | **実行済み PASS** (2026-11-21。modules の期待値は `counter builtin` 行 — hello は run fallback で registry 画像ではない) |
 | E2 | CLI エラー応答は unit (U4)、BS/←/DEL の実キー配信と行編集エコーは opt-in `c6`。実測: `typekey bs` は配信可、←/DEL は pipe に名前が無いが host key event (osascript) で IOCS 0x3B00/0x3D00/0x3700 が届く。当初見込みと異なり 0x7f は実キーでは発生せず DEL は scan 0x37 | unit+XEiJ | **実行済み PASS** (2026-11-21、行編集修正後のビルドで c6 PASS) |
-| M4 | Ctrl-] (0x1d) prefix の実キー配信。処理自体は unit (U1) と QEMU t15 の `~` prefix でカバー済み。残る確認点は現行 MPX68K フォークに Ctrl 状態転送が入っているか | (観察) | 未実施 |
+| M4 | Ctrl-]のキー配信 | エミュレータ | F1/F2/F3限定の仕様に変更し、受入対象から削除 |
 
 表現の修正: XEiJ の SCSI 512 バイトレコード→1024 論理合成経路は「現行構成では
 XEiJ が論理 1024 を返すため未観測」と記録し、「原理的に不可能」とは断定しない。
@@ -157,7 +157,7 @@ event で ←/DEL を含む編集を実キー確認 (PASS、修正後ビルド)�
 | --- | --- | --- |
 | P1 | CLIの行折り返し編集 | unitで列境界のカーソルとセル、QEMU t15でshell loopの左右・BS・DELと描画・コマンド結果、XEiJ c6でIOCSキー配信と実画面を検査する。 |
 | P1 | H1をXEiJ受入に組み込む | `make test-emulator-automated` でプローブ付きa2を必須化する。単独では `make test-emulator-h1`。a2の `mfp_check`、起動前の基準値、5回の復帰比較を証跡に残す。 |
-| P2 | Ctrl-]のゲスト配信 | XEiJ C5でホストキーから `0x1d` が生成されるか測り、届けばmux切替を検査する。XEiJで届かない場合はMPX68Kで確認する。 |
+| P2 | mux切替 | F1/F2/F3に限定。unit、QEMU、XEiJ C3/C4で確認する。 |
 | P2 | Human68k生成媒体との互換性 | XEiJの使い捨て媒体で小文字名・18+3名のエントリとFATコピーを採取し、ASCII 8.3照合と対象外エントリの判定をunit fixtureに固定する。 |
 | P2 | H2の異常終了処理 | ホストunitの模擬ソケットで媒体操作のエラー・応答欠落・RESUME失敗を注入し、RESUME試行と終了コードを検査する。 |
 | P3 | 明示範囲付き `smount` | QEMU t17で非ゼロSTART・明示BLOCKSの成功と不足範囲の拒否を検査する。非数値・桁あふれはunitに追加する。 |
@@ -170,3 +170,41 @@ XEiJでc6の折り返し編集とH1付きa2を対象実行し、両方PASS。a2�
 証跡は `build/xeij/results/tmpyu2djiuu/result.json`。
 `ssos9.x` SHA-256 は `9b87efa1bccaadd0d3b3d7b1a2da3e5e97b8e21b974237765a697286a6c1ded0`。
 修正ビルドでのXEiJ全26件、C2目視、MPX68K H2の通し受入は未実施。
+
+### P2実装・観測結果 (2026-11-21)
+
+| 対象 | 結果と再実行方法 |
+| --- | --- |
+| Ctrl-] | XEiJとMPX68Kで `0x001D` は未観測。利用者の仕様変更により画面切替はF1/F2/F3に限定し、観測用オプションを削除した。 |
+| Human68k媒体 | XEiJの専用HDD複製でHuman68k 3.02の `COPY` により小文字8.3と9・10・17文字のベース名を生成した。短名の `0x0C–0x15` はゼロ。長名の継続は `0x0C` から始まり、9文字目だけの名前は旧コードで先頭8文字に誤一致した。採取した4件をunitに固定し、短名の大文字検索・3000バイト読出しと長名の短縮エイリアス不可視を検証する。FAT1はビッグエンディアンで、対象チェーンのFAT2ワードは全てゼロだった。 |
+| H2異常経路 | `make test-mpx68k-h2-host` を `make test` に組み込んだ。模擬MonitorSocketで媒体操作のERR、EJECTFDD応答欠落、RESUME再試行、RESUME回復不能を検証し、コマンド順と終了コードを比較する。 |
+
+媒体の再採取は専用HDDへ `copy f:p2src.bin a:p2small.bin`、
+`a:p2abc123x.bin`、`a:p2abc124yz.bin`、`a:p2longfilenameabc.bin` を作り、
+XEiJ停止後に `python3 tools/human68k-media-evidence.py IMAGE.HDS p2` を実行する。
+採取時の入力は `SSOS-9 Human68k media fixture` にLFを付けた30バイトを100回連結したもの。
+証跡は `build/xeij/p2/media-evidence.json`、C5は
+`build/xeij/results/tmpd8zje9yv/result.json`、MPX68Kは
+`build/mpx68k-h2/results-20261121-153421/`。Shift-JIS名とリトルエンディアンFATの
+Human68k生成媒体は今回の観測対象外。
+
+修正後の `make verify` はPASS (QEMU 17/17、H2ホスト4件を含む)。
+同じ専用複製のXEiJで修正ビルドを起動し、`sread p2read.txt` が
+`P2PROBE` を返し、9文字名 `p2ninerxq.txt` を
+`sread p2ninerx.txt` で読めないことを確認した。
+画面証跡は `build/xeij/p2/short-name-read.txt` と
+`build/xeij/p2/long-name-rejected.txt`。
+この確認に使った `ssos9.x` のSHA-256は
+`554ef5c7a1804038e0720bf86ba51ca101ed7f464a71ae7320a2db40d6463656`。
+Ctrl-]観測とMPX68K H2はディレクトリエントリ修正前のP1ビルドで実行した。
+
+### F1/F2/F3限定後の確認 (2026-11-21)
+
+muxの画面選択はF1/F2/F3のみ。旧プレフィックスは一般のキーイベントとして
+配送する。F1/F2/F3による選択・表示保持はXEiJ c4、折り返し編集はc6でPASS。
+同じ `ssos9.x` (SHA-256
+`b40bd4b75507f03f2da17f64d2fa35f5ed60c95324b67e9b31fa708d92d1e8fc`)
+でMPX68K H2は11/11 PASS。`make verify` はPASS (QEMU 17/17を含む)。
+証跡は `build/xeij/results/tmpjohp0o_3/result.json` と
+`build/mpx68k-h2/results-20261121-154618/`。
+このビルドのXEiJ全26件 (H1付きa2を含む) とC2右下セルの目視は未実施。
