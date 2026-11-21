@@ -329,9 +329,10 @@ run_a2() {
 
     local before=''
     if [[ ${SSOS9_XEIJ_MFP_CHECK:-0} == 1 ]]; then
-        [[ -f "$XEI_J_STAGE/mfpstate.x" ]] || fail 'MFP probe missing from HFS stage'
+        [[ -f "$XEI_J_STAGE/mfpstate.x" ]] || environment_fail 'MFP probe missing from HFS stage'
         human68k_mfp_snapshot
         before=$MFP_SNAPSHOT
+        print "A2 baseline $before"
     fi
     for ((i = 1; i <= 5; i++)); do
         print "== A2 iteration $i =="
@@ -1034,9 +1035,38 @@ run_c6() {
     key return
     wait_command_result 'version' 'SSOS-9 CLI preemptive minimum' 10 ||
         fail 'c6: cursor keys and DEL did not edit the line' "$s"
+    # The mux caps its width at 80 columns. Include the two prompt
+    # columns to place z at the right edge and x on the next row.
+    type_cmd 'mux'
+    wait_screen 'Multiplexer:' 8 || fail 'c6: mux did not start' "$s"
+    type_cmd 'clear'
+    local wrap_prefix
+    wrap_prefix=$(printf 'version%70sz' '')
+    type_text "${wrap_prefix}x"
+    wait_line '> '"$wrap_prefix" 10 || fail 'c6: wrapped first row differs' "$s"
+    wait_line 'x' 8 || fail 'c6: wrapped second row differs' "$s"
+    host_keycode 123
+    host_keycode 123
+    host_keycode 124
+    host_keycode 117
+    key bs
+    local edit_deadline=$(( SECONDS + 8 ))
+    while true; do
+        snap
+        if screen_line "$s" '> version' &&
+            ! screen_line "$s" 'x' && ! screen_line "$s" '> '"$wrap_prefix"; then
+            break
+        fi
+        (( SECONDS < edit_deadline )) ||
+            fail 'c6: wrap-boundary edit did not erase both cells' "$s"
+        sleep 0.25
+    done
+    key return
+    wait_command_result 'version' 'SSOS-9 CLI preemptive minimum' 10 ||
+        fail 'c6: wrapped command did not execute' "$s"
     require 'c6 prompt alive' "$s" '>'
     ssos_exit
-    print 'PASS c6: BS, left/right cursor keys, and DEL reached the guest'
+    print 'PASS c6: BS, left/right cursor keys, and DEL, including mux line wrapping'
 }
 
 run_c2() {

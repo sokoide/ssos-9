@@ -94,7 +94,7 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 | C3 | mux 画面切替と保持 (F1〜F3) | `mux` → F2 で `help`、F3 で `ps`、F1 に戻る。各画面をコピー | 画面ごとの出力が保持され、戻った画面が復元される (t15 の実機相当) | P0 | ○ |
 | C4 | F1/F2/F3 による mux 画面選択と出力保持 | 画面 2 で `mem`、画面 3 で `ps`、F2/F1へ戻る | 選択した画面に切り替わり、画面2の出力が保持される | P1 | ○ |
 | C5 | 対話コンソールモジュール (CONSOLE_KEY) | `tests/target` の CONSOLE.S9M を `A:\TEST` に配置し、Human68k 形式 HDD をマウント → module 起動 → 各種キー送信 | `KEY: xxxx` 表示がキーごとに一致 (ASCII は下位 8 bit、特殊キーは scan<<8)。`q` で終了 | P2 | △ (モジュール配置) |
-| C6 | BS/←/→/DEL 行編集の実キー配信とエコー | `helq`+BS+`p` (→ help)、`versioz`+BS×2+`on` (→ version)、`clear` で前の応答を消去し、`version`+←×2+→+`z`+DEL+BS+`n` (→ version。←/→/DEL は osascript key code 123/124/117 の実キーイベント、IOCS 0x3B00/0x3D00/0x3700) | 各完成コマンドが実行される。制御パイプ (`typekey`/`presskey`) に ←/DEL の名前は無いが実キーイベントは届く (2026-11-21 実測。当初「DEL 配信不能」と結論したのは pipe 名の局限で、キー自体は存在する) | P2 | **実行済み PASS** (2026-11-21、修正後ビルド) |
+| C6 | BS/←/→/DEL 行編集の実キー配信とエコー | `helq`+BS+`p` (→ help)、`versioz`+BS×2+`on` (→ version)、`clear` で前の応答を消去し、`version`+←×2+→+`z`+DEL+BS+`n` (→ version。←/→/DEL は osascript key code 123/124/117 の実キーイベント、IOCS 0x3B00/0x3D00/0x3700) | 各完成コマンドが実行される。さらにmux有効時に80列目と次行の先頭を左右キーでまたぎ、DELとBSの後で両セルが消え、編集後のコマンドが実行される。制御パイプ (`typekey`/`presskey`) に ←/DEL の名前は無いが実キーイベントは届く (2026-11-21 実測。当初「DEL 配信不能」と結論したのは pipe 名の局限で、キー自体は存在する) | P2 | **実行済み PASS** (2026-11-21、修正後ビルド) |
 
 ### D. Human68k 形式 SCSI HDD の実 IOCS 読み書き
 
@@ -135,7 +135,7 @@ P2 = 既にユーザー手動実績があり自動化で回帰化するもの。
 
 | ID | 概要 | 手順 | 合格基準 | 状態 |
 | --- | --- | --- | --- | --- |
-| H1 | B5: Timer D・例外ベクタの終了時復元を直接比較 | `SSOS9_XEIJ_MFP_CHECK=1`でa2を実行し、Human68kプローブを起動前と各終了後に実行 | 2026-11-21拡張後: IERB/IMRB/TCDCR/TDDR (停止時) + IERA/IMRA/TACR/VR + Timer D・TRAP #0・#13・Timer A・KEY・CRTC($138/$13C) ベクタ一致。TADR は Timer A 動作カウンタのため比較対象外 | **実行済み PASS (旧項目 2026-11-18、拡張 15 項目で 5 反復 2026-11-21)** |
+| H1 | B5: Timer D・例外ベクタの終了時復元を直接比較 | `SSOS9_XEIJ_MFP_CHECK=1`でa2を実行し、Human68kプローブを起動前と各終了後に実行 | 2026-11-21拡張後: IERB/IMRB/TCDCR/TDDR (停止時) + IERA/IMRA/TACR/VR + Timer D・TRAP #0・#13・Timer A・KEY・CRTC($138/$13C) ベクタ一致。TADR は Timer A 動作カウンタのため比較対象外。受入targetはプローブを必須化し、単独実行は `make test-emulator-h1` | **実行済み PASS (旧項目 2026-11-18、拡張 15 項目で 5 反復 2026-11-21)** |
 | H2 | `load 1` 実フロッピ経路 | MPX68KでFD1に専用2HD画像を挿入し、Human68kのC:から起動・読出し。SSOS-9で `load 1 console.s9m` → `run console` | モジュールが `KEY: 0061` を表示し、qで終了、Human68kへ復帰。2026-11-21 から `tools/mpx68k-h2.sh` (`make test-mpx68k-h2`) が3クラスタ `load 1 edit.s9m` と load 負例を含む11ゲートを自動判定 (実 MPX68K で 11/11 PASS) | **MPX68K 自動 PASS (2026-11-21)**。XEiJ ini添付はディスク変更通知を再現できず不安定なため自動化対象外。手順とハッシュは `tests/README.md` |
 | H3 | Ctrl-C のウィンドウ間ルーティング | window 2 で foreground `run counter` → F1 → Ctrl-C → F2 確認 → F2 で Ctrl-C | 隠れたウィンドウの foreground は中断されず、自ウィンドウの Ctrl-C でのみ中断される (cli_wait.c はアクティブウィンドウのみ配送) | 実行済み PASS |
 | H4 | sread 境界 | edit で空ファイルと 286 バイトファイルを作成し `sread` | 空ファイルは 0 バイトでエラーなし、286 バイトは `maximum 256 bytes` で拒否 | 実行済み PASS |

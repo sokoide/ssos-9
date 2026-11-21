@@ -123,9 +123,9 @@ void ss_cli_console_print(const char* text) {
         while (text[size]) size++;
         uint8_t id = ss_process_current_console();
         uint32_t old_scroll = mux.windows[id].scroll_count;
-        (void)ss_mux_write(&mux, id, (const uint8_t*)text, size);
+        int wrapped = ss_mux_write(&mux, id, (const uint8_t*)text, size);
         if (id == mux.active) {
-            if (mux.windows[id].scroll_count != old_scroll) redraw();
+            if (wrapped || mux.windows[id].scroll_count != old_scroll) redraw();
             else _iocs_b_print(text);
         }
     }
@@ -136,8 +136,9 @@ void ss_cli_console_write(const uint8_t* bytes, uint32_t length) {
     ss_iocs_lock();
     uint8_t id = mux_enabled ? ss_process_current_console() : 0;
     uint32_t old_scroll = mux_enabled ? mux.windows[id].scroll_count : 0;
-    if (mux_enabled) (void)ss_mux_write(&mux, id, bytes, length);
-    if (mux_enabled && id == mux.active && mux.windows[id].scroll_count != old_scroll)
+    int wrapped = mux_enabled ? ss_mux_write(&mux, id, bytes, length) : 0;
+    if (mux_enabled && id == mux.active &&
+        (wrapped || mux.windows[id].scroll_count != old_scroll))
         redraw();
     else if (!mux_enabled || id == mux.active)
         for (uint32_t i = 0; i < length; i++)

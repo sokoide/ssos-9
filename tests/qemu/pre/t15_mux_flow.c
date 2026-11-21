@@ -478,6 +478,38 @@ int main(void) {
     push_key('\r');
     wait_console("SSOS-9 CLI preemptive minimum");
 
+    /* The prompt occupies two columns. Put z at column 79 and x at
+     * column 0 of the next row, then edit across that boundary. */
+    type_line("clear");
+    run_ticks(40);
+    for (const char* p = "version"; *p; p++) push_key((uint8_t)*p);
+    for (unsigned i = 0; i < 35; i++) push_key(' ');
+    run_ticks(40);
+    for (unsigned i = 0; i < 35; i++) push_key(' ');
+    push_key('z');
+    push_key('x');
+    run_ticks(40);
+    switch_screen(2);
+    ss_test_console_count = 0;
+    switch_screen(1);
+    if (ss_test_console_count != 81 ||
+        ss_test_console_bytes[79] != 'z' || ss_test_console_bytes[80] != 'x')
+        fail("wrapped CLI echo");
+    push_key(0x3B00);
+    push_key(0x3B00);
+    push_key(0x3D00);
+    push_key(0x3700);
+    push_key(0x08);
+    run_ticks(40);
+    switch_screen(2);
+    ss_test_console_count = 0;
+    switch_screen(1);
+    if (ss_test_console_count != 9 || !console_contains("> version"))
+        fail("wrapped CLI edit cells");
+    ss_test_console_count = 0;
+    push_key('\r');
+    wait_console("SSOS-9 CLI preemptive minimum");
+
     /* Reclaim: reap the mux shells, unload the tools, and require the
      * arena to return to its pre-mux baseline. */
     if (ss_process_kill(shells[0]) != SS_OK ||

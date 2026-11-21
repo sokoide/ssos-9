@@ -90,21 +90,28 @@ int ss_mux_write(SSMux* mux, uint8_t window_id, const uint8_t* data,
                  uint32_t size) {
     if (!mux || window_id >= SS_MUX_WINDOWS || (!data && size)) return -1;
     SSMuxWindow* window = &mux->windows[window_id];
+    int wrapped = 0;
     for (uint32_t i = 0; i < size; i++) {
         uint8_t c = data[i];
         if (c == '\r') window->x = 0;
         else if (c == '\n') newline(window, mux->rows);
         else if (c == '\b') {
             if (window->x) window->x--;
+            else if (window->y) {
+                window->y--;
+                window->x = mux->columns - 1u;
+                wrapped = 1;
+            }
         } else if (c >= 32 && c != 127) {
             window->cells[window->y][window->x++] = c;
             if (window->x == mux->columns) {
                 window->x = 0;
                 newline(window, mux->rows);
+                wrapped = 1;
             }
         }
     }
-    return 0;
+    return wrapped;
 }
 
 int ss_mux_key_push(SSMux* mux, uint16_t key) {

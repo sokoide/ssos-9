@@ -75,10 +75,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", type=Path, default=Path("build/xeij/results"))
     parser.add_argument("--require-profile", action="store_true")
+    parser.add_argument("--mfp-check", action="store_true",
+                        help="require the Human68k MFP snapshot probe for a2")
     parser.add_argument("cases", nargs="+")
     args = parser.parse_args()
     if any(re.fullmatch(r"[a-h][1-6]", case) is None for case in args.cases):
         parser.error("invalid case ID")
+
+    if args.mfp_check and "a2" not in args.cases:
+        parser.error("--mfp-check requires a2")
+    mfp_check = args.mfp_check or os.environ.get("SSOS9_XEIJ_MFP_CHECK") == "1"
 
     stage = Path(os.environ.get("SSOS9_XEIJ_STAGE", Path.home() / "tmp"))
     ini = Path(os.environ.get("SSOS9_XEIJ_INI", Path.home() / "XEiJ.ini"))
@@ -125,11 +131,14 @@ def main():
             break
         case = result["case"]
         result["status"] = "running"
+        if case == "a2":
+            result["mfp_check"] = mfp_check
         save_report(run_dir, report)
         stem = f"{index:02d}-{case}"
         log = run_dir / f"{stem}.log"
         env = {
             **os.environ,
+            "SSOS9_XEIJ_MFP_CHECK": "1" if mfp_check else "0",
             "SSOS9_XEIJ_COMMAND_LOG": str(run_dir / f"{stem}.keys.log"),
             "SSOS9_XEIJ_SCREEN_LOG": str(run_dir / f"{stem}.screen.txt"),
         }

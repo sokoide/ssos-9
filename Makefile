@@ -22,6 +22,7 @@ usage:
 	@echo "  make test-emulator    Run XEiJ integration tests against a running emulator"
 	@echo "                        (select with EMULATOR_TESTS=\"a2 b1\", list with make test-emulator-list)"
 	@echo "  make test-emulator-automated  Run all cases using a prepared disposable profile"
+	@echo "  make test-emulator-h1         Compare MFP snapshots using the staged probe"
 	@echo "  make test-emulator-soak       Run the 25-cycle process recovery case"
 	@echo "  make test-mpx68k-h2   Run the H2 FD1 real-floppy case on a running MPX68K"
 	@echo "                        (tools/mpx68k-h2.sh; needs monitor socket + OCR)"
@@ -112,14 +113,17 @@ EMULATOR_CORE_TESTS = a2 a3 b1 b2 b3 b4 c1 c2 c3 c4 e3 f1 g1 h3 h6
 EMULATOR_AUTOMATED_TESTS = $(EMULATOR_ALL_TESTS)
 EMULATOR_TESTS ?= $(EMULATOR_CORE_TESTS)
 
-.PHONY: test-emulator-core test-emulator-automated test-emulator-soak
+.PHONY: test-emulator-core test-emulator-automated test-emulator-soak test-emulator-h1
 test-emulator-core: EMULATOR_TESTS = $(EMULATOR_CORE_TESTS)
 test-emulator-soak: EMULATOR_TESTS = h6
 test-emulator-core test-emulator-soak: test-emulator
 test-mpx68k-h2:
 	tools/mpx68k-h2.sh
 test-emulator-automated:
-	python3 tools/xeij-suite.py --require-profile $(EMULATOR_AUTOMATED_TESTS)
+	python3 tools/xeij-suite.py --require-profile --mfp-check $(EMULATOR_AUTOMATED_TESTS)
+
+test-emulator-h1:
+	python3 tools/xeij-suite.py --mfp-check a2
 
 test-emulator-benchmark:
 	$(MAKE) test-emulator-benchmark-short

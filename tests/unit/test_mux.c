@@ -113,9 +113,20 @@ int main(void) {
     memset(line, 'W', 40);
     line[40] = 'Z';
     assert(ss_mux_clear(&mux, 1) == 0); /* set_columns cleared window 1 */
-    assert(ss_mux_write(&mux, 1, line, sizeof(line)) == 0);
+    assert(ss_mux_write(&mux, 1, line, sizeof(line)) == 1);
     assert(mux.windows[1].cells[0][0] == 'W');
     assert(mux.windows[1].cells[0][39] == 'W');
     assert(mux.windows[1].cells[1][0] == 'Z' && mux.windows[1].x == 1);
+    assert(ss_mux_write(&mux, 1, (const uint8_t*)"\b", 1) == 0);
+    assert(mux.windows[1].x == 0 && mux.windows[1].y == 1);
+    assert(ss_mux_write(&mux, 1, (const uint8_t*)"\b", 1) == 1);
+    assert(mux.windows[1].x == 39 && mux.windows[1].y == 0);
+    assert(ss_mux_write(&mux, 1, (const uint8_t*)"B", 1) == 1);
+    assert(mux.windows[1].cells[0][39] == 'B');
+    assert(mux.windows[1].cells[1][0] == 'Z');
+    assert(mux.windows[1].x == 0 && mux.windows[1].y == 1);
+    assert(ss_mux_locate(&mux, 1, 0, 0) == 0);
+    assert(ss_mux_write(&mux, 1, (const uint8_t*)"\b", 1) == 0);
+    assert(mux.windows[1].x == 0 && mux.windows[1].y == 0);
     return 0;
 }

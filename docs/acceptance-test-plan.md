@@ -1,6 +1,6 @@
 # SSOS-9 受入テスト手順
 
-更新日: 2026-11-18
+更新日: 2026-11-21
 
 この文書は、SSOS-9 の host/unit、QEMU、XEiJ、MPX68K 受入テストを一つの実行順にまとめたものです。実行結果はこの文書の末尾の記録票へ記入してください。実装済みテストの個別説明は本文に含め、実行スクリプトの正確なコマンドや詳細なデバッグ情報が必要な場合だけ関連文書を参照します。
 
@@ -13,16 +13,16 @@
 | ゲート | 必須実行 | 合格条件 |
 | --- | --- | --- |
 | G1: Host/unit・cross-build | `make verify` | 終了コード0。host/unit、assembler/linker golden、QEMU、ビルドと `verify-check` がすべて成功 |
-| G2: XEiJ自動統合 | 25ケース全件 | すべて `pass`、終了コード0。設定と元媒体の実行前後ハッシュが一致 |
+| G2: XEiJ自動統合 | 26ケース全件 | すべて `pass`、終了コード0。a2はH1プローブ有効。設定と元媒体の実行前後ハッシュが一致 |
 | G3: XEiJ目視 | C2右下セル | 画面表示を見て結果を記録。自動ログだけで代替しない |
-| G4: MPX68Kフロッピー | H2手動試験 | FD1 (`C:`) から起動し、`load 1`、キー入力、終了、Human68k復帰を確認 |
+| G4: MPX68Kフロッピー | `make test-mpx68k-h2` | 11ゲートすべてPASS。複数クラスタ読出し、負例、Human68k復帰、媒体整合性を確認 |
 | G5: 性能比較 | baseline/candidate 各30 short・10 full | short中央値20%以上、full中央値30%以上短縮。suite p95とsession reuse p95が悪化しない |
 
 G1〜G4が機能受入、G5はXEiJ統合テストの高速化を受け入れるゲートです。G5の比較用baselineがない場合、テストケースのPASSは報告できますが、統計的な高速化目標の達成とは報告しません。現在の計画資料でも30/10回の比較計測は未実施です。
 
 XEiJ/MPX68Kの結果は物理X68000の実機合格を意味しません。実機ハードウェアでの最終確認は別ゲートです。XEiJでは本物のキーボード・フロッピーディスク媒体の動作も証明できません。
 
-エミュレータの分担: G2・G3・G5はXEiJ、G4はMPX68K (MonitorSocketフォークビルド) で実施する。XEiJはテキスト画面コピーによる正確なアサーションと専用プロファイルによる媒体ハッシュ証跡を備える一方、実行中のFD差し替えは不安定。MPX68KはFD挿入とモニタソケット (`PAUSE` + `READ`/`REGS`/`TRACE`) による外部操作が可能だが、テキスト画面の読取経路がなくキー注入も前面化必須のため、25ケーススイートの置き換え先ではない。白箱検証は現行ゲート外の拡張候補で、導入する場合は別途計画する (操作方法は `docs/emulator-remote-operation.md`)。
+エミュレータの分担: G2・G3・G5はXEiJ、G4はMPX68K (MonitorSocketフォークビルド) で実施する。XEiJはテキスト画面コピーによる正確なアサーションと専用プロファイルによる媒体ハッシュ証跡を備える一方、実行中のFD差し替えは不安定。MPX68KはFD挿入とモニタソケット (`PAUSE` + `READ`/`REGS`/`TRACE`) による外部操作が可能だが、テキスト画面の読取経路がなくキー注入も前面化必須のため、26ケーススイートの置き換え先ではない。白箱検証は現行ゲート外の拡張候補で、導入する場合は別途計画する (操作方法は `docs/emulator-remote-operation.md`)。
 
 ## 2. 実行前の準備
 
@@ -66,7 +66,6 @@ export SSOS9_XEIJ_CGROM=/absolute/path/CGROM.dat
 make -C tests/target
 make build/xeij/mfpstate.x
 cp build/xeij/mfpstate.x "$SSOS9_XEIJ_STAGE/"
-export SSOS9_XEIJ_MFP_CHECK=1
 ```
 
 作成されたiniを明示してXEiJを起動します。使用中の起動方法に合わせて `-ini "$SSOS9_XEIJ_INI"` を指定し、Human68kのプロンプトが出るまで待ってください。専用プロファイルと同じiniで起動したことを確認します。XEiJの通常操作はこのテスト中に行わないでください。
@@ -127,16 +126,17 @@ QEMU側もproduction MFP interrupt handlerを実行するものではありま�
 make test-emulator-automated
 ```
 
-このtargetは全25ケースを順番に実行します。結果は `build/xeij/results/` 以下に保存されます。ケースのログ、送信キー、画面記録、環境・成果物・元媒体・複製媒体のハッシュ、実行時間を確認してください。最初の失敗で後続は未実行になります。失敗のまま同じ変更媒体で再実行せず、新しい使い捨てprofileを作成してください。
+このtargetはH1を有効にして全26ケースを順番に実行します。H1だけを実行するときは、同じ準備の後に `make test-emulator-h1` を使います。結果は `build/xeij/results/` 以下に保存されます。ケースのログ、送信キー、画面記録、環境・成果物・元媒体・複製媒体のハッシュ、実行時間を確認してください。最初の失敗で後続は未実行になります。失敗のまま同じ変更媒体で再実行せず、新しい使い捨てprofileを作成してください。
 
 合格条件:
 
 1. コマンド終了コードが0。
-2. `result.json` の全25ケースが `pass` で、`not_run` / `environment_error` / `fail` がない。
-3. `XEiJ.ini` と元媒体の実行前後ハッシュが一致。
-4. 意図しないファイル変更が元環境にない。
+2. `result.json` の全26ケースが `pass` で、`not_run` / `environment_error` / `fail` がない。
+3. a2の `mfp_check` が `true` で、ログに基準値と5回の `A2 restored` がある。
+4. `XEiJ.ini` と元媒体の実行前後ハッシュが一致。
+5. 意図しないファイル変更が元環境にない。
 
-25ケースと期待結果:
+26ケースと期待結果:
 
 | ID | 確認内容 | 合格条件 |
 | --- | --- | --- |
@@ -151,6 +151,7 @@ make test-emulator-automated
 | c3 | F1/F2/F3 mux保持 | 各windowを切り替えて戻るとwindowごとの表示が保持される |
 | c4 | F1/F2/F3 window選択 | ファンクションキーでwindowを選択でき、出力が保持される |
 | c5 | console moduleのIOCS入力 | `CONSOLE.S9M` 起動後、キー入力が期待する `KEY: xxxx` として表示される |
+| c6 | CLI行編集 | BS・左右・DELで短い入力を編集し、muxの折り返し前後のセルと実行結果を確認 |
 | d1 | Human68k HDD create/read/replace | `A:\TEST` 内だけで作成・読取・置換し、期待内容を再読取できる |
 | d2 | editor保存と再読込 | `A:\TEST` の新規ファイルを保存し、再度開いて内容が一致 |
 | d3 | on-target assembler | 実asm moduleの出力objectがhost生成物とbyte一致 |
@@ -178,32 +179,22 @@ EMULATOR_TESTS="b1 c1" make test-emulator
 
 C2のテキスト取得では画面右下セルが欠落するため、自動判定だけでは確認できません。使い捨てprofileのHuman68kから `F:\SSOS9` を起動し、CLIで `ps` を9回程度実行して最下行まで出力させ、XEiJ画面上で最終行・右端セルと再描画を確認します。右下セルが現行仕様どおり空白であること、他の行が誤って消去・スクロールしないことを記録してください。画面を写真またはスクリーンショットで保存できる場合は結果に添付します。
 
-## 5. G4 — MPX68K FD1の手動試験 (H2)
+## 5. G4 — MPX68K FD1統合テスト (H2)
 
-XEiJは実行中のフロッピーディスク画像差し替えを安定して確認できないため、このケースだけMPX68Kを使います。XEiJのprofileではなく、MPX68K上でHuman68kとFD1を操作します。
-
-fixtureを作成します。
+MonitorSocket付きMPX68KでHuman68kをFD0から起動し、`A:` のプロンプトを表示します。同じSSOS-9ビルドで次を実行します。
 
 ```sh
 source ~/.elf2x68k
+make all
 make -C tests/target
+make test-mpx68k-h2
 ```
 
-`tests/target/build/console.xdf` を直接変更せず、複製をDrive 1へ挿入してください。MPX68KではDrive 1がHuman68kの `C:` として見えます。`build/console.xdf` には `CONSOLE.S9M` のみが入っており `SS9CON.X` ランチャは含まれないため、手順3の `C:\SS9CON.X` 起動に沿うなら `tests/target/prepare_console_image.py`（手順は `tests/README.md`）で複製を作成して使用します。2026-11-18現在、`/Applications/MPX68K.app` はMonitorSocket付きフォークビルドで、`~/mpx68k_monitor.sock` への `PAUSE`/`MOUNTFDD`/`EJECTFDD`/`RESUME` と macOSのキー送信・screencapture により自動実行できます（詳細は `AGENTS.md` と `tests/README.md`）。
-
-1. MPX68Kを起動し `keywitch -r` を実行します。これを実行しないと `:` が入力できない場合があります。
-2. FDDメニューからDrive 1にconsole imageを挿入し、`dir c:` で `CONSOLE.S9M` と `SS9CON.X` を確認します。
-3. `C:\SS9CON.X` からSSOS-9を起動します。
-4. `load 1 console.s9m` が `Module loaded.` になることを確認します。
-5. `run console` を実行し、`a` キーで `KEY: 0061` が出ることを確認します。
-6. `q` キーでstatus 0終了し、`exit` でHuman68kの `C:\>` に復帰することを確認します。
-7. Drive 1を取り外します。元のfixture imageのSHA-256が挿入前後で一致することを確認します。
-
-MPX68Kのバージョン、console imageのSHA-256、表示内容、終了status、復帰結果を記録してください。これはMPX68K上のFDD/Human68k/SSOS-9統合確認であり、実機物理FDの合格ではありません。
+11ゲートすべてのPASS、元・専用XDFのSHA-256前後一致、Human68kへの復帰を確認します。MPX68Kのバージョン、ゲート結果、成果物ハッシュ、画面証跡の保存先を記録します。前提と手順は [tests/README.md](../tests/README.md) を参照してください。
 
 ## 6. G5 — XEiJテストランナー高速化の性能受入
 
-2.2と同じ使い捨てprofileでcandidate計測を行います。shortは30回、core 15ケース、fullは10回、全25ケースです。各runは成功した場合だけ次へ進みます。
+2.2と同じ使い捨てprofileでcandidate計測を行います。shortは30回、core 15ケース、fullは10回、全26ケースです。各runは成功した場合だけ次へ進みます。
 
 ```sh
 make test-emulator-benchmark-short EMULATOR_BENCHMARK_DIR=build/xeij/benchmarks/candidate
@@ -247,7 +238,7 @@ G1 make verify: PASS / FAIL
   Exit code:
   Log path:
   Failed target (if any):
-G2 XEiJ 25-case suite: PASS / FAIL
+G2 XEiJ 26-case suite: PASS / FAIL
   Exit code:
   result.json path:
   Pass / fail / environment_error / not_run counts:

@@ -47,6 +47,8 @@ int ss_mux_set_columns(SSMux* mux, uint8_t columns);
  * fixed width. */
 int ss_mux_region_decode(uint32_t start_offset, uint32_t d2, SSMuxRegion* out);
 int ss_mux_select(SSMux* mux, uint8_t window);
+/* Returns 1 if a printable character or backspace crossed a column
+ * boundary, 0 for other writes, or -1 for invalid input. */
 int ss_mux_write(SSMux* mux, uint8_t window, const uint8_t* data, uint32_t size);
 int ss_mux_key_push(SSMux* mux, uint16_t key);
 int ss_mux_key_pop(SSMux* mux, uint8_t window);
