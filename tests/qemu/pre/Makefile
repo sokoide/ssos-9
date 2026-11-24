@@ -6,9 +6,10 @@ CFLAGS = -m68000 -O2 -g -ffreestanding -nostdlib -fno-builtin -MMD -MP \
 	-Wall -Wextra -Wno-unused-parameter -I../common \
 	-I../common/include -I../../../ssos/os/kernel -I../../../ssos/os/mem \
 	-I../../../ssos/os/module -I../../../ssos/os/process \
-	-I../../../ssos/include \
+	-I../../../ssos/include -I../../../tests/framework \
 	-DSS_QEMU_TEST \
 	-DSS_MAX_TASKS=$(SS_MAX_TASKS) -DSS_TASK_STACK=$(SS_TASK_STACK) \
+	-DSS_KERNEL_STACK=$(SS_KERNEL_STACK) \
 	-DSS_X_ARENA_BYTES=$(SS_X_ARENA_BYTES)
 LDFLAGS = -T ../common/linker.ld -nostdlib -Wl,--gc-sections -lgcc
 QEMU = qemu-system-m68k
@@ -81,6 +82,8 @@ t13_cli_parse.o: $(SSOS)/app/cli_parse.c
 	$(CC) $(CFLAGS) -I$(SSOS)/app -c $< -o $@
 t13_fat12.o: $(SSOS)/fs/fat12.c $(SSOS)/fs/fat12.h
 	$(CC) $(CFLAGS) -c $< -o $@
+# t13/t14/t15 mount the Human68k-format fixture (tests/framework/
+# human68k_disk.h) through the production ss_scsi_configure + attach path.
 t13_fat16_write.o: $(SSOS)/fs/fat16_write.c $(SSOS)/fs/fat12.h
 	$(CC) $(CFLAGS) -c $< -o $@
 t13_storage.o: $(SSOS)/fs/storage.c $(SSOS)/fs/storage.h
@@ -89,11 +92,11 @@ t13_storage_system.o: $(SSOS)/fs/storage_system.c $(SSOS)/fs/storage.h
 	$(CC) $(CFLAGS) -c $< -o $@
 t13_xdf.o: $(SSOS)/fs/xdf.c $(SSOS)/fs/xdf.h
 	$(CC) $(CFLAGS) -c $< -o $@
-t16_human68k_volume_impl.o: $(SSOS)/fs/human68k_volume.c $(SSOS)/fs/human68k_volume.h
+human68k_volume.o: $(SSOS)/fs/human68k_volume.c $(SSOS)/fs/human68k_volume.h $(SSOS)/fs/fat12.h
 	$(CC) $(CFLAGS) -c $< -o $@
-t16_scsi.o: $(SSOS)/fs/scsi.c
+scsi.o: $(SSOS)/fs/scsi.c $(SSOS)/fs/scsi.h
 	$(CC) $(CFLAGS) -c $< -o $@
-t16_scsi_volume.o: $(SSOS)/fs/scsi_volume.c
+scsi_volume.o: $(SSOS)/fs/scsi_volume.c $(SSOS)/fs/scsi_volume.h
 	$(CC) $(CFLAGS) -c $< -o $@
 # scsi_iocs.c needs the real toolchain <x68k/iocs.h> (struct iocs_readcap
 # and the _iocs_s_* prototypes), not the QEMU stub, so the toolchain include
@@ -153,22 +156,22 @@ t05_timerd_cadence.elf: t05_timerd_cadence.o stub.o sched.o wakeups.o main_task.
 t12_interrupted_start.elf: t12_interrupted_start.o t12_interrupted_start_entry.o $(FAST_OBJS) ../common/linker.ld
 	$(CC) $(CFLAGS) t12_interrupted_start.o t12_interrupted_start_entry.o $(FAST_OBJS) $(LDFLAGS) -o $@
 
-t13_process_spawn.elf: t13_process_spawn.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) ../common/linker.ld
-	$(CC) $(CFLAGS) t13_process_spawn.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) $(LDFLAGS) -o $@
+t13_process_spawn.elf: t13_process_spawn.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o scsi.o scsi_volume.o human68k_volume.o hello_image.o $(COMMON_OBJS) ../common/linker.ld
+	$(CC) $(CFLAGS) t13_process_spawn.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o scsi.o scsi_volume.o human68k_volume.o hello_image.o $(COMMON_OBJS) $(LDFLAGS) -o $@
 
-t14_link_run.elf: t14_link_run.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) ../common/linker.ld
-	$(CC) $(CFLAGS) t14_link_run.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) $(LDFLAGS) -o $@
+t14_link_run.elf: t14_link_run.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o scsi.o scsi_volume.o human68k_volume.o hello_image.o $(COMMON_OBJS) ../common/linker.ld
+	$(CC) $(CFLAGS) t14_link_run.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o scsi.o scsi_volume.o human68k_volume.o hello_image.o $(COMMON_OBJS) $(LDFLAGS) -o $@
 
-t15_mux_flow.elf: t15_mux_flow.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) ../common/linker.ld
-	$(CC) $(CFLAGS) t15_mux_flow.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o hello_image.o $(COMMON_OBJS) $(LDFLAGS) -o $@
+t15_mux_flow.elf: t15_mux_flow.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o scsi.o scsi_volume.o human68k_volume.o hello_image.o $(COMMON_OBJS) ../common/linker.ld
+	$(CC) $(CFLAGS) t15_mux_flow.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o scsi.o scsi_volume.o human68k_volume.o hello_image.o $(COMMON_OBJS) $(LDFLAGS) -o $@
 
-t16_human68k_volume.elf: t16_human68k_volume.o t16_human68k_volume_impl.o t16_scsi.o t16_scsi_volume.o t13_fat12.o t13_fat16_write.o t13_storage.o $(COMMON_OBJS) ../common/linker.ld
-	$(CC) $(CFLAGS) t16_human68k_volume.o t16_human68k_volume_impl.o t16_scsi.o t16_scsi_volume.o t13_fat12.o t13_fat16_write.o t13_storage.o $(COMMON_OBJS) $(LDFLAGS) -o $@
+t16_human68k_volume.elf: t16_human68k_volume.o human68k_volume.o scsi.o scsi_volume.o t13_fat12.o t13_fat16_write.o t13_storage.o $(COMMON_OBJS) ../common/linker.ld
+	$(CC) $(CFLAGS) t16_human68k_volume.o human68k_volume.o scsi.o scsi_volume.o t13_fat12.o t13_fat16_write.o t13_storage.o $(COMMON_OBJS) $(LDFLAGS) -o $@
 
 # The CLI mounts through the production scsi_iocs.c path with only the
 # low-level IOCS SCSI calls mocked inside the test object.
-t17_human68k_cli_mount.elf: t17_human68k_cli_mount.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o t16_human68k_volume_impl.o t16_scsi.o t16_scsi_volume.o t17_scsi_iocs.o $(COMMON_OBJS) ../common/linker.ld
-	$(CC) $(CFLAGS) t17_human68k_cli_mount.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o t16_human68k_volume_impl.o t16_scsi.o t16_scsi_volume.o t17_scsi_iocs.o $(COMMON_OBJS) $(LDFLAGS) -o $@
+t17_human68k_cli_mount.elf: t17_human68k_cli_mount.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o human68k_volume.o scsi.o scsi_volume.o t17_scsi_iocs.o $(COMMON_OBJS) ../common/linker.ld
+	$(CC) $(CFLAGS) t17_human68k_cli_mount.o t13_test_vectors.o t13_ctrl_c.o t13_cli_wait.o t13_cli_console.o t13_mux.o t13_cli.o t13_cli_parse.o t13_fat12.o t13_fat16_write.o t13_storage.o t13_storage_system.o t13_xdf.o human68k_volume.o scsi.o scsi_volume.o t17_scsi_iocs.o $(COMMON_OBJS) $(LDFLAGS) -o $@
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@

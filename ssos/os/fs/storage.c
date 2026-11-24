@@ -24,50 +24,6 @@ static int operation_write(void* context, uint32_t sector, const uint8_t* in) {
     return status;
 }
 
-/* A writer updates every FAT copy, so never allocate from a volume whose
- * copies already disagree. Read-only FAT12 loading is deliberately separate. */
-int ss_storage_fat_copies_match(const SSFat12* volume) {
-    uint8_t primary[1024] __attribute__((aligned(4)));
-    uint8_t mirror[1024] __attribute__((aligned(4)));
-    if (volume->fat_count < 2) return 0;
-    for (uint32_t sector = 0; sector < volume->fat_sectors; sector++) {
-        if (volume->read_sector(volume->context, volume->fat_start + sector, primary))
-            return -1;
-        for (uint32_t copy = 1; copy < volume->fat_count; copy++) {
-            uint32_t at = volume->fat_start + copy * volume->fat_sectors + sector;
-            if (volume->read_sector(volume->context, at, mirror)) return -1;
-            for (uint32_t i = 0; i < volume->sector_size; i++)
-                if (primary[i] != mirror[i]) return -1;
-        }
-    }
-    return 0;
-}
-
-int ss_storage_mount(SSStorage* storage, SSFat12ReadSector read,
-                     SSFatWriteSector write, void* context,
-                     uint32_t sectors, uint16_t block_size) {
-    SSFat12 volume;
-    if (!storage || storage->mounted || !write ||
-        (block_size != 512 && block_size != 1024) ||
-        ss_fat12_mount(&volume, read, context, sectors) ||
-        volume.fat_bits != 16 || volume.sector_size != block_size ||
-        ss_storage_fat_copies_match(&volume))
-        return -1;
-    storage->volume = volume;
-    storage->write_sector = write;
-    storage->readers = 0;
-    storage->writer = 0;
-    storage->write_failed = 0;
-    storage->mounted = 1;
-    return 0;
-}
-
-void ss_storage_unmount(SSStorage* storage) {
-    if (!storage || storage->readers || storage->writer) return;
-    storage->mounted = 0;
-    storage->write_sector = NULL;
-}
-
 int ss_storage_store(SSStorage* storage, const char* name, const uint8_t* data,
                      uint32_t size, int replace) {
     if (!storage || !storage->mounted || storage->write_failed || storage->readers || storage->writer ||

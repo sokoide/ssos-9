@@ -1,4 +1,5 @@
 #include "human68k_volume.h"
+#include "fat12.h"
 
 #include <stddef.h>
 
@@ -16,7 +17,7 @@ static int equal(const uint8_t* data, const char* text, unsigned n) {
 
 int ss_human68k_probe(SSHuman68kVolume* out, SSHuman68kReadSector read,
                       void* context, uint32_t disk_sectors, uint8_t partition) {
-    uint8_t block[1024] __attribute__((aligned(4)));
+    uint8_t* block = ss_fat_data_scratch();
     SSHuman68kVolume v = {0};
     if (!out || !read || disk_sectors < 4 || partition >= 15 ||
         read(context, 0, block) || !equal(block, "X68SCSI1", 8) ||

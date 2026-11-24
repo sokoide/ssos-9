@@ -12,22 +12,11 @@ typedef struct {
     uint8_t writer;
 } SSStorage;
 
-/* Callers serialize mount and all file operations on a given device.
- * Generic FAT16 mounts reject inconsistent FAT copies and writes update all
- * copies. Human68k volumes use only FAT1; FAT2 is reserved and unused.
- * Write failures fence subsequent writes until unmount and inspection; a
- * partially completed update is not atomic. */
-int ss_storage_mount(SSStorage* storage, SSFat12ReadSector read,
-                     SSFatWriteSector write, void* context,
-                     uint32_t sectors, uint16_t block_size);
-void ss_storage_unmount(SSStorage* storage);
-/* Returns 0 when every FAT copy of a mounted/probed volume is byte-identical
- * (a single-copy volume trivially matches); nonzero when copies disagree or
- * a read fails. Used for generic FAT16 mounts. */
-int ss_storage_fat_copies_match(const SSFat12* volume);
-/* replace=0 creates only, replace=1 replaces only. An I/O error or a failure
- * after a write was attempted fences subsequent writes until unmount and
- * external volume inspection. */
+/* Callers serialize all file operations on a given device. Only
+ * ss_scsi_volume_attach creates a mounted SSStorage (a Human68k-format
+ * FAT16 volume; FAT2 is reserved and unused, writes update FAT1 alone).
+ * Write failures fence subsequent writes until SSOS-9 restarts and the
+ * volume is inspected; a partially completed update is not atomic. */
 int ss_storage_store(SSStorage* storage, const char* name, const uint8_t* data,
                      uint32_t size, int replace);
 /* One-shot read of a whole file. Mirrors the store/open_reader exclusivity:

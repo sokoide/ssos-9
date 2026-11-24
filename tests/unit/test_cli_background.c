@@ -6,6 +6,7 @@
 #include "../../ssos/os/module/builtin.h"
 #include "../../ssos/os/process/process.h"
 #include "../../ssos/os/fs/scsi_volume.h"
+#include "human68k_disk.h"
 #include "../../ssos/include/ssos9/syscall.h"
 #include "ssos_test.h"
 
@@ -18,30 +19,17 @@ static int interrupt_print;
 static uint8_t display_cells[32][80];
 static unsigned display_x, display_y;
 static int16_t print_kill_status;
-static uint8_t scsi_test_disk[5000][512];
+static uint8_t hd_store[HD_STORE_BYTES(HD_STORE_MIN + 40u)];
 static int enable_scsi_test;
 static uint32_t captured_scsi_start;
 static uint32_t captured_scsi_blocks;
-static int test_scsi_read(void* context, uint32_t sector, uint8_t* out) {
-    (void)context;
-    if (sector >= 5000) return -1;
-    memcpy(out, scsi_test_disk[sector], 512);
-    return 0;
-}
-static int test_scsi_write(void* context, uint32_t sector, const uint8_t* in) {
-    (void)context;
-    if (sector >= 5000) return -1;
-    memcpy(scsi_test_disk[sector], in, 512);
-    return 0;
-}
 
 int ss_scsi_volume_mount_iocs(SSScsiVolume* volume, uint8_t target,
                               uint32_t start, uint32_t blocks) {
     if (!enable_scsi_test || target != 3) return -1;
     captured_scsi_start = start;
     captured_scsi_blocks = blocks;
-    return ss_storage_mount(&volume->storage, test_scsi_read, test_scsi_write,
-                            NULL, 5000, 512);
+    return hd_mount(volume, target, start, blocks);
 }
 
 int _iocs_b_read(int mode, int position, int size, void* out) {
@@ -317,20 +305,25 @@ TEST(console_background_scroll_preserves_active_window) {
 
 TEST(cli_scsi_mount_write_read) {
     setup_shell();
-    memset(scsi_test_disk, 0, sizeof(scsi_test_disk));
-    uint8_t* boot = scsi_test_disk[0];
-    boot[12] = 2; boot[13] = 1; boot[14] = 1; boot[16] = 2;
-    boot[17] = 16; boot[19] = 0x88; boot[20] = 0x13; boot[22] = 20;
-    boot[510] = 0x55; boot[511] = 0xaa;
+    /* The window starts at sector 50 (block 100). */
+    hd_format(hd_store, HD_STORE_MIN + 40u, 50);
     enable_scsi_test = 1;
     char invalid[] = "smount 3 123 0";
     ASSERT_EQ(ss_cli_execute_line(invalid), 0);
     ASSERT_NOT_NULL(strstr(output, "Invalid SCSI target"));
     output[0] = '\0';
-    char mount[] = "smount 3 123 5000";
+    char narrow[] = "smount 3 100 5000";
+    ASSERT_EQ(ss_cli_execute_line(narrow), 0);
+    ASSERT_NOT_NULL(strstr(output, "Unable to mount FAT16."));
+    output[0] = '\0';
+    char misaligned[] = "smount 3 123";
+    ASSERT_EQ(ss_cli_execute_line(misaligned), 0);
+    ASSERT_NOT_NULL(strstr(output, "Unable to mount FAT16."));
+    output[0] = '\0';
+    char mount[] = "smount 3 100 18064";
     ASSERT_EQ(ss_cli_execute_line(mount), 0);
-    ASSERT_EQ(captured_scsi_start, 123);
-    ASSERT_EQ(captured_scsi_blocks, 5000);
+    ASSERT_EQ(captured_scsi_start, 100);
+    ASSERT_EQ(captured_scsi_blocks, 18064);
     ASSERT_NOT_NULL(strstr(output, "FAT16 mounted."));
     char write[] = "swrite TEST.TXT hello";
     output[0] = '\0';

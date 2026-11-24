@@ -29,7 +29,7 @@ int ss_scsi_volume_attach(SSScsiVolume* volume, const SSScsiDevice* device) {
         h.sectors > candidate.volume_blocks / factor - h.start) return -1;
     candidate.volume_start += h.start * factor;
     candidate.volume_blocks = h.sectors * factor;
-    uint8_t fat_header[1024] __attribute__((aligned(4)));
+    uint8_t* fat_header = ss_fat_data_scratch();
     if (read1024(&candidate, h.fat_start, fat_header) ||
         fat_header[0] != 0xf7 || fat_header[1] != 0xff ||
         fat_header[2] != 0xff || fat_header[3] != 0xff) return -1;

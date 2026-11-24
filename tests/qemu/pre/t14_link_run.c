@@ -7,6 +7,7 @@
 #include "../../../ssos/os/app/cli_console.h"
 #include "../../../ssos/os/app/cli_wait.h"
 #include "../../../ssos/os/fs/scsi_volume.h"
+#include "human68k_disk.h"
 #include "builtin.h"
 #include "main_task.h"
 #include "process.h"
@@ -16,10 +17,7 @@
 #include "tty.h"
 
 static SSTask main_tcb;
-/* 96 sectors: the sample files plus their objects fill more of the FAT16
- * volume than the 50-sector fixture t13 uses. */
-#define T14_DISK_SECTORS 96
-static uint8_t scsi_test_disk[T14_DISK_SECTORS][512];
+static uint8_t hd_store[HD_STORE_BYTES(HD_STORE_MIN + 160u)];
 extern const uint8_t ss_test_asm_image[], ss_test_asm_image_end[];
 extern const uint8_t ss_test_ld_image[], ss_test_ld_image_end[];
 extern const uint8_t ss_test_link_start_src[], ss_test_link_start_src_end[];
@@ -33,28 +31,11 @@ extern void ss_test_install_syscall_vector(void);
 extern void ss_test_install_ctrl_c_vector(void);
 extern int32_t ss_test_syscall_roundtrip(void);
 
-static int scsi_test_read(void* context, uint32_t sector, uint8_t* out) {
-    (void)context;
-    if (sector >= T14_DISK_SECTORS)
-        return -1;
-    for (unsigned i = 0; i < 512; i++) out[i] = scsi_test_disk[sector][i];
-    return 0;
-}
-static int scsi_test_write(void* context, uint32_t sector, const uint8_t* in) {
-    (void)context;
-    if (sector >= T14_DISK_SECTORS)
-        return -1;
-    for (unsigned i = 0; i < 512; i++) scsi_test_disk[sector][i] = in[i];
-    return 0;
-}
-
 int ss_scsi_volume_mount_iocs(SSScsiVolume* volume, uint8_t target,
                               uint32_t start, uint32_t blocks) {
-    (void)blocks;
     if (target != 3 || start != 10)
         return -1;
-    return ss_storage_mount(&volume->storage, scsi_test_read, scsi_test_write,
-                            NULL, 5000, 512);
+    return hd_mount(volume, target, start, blocks);
 }
 
 int _iocs_b_read(int mode, int position, int size, void* out) {
@@ -153,16 +134,8 @@ int main(void) {
         fail("kernel tables init");
     uint32_t free_before = ss_memory_free_bytes();
 
-    scsi_test_disk[0][12] = 2;
-    scsi_test_disk[0][13] = 1;
-    scsi_test_disk[0][14] = 1;
-    scsi_test_disk[0][16] = 2;
-    scsi_test_disk[0][17] = 16;
-    scsi_test_disk[0][19] = 0x88;
-    scsi_test_disk[0][20] = 0x13;
-    scsi_test_disk[0][22] = 20;
-    scsi_test_disk[0][510] = 0x55;
-    scsi_test_disk[0][511] = 0xaa;
+    /* The window starts at sector 5 (block 10): `smount 3 10`. */
+    hd_format(hd_store, HD_STORE_MIN + 160u, 5);
     char mount_command[] = "smount 3 10";
     ss_test_console_count = 0;
     if (ss_cli_execute_line(mount_command) != 0 ||

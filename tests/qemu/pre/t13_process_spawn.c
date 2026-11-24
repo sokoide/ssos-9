@@ -5,6 +5,7 @@
 #include "../../../ssos/os/app/cli_wait.h"
 #include "../../../ssos/os/fs/fat12.h"
 #include "../../../ssos/os/fs/scsi_volume.h"
+#include "human68k_disk.h"
 #include "builtin.h"
 #include "main_task.h"
 #include "process.h"
@@ -32,29 +33,12 @@ static uint8_t fat_disk[8][512];
 extern const uint8_t ss_test_data_disk[];
 static int32_t fail_disk_sector = -1;
 static uint32_t disk_read_calls;
-static uint8_t scsi_test_disk[50][512];
-static int scsi_test_read(void* context, uint32_t sector, uint8_t* out) {
-    (void)context;
-    if (sector >= 50)
-        return -1;
-    for (unsigned i = 0; i < 512; i++) out[i] = scsi_test_disk[sector][i];
-    return 0;
-}
-static int scsi_test_write(void* context, uint32_t sector, const uint8_t* in) {
-    (void)context;
-    if (sector >= 50)
-        return -1;
-    for (unsigned i = 0; i < 512; i++) scsi_test_disk[sector][i] = in[i];
-    return 0;
-}
-
+static uint8_t hd_store[HD_STORE_BYTES(HD_STORE_MIN + 160u)];
 int ss_scsi_volume_mount_iocs(SSScsiVolume* volume, uint8_t target,
                               uint32_t start, uint32_t blocks) {
-    (void)blocks;
     if (target != 3 || start != 10)
         return -1;
-    return ss_storage_mount(&volume->storage, scsi_test_read, scsi_test_write,
-                            NULL, 5000, 512);
+    return hd_mount(volume, target, start, blocks);
 }
 
 int _iocs_b_read(int mode, int position, int size, void* out) {
@@ -756,16 +740,8 @@ int main(void) {
         ss_memory_free_bytes() != hello_free_before)
         fail("disk CLI cleanup");
 
-    scsi_test_disk[0][12] = 2;
-    scsi_test_disk[0][13] = 1;
-    scsi_test_disk[0][14] = 1;
-    scsi_test_disk[0][16] = 2;
-    scsi_test_disk[0][17] = 16;
-    scsi_test_disk[0][19] = 0x88;
-    scsi_test_disk[0][20] = 0x13;
-    scsi_test_disk[0][22] = 20;
-    scsi_test_disk[0][510] = 0x55;
-    scsi_test_disk[0][511] = 0xaa;
+    /* The window starts at sector 5 (block 10): `smount 3 10`. */
+    hd_format(hd_store, HD_STORE_MIN + 160u, 5);
     char scsi_mount[] = "smount 3 10";
     ss_test_console_count = 0;
     if (ss_cli_execute_line(scsi_mount) || !console_contains("FAT16 mounted."))
