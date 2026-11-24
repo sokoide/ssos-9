@@ -290,7 +290,7 @@ uint16_t ss_task_create(SSTaskInfo* info) {
     return i + 1; /* 1-based ID */
 }
 
-uint16_t ss_task_create_interrupted(void* stack, uint16_t stack_size,
+uint16_t ss_task_create_interrupted(void* stack, uint32_t stack_size,
                                     const uint32_t regs[SS_FRAME_REG_WORDS],
                                     void* entry, uint16_t sr) {
     if (stack == NULL || entry == NULL || stack_size < SS_MIN_TASK_STACK ||

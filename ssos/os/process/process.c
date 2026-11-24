@@ -196,7 +196,7 @@ int16_t ss_process_spawn(SSProcessId parent, SSModuleId module_id,
     regs[13] = (uint32_t)(uintptr_t)data_base + module.image.got_offset;
 
     uint16_t task_id = ss_task_create_interrupted(
-        stack_base, (uint16_t)module.image.stack_size, regs,
+        stack_base, module.image.stack_size, regs,
         (void*)(module.image.image + module.image.entry_offset), 0x2000);
     if (task_id == 0 || task_id > SS_MAX_TASKS) {
         ss_module_release(module_id);
@@ -242,15 +242,13 @@ int16_t ss_process_spawn_kernel(SSProcessId parent, const char* name,
     if (name == NULL || entry == NULL || argument == NULL || pid == NULL ||
         argument_size == 0 || argument_size > SS_PROCESS_MAX_ARG_BYTES)
         return SS_ERR_PARAM;
-    if (SS_TASK_STACK > UINT16_MAX)
-        return SS_ERR_LIMIT;
     uint16_t slot;
     SSProcessId new_pid;
     int16_t status = reserve_slot(parent, &new_pid, &slot);
     if (status != SS_OK)
         return status;
     uint32_t stack_offset = ((uint32_t)argument_size + 3u) & ~3u;
-    uint8_t* block = ss_memory_alloc(stack_offset + SS_TASK_STACK);
+    uint8_t* block = ss_memory_alloc(stack_offset + SS_KERNEL_STACK);
     if (block == NULL) {
         clear_slot(slot);
         return SS_ERR_LIMIT;
@@ -260,8 +258,8 @@ int16_t ss_process_spawn_kernel(SSProcessId parent, const char* name,
     SSTaskInfo info = {entry,
                        8,
                        SS_CTX_NORMAL,
-                       SS_TASK_STACK,
-                       block + stack_offset + SS_TASK_STACK - 4u,
+                       SS_KERNEL_STACK,
+                       block + stack_offset + SS_KERNEL_STACK - 4u,
                        block};
     uint16_t task_id = ss_task_create(&info);
     if (task_id == 0 || task_id > SS_MAX_TASKS) {
@@ -276,7 +274,7 @@ int16_t ss_process_spawn_kernel(SSProcessId parent, const char* name,
     process->data_base = block;
     process->got_base = NULL;
     process->stack_low = block + stack_offset;
-    process->stack_high = block + stack_offset + SS_TASK_STACK;
+    process->stack_high = block + stack_offset + SS_KERNEL_STACK;
     copy_name(process->name, name);
     process_tasks[slot] = &tcb_table[task_id - 1];
     process_blocks[slot] = block;

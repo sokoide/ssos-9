@@ -2,6 +2,7 @@
 
 import importlib.util
 import struct
+import tempfile
 import unittest
 import zlib
 from pathlib import Path
@@ -38,12 +39,30 @@ class PackerTest(unittest.TestCase):
             module.pack(self.elf, "../bad")
 
     def test_stack_size_bounds(self):
-        for size in (4096, 32768, 65532):
+        for size in (4096, 32768, 65532, 131072, 262144):
             image = module.pack(self.elf, "hello", size)
             self.assertEqual(struct.unpack_from(">I", image, 0x28)[0], size)
-        for size in (0, 4095, 4097, 65536):
+        for size in (0, 4095, 4097, 262148):
             with self.assertRaises(ValueError):
                 module.pack(self.elf, "hello", size)
+
+    def test_default_stack_and_budget(self):
+        image = module.pack(self.elf, "hello")
+        self.assertEqual(struct.unpack_from(">I", image, 0x28)[0],
+                         module.STACK_DEFAULT)
+        with tempfile.TemporaryDirectory() as temp:
+            usage = Path(temp) / "main.su"
+            # main nearly fills the stack: one nested frame no longer fits.
+            usage.write_text("main.c:10:5:main\t60000\tdynamic,bounded\n"
+                             "x.c:1:1:f\t2000\tstatic\n")
+            with self.assertRaises(ValueError):
+                module.pack(self.elf, "hello", 65532, [usage])
+            self.assertEqual(module.pack(self.elf, "hello", 131072, [usage])[0x28],
+                             131072 & 0xff)
+            usage.write_text("main.c:10:5:main\t60000\tdynamic,bounded\n"
+                             "x.c:1:1:f\t2000\tstatic\n"
+                             "main.c:99:1:main.constprop.0\t100\tstatic\n")
+            self.assertEqual(module.stack_budget([usage]), (60000, 2000))
 
     def test_unknown_relocation_and_displacement(self):
         bad = bytearray(self.elf)

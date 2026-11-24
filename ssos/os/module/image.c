@@ -4,7 +4,9 @@
 
 #define SS_MODULE_MAX_CODE_SIZE 32768u
 #define SS_MODULE_MAX_DATA_SIZE 65536u
-#define SS_MODULE_MAX_STACK_SIZE 65532u
+#define SS_MODULE_MIN_STACK_SIZE 4096u
+/* The header field is 32 bits; the cap bounds one process's arena block. */
+#define SS_MODULE_MAX_STACK_SIZE 262144u
 #define SS_MODULE_FIXUP_SIZE 12u
 
 typedef struct {
@@ -137,7 +139,8 @@ int16_t ss_module_image_validate(const uint8_t* image, uint32_t size,
         entry_offset >= code_offset + code_size)
         return -1;
     if (init_size > SS_MODULE_MAX_DATA_SIZE ||
-        bss_size > SS_MODULE_MAX_DATA_SIZE - init_size || stack_size < 4096 ||
+        bss_size > SS_MODULE_MAX_DATA_SIZE - init_size ||
+        stack_size < SS_MODULE_MIN_STACK_SIZE ||
         stack_size > SS_MODULE_MAX_STACK_SIZE || (stack_size & 3u) != 0 ||
         data_offset < SS_MODULE_IMAGE_HEADER_SIZE ||
         !range_valid(data_offset, init_size, size))

@@ -8,8 +8,33 @@ import sys
 import zlib
 from pathlib import Path
 
+# Bounds the loader enforces (ssos/os/module/image.c). The default leaves a
+# C module room for its own call depth above the kernel syscall paths.
+STACK_MIN = 4096
+STACK_MAX = 262144
+STACK_DEFAULT = 32768
+# Stack a module must keep free for the kernel: syscall entry and the
+# storage paths run on the caller's stack (about 1 KiB; IOCS included here).
+KERNEL_STACK_RESERVE = 4096
 
-def pack(raw, name, stack_size=4096):
+
+def stack_budget(usage_files):
+    """Largest frames from -fstack-usage files: the entry function's and the
+    largest of any other function. A module keeps all its state in main(), so
+    main alone must leave room for one nested call and the kernel."""
+    entry = other = 0
+    for path in usage_files:
+        for line in Path(path).read_text().splitlines():
+            head, size, _ = line.split("\t")
+            frame = int(size)
+            if head.rsplit(":", 1)[-1].split(".")[0] == "main":
+                entry = max(entry, frame)
+            else:
+                other = max(other, frame)
+    return entry, other
+
+
+def pack(raw, name, stack_size=STACK_DEFAULT, stack_usage=None):
     def check(condition, message):
         if not condition:
             raise ValueError(message)
@@ -21,8 +46,14 @@ def pack(raw, name, stack_size=4096):
 
     check(re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,30}", name)
           and not name.endswith("."), "invalid module name")
-    check(4096 <= stack_size <= 65532 and stack_size % 4 == 0,
+    check(STACK_MIN <= stack_size <= STACK_MAX and stack_size % 4 == 0,
           "invalid module stack size")
+    if stack_usage:
+        entry, other = stack_budget(stack_usage)
+        check(entry + other + KERNEL_STACK_RESERVE <= stack_size,
+              f"stack budget exceeded: main frame {entry} + largest nested "
+              f"frame {other} + kernel reserve {KERNEL_STACK_RESERVE} > "
+              f"{stack_size}")
     header = unpack(">16sHHIIIIIHHHHHH", 0)
     ident, kind, machine, version, entry, _, shoff, flags, ehsize, _, _, shsize, shnum, shstr = header
     check(ident[:7] == b"\x7fELF\x01\x02\x01" and kind == 2 and machine == 4
@@ -113,11 +144,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("elf", type=Path)
     parser.add_argument("--name", required=True)
-    parser.add_argument("--stack-size", type=int, default=4096)
+    parser.add_argument("--stack-size", type=int, default=STACK_DEFAULT)
+    parser.add_argument("--stack-usage", type=Path, nargs="*", default=[],
+                        help="-fstack-usage files (.su) of the module objects; "
+                             "fails when main plus one nested frame and the "
+                             "kernel reserve do not fit the stack")
     parser.add_argument("-o", "--output", required=True, type=Path)
     args = parser.parse_args()
     try:
-        image = pack(args.elf.read_bytes(), args.name, args.stack_size)
+        image = pack(args.elf.read_bytes(), args.name, args.stack_size,
+                     args.stack_usage)
         args.output.write_bytes(image)
     except (OSError, ValueError, struct.error) as error:
         print(f"mkmodule: {error}", file=sys.stderr)

@@ -41,7 +41,7 @@ INCLUDE=-I$(XELF_BASE)/m68k-elf/include -I../include -I./kernel -I./kernel/preem
 LIB=-L$(XELF_BASE)/m68k-elf/lib -L$(shell dirname $(shell m68k-xelf-gcc -print-libgcc-file-name))
 
 CCFLAGS=$(INCLUDE) -g -O2 -MMD -MP
-CCFLAGS += -DSS_MAX_TASKS=$(SS_MAX_TASKS) -DSS_TASK_STACK=$(SS_TASK_STACK) \
+CCFLAGS += -DSS_MAX_TASKS=$(SS_MAX_TASKS) -DSS_TASK_STACK=$(SS_TASK_STACK) -DSS_KERNEL_STACK=$(SS_KERNEL_STACK) \
 	-DSS_X_ARENA_BYTES=$(SS_X_ARENA_BYTES) $(EXTRA_CFLAGS)
 LDFLAGS=$(LIB) -lx68kiocs -Tkernel/linker.ld -nostdlib \
 	--defsym=SS_MAX_TASKS=$(SS_MAX_TASKS) --defsym=SS_TASK_STACK=$(SS_TASK_STACK) \

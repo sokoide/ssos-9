@@ -87,3 +87,6 @@ __pycache__/
 
 # App build outputs
 /apps/**/build/
+
+# -fstack-usage output of the module builds (consumed by tools/mkmodule.py)
+*.su

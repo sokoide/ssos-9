@@ -128,7 +128,9 @@ static void show_debug(void) {
     }
 }
 
-static void show_trace(void) {
+/* Keep the 1 KiB event buffer out of ss_cli_execute_line's frame: every
+ * builtin enters through that function. */
+static __attribute__((noinline)) void show_trace(void) {
     SSTraceEvent events[SS_TRACE_CAPACITY];
     uint16_t count = ss_trace_read(events, SS_TRACE_CAPACITY);
     print("scheduler events: ");

@@ -3,7 +3,7 @@ LD = m68k-xelf-ld
 HOSTCC = cc
 CFLAGS = -m68000 -msoft-float -Os -ffreestanding -fno-builtin -fno-common \
     -fno-stack-protector -fpic -mpcrel -ffixed-a3 -fno-jump-tables \
-    -I../../ssos/include
+    -fstack-usage -I../../ssos/include
 HOSTCFLAGS = -O2 -Wall -I.
 
 CORE = readobj.c layout.c fold.c image.c
@@ -33,7 +33,8 @@ build/ld.elf: build/start.o $(CORE_OBJS) build/main.o build/support.o ../../exam
 	$(LD) --emit-relocs --no-relax -T ../../examples/hello/module.ld build/start.o $(CORE_OBJS) build/main.o build/support.o -o $@
 
 build/ld.s9m: build/ld.elf ../../tools/mkmodule.py
-	python3 ../../tools/mkmodule.py $< --name ld --stack-size 65532 -o $@
+	python3 ../../tools/mkmodule.py $< --name ld --stack-size 131072 \
+		--stack-usage $(wildcard build/*.su) -o $@
 
 build/ld.xdf: build/ld.s9m ../../tools/mkfat12xdf.py
 	python3 ../../tools/mkfat12xdf.py $< $@ --name LD.S9M

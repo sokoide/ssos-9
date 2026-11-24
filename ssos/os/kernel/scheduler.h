@@ -67,7 +67,7 @@ typedef struct {
     void* (*entry)(void*); /* entry(arg); return value is ignored */
     uint8_t pri;
     uint8_t ctx_level;
-    uint16_t stack_size;   /* custom stack must be >= SS_MIN_TASK_STACK */
+    uint32_t stack_size;   /* custom stack must be >= SS_MIN_TASK_STACK */
     void*    stack;        /* NULL = pool; otherwise last aligned word of region */
     void*    arg;          /* passed to entry; NULL by default */
 } SSTaskInfo;
@@ -98,7 +98,7 @@ void    ss_sched_dequeue(SSTask* tcb);
 SSTask* ss_sched_pick(void);
 
 uint16_t ss_task_create(SSTaskInfo* info);
-uint16_t ss_task_create_interrupted(void* stack, uint16_t stack_size,
+uint16_t ss_task_create_interrupted(void* stack, uint32_t stack_size,
                                    const uint32_t regs[SS_FRAME_REG_WORDS],
                                    void* entry, uint16_t sr);
 uint16_t ss_task_start(uint16_t id);

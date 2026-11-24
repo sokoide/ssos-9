@@ -3,6 +3,8 @@ CC = cc
 include ../ssos/config.mk
 CFLAGS = -O2 -g -Wall -Wextra -Werror -std=c11 -DLOCAL_MODE -DSS_HOST_TEST -DSS_TASK_CREATE_PROBE \
 	-DSS_MAX_TASKS=$(SS_MAX_TASKS) -DSS_TASK_STACK=$(SS_TASK_STACK) \
+	-DSS_KERNEL_STACK=$(SS_KERNEL_STACK) \
+	-DSS_X_ARENA_BYTES=$(SS_X_ARENA_BYTES) \
 	-idirafter qemu/common/include -Iframework -I../ssos/os/kernel
 
 ifeq ($(SANITIZE),1)
@@ -18,8 +20,11 @@ SOURCES = framework/test_runner.c framework/test_mocks.c unit/test_scheduler.c u
 	$(SSOS)/app/cli_console.c $(SSOS)/app/mux.c $(SSOS)/kernel/main_task.c $(SSOS)/process/process.c \
 	$(SSOS)/module/module.c $(SSOS)/module/image.c $(SSOS)/module/builtin.c \
 	$(SSOS)/fs/fat12.c $(SSOS)/fs/fat16_write.c $(SSOS)/fs/storage.c $(SSOS)/fs/storage_system.c $(SSOS)/fs/xdf.c \
+	$(SSOS)/fs/scsi.c $(SSOS)/fs/scsi_volume.c $(SSOS)/fs/human68k_volume.c \
 	$(SSOS)/mem/arena.c $(SSOS)/mem/system_arena.c
-HEADERS = qemu/common/include/x68k/iocs.h $(wildcard framework/*.h unit/*.h $(SSOS)/kernel/*.h $(SSOS)/app/*.h $(SSOS)/process/*.h $(SSOS)/module/*.h $(SSOS)/mem/*.h)
+# Every production header on an include path must rebuild the runner: a
+# header-only edit changes the compiled code without touching SOURCES.
+HEADERS = qemu/common/include/x68k/iocs.h $(wildcard framework/*.h unit/*.h $(SSOS)/kernel/*.h $(SSOS)/kernel/preemptive/*.h $(SSOS)/app/*.h $(SSOS)/process/*.h $(SSOS)/module/*.h $(SSOS)/mem/*.h $(SSOS)/fs/*.h $(wildcard ../ssos/include/ssos9/*.h))
 
 .PHONY: all test clean
 all: $(TARGET)
