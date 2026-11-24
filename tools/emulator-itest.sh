@@ -1120,7 +1120,8 @@ run_c3() {
     type_cmd 'help'
     sleep 2
     snap
-    [[ "$(norm_text "$s")" == *"$(norm_text "$HELP_EXPECTED")"* ]] || \
+    local want=$(norm_text "$HELP_EXPECTED")
+    [[ "$(norm_text "$s")" == *"$want"* ]] || \
         fail 'c3: window 2 did not run help' "$s"
     key f3
     sleep 1.5
@@ -1129,16 +1130,23 @@ run_c3() {
     snap
     require 'c3 window 3 ps' "$s" 'PID PPID STATE NAME MODULE DATA GOT STACK'
     require 'c3 window 3 shell row' "$s" 'shell'
+    # The switch itself must be observable: with F3 ignored, ps lands in
+    # window 2 and its help output would still be on screen.
+    [[ "$(norm_text "$s")" != *"$want"* ]] || \
+        fail 'c3: F3 switch not observable (window 2 content still shown)' "$s"
     key f1
     sleep 1.5
     snap
     print -r -- "$s" | grep -Fq 'Multiplexer:' || fail 'c3: window 1 content not restored' "$s"
-    local want=$(norm_text "$HELP_EXPECTED")
     [[ "$(norm_text "$s")" != *"$want"* ]] || fail 'c3: window 1 shows window 2 output' "$s"
     key f2
     sleep 1.5
     snap
     [[ "$(norm_text "$s")" == *"$want"* ]] || fail 'c3: window 2 did not retain help output' "$s"
+    key f3
+    sleep 1.5
+    snap
+    require 'c3 window 3 retains ps' "$s" 'PID PPID STATE NAME MODULE DATA GOT STACK'
     key f1
     sleep 1
     ssos_exit
@@ -1164,10 +1172,18 @@ run_c4() {
     sleep 1.5
     type_cmd 'ps'
     wait_screen 'PID PPID STATE NAME MODULE DATA GOT STACK' 8 || fail 'c4: window 3 did not run ps' "$s"
+    # The switch must be observable: an ignored F3 typed ps into window 2,
+    # leaving the arena line on screen.
+    print -r -- "$s" | grep -Fq 'arena free_bytes=' && \
+        fail 'c4: F3 switch not observable (window 2 content still shown)' "$s"
     key f2
     sleep 1.5
     snap
     print -r -- "$s" | grep -Fq 'arena free_bytes=' || fail 'c4: window 2 output was not retained' "$s"
+    key f3
+    sleep 1.5
+    snap
+    require 'c4 window 3 retains ps' "$s" 'PID PPID STATE NAME MODULE DATA GOT STACK'
     key f1
     sleep 1
     ssos_exit
