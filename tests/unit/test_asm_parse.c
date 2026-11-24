@@ -528,7 +528,12 @@ static void test_expr_eval_abs(void) {
     /* precedence: & above ^ above | */
     CHECK(eval_line(&ctx, "1|2^3&6", &v) == ASM_OK && v.value == 1);
     CHECK(eval_line(&ctx, "1|6", &v) == ASM_OK && v.value == 7);
-    CHECK(eval_line(&ctx, "1+2<<2", &v) == ASM_OK && v.value == 12);
+    /* GAS precedence: * / << >> share one left-associative level above
+     * the additive operators. */
+    CHECK(eval_line(&ctx, "1+2<<2", &v) == ASM_OK && v.value == 9);
+    CHECK(eval_line(&ctx, "1<<2+3", &v) == ASM_OK && v.value == 7);
+    CHECK(eval_line(&ctx, "1<<2*3", &v) == ASM_OK && v.value == 12);
+    CHECK(eval_line(&ctx, "16>>1+1", &v) == ASM_OK && v.value == 9);
     CHECK(eval_line(&ctx, "$10+0x10", &v) == ASM_OK && v.value == 32);
 }
 

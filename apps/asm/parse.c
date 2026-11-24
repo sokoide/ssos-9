@@ -1103,7 +1103,8 @@ static AsmValue ev_unary(Eval* ev) {
 static AsmValue ev_mul(Eval* ev) {
     AsmValue l = ev_unary(ev);
     while (ev->status == ASM_OK &&
-           (ev_kind(ev) == ASM_TOK_STAR || ev_kind(ev) == ASM_TOK_SLASH)) {
+           (ev_kind(ev) == ASM_TOK_STAR || ev_kind(ev) == ASM_TOK_SLASH ||
+            ev_kind(ev) == ASM_TOK_SHL || ev_kind(ev) == ASM_TOK_SHR)) {
         uint8_t kind = ev_kind(ev);
         AsmValue r;
         ev->pos++;
@@ -1115,6 +1116,8 @@ static AsmValue ev_mul(Eval* ev) {
     return l;
 }
 
+/* GAS precedence (measured): * / << >> share one left-associative level
+ * above the additive operators; &, ^, | bind looser in that order. */
 static AsmValue ev_add_level(Eval* ev) {
     AsmValue l = ev_mul(ev);
     while (ev->status == ASM_OK &&
@@ -1130,27 +1133,12 @@ static AsmValue ev_add_level(Eval* ev) {
     return l;
 }
 
-static AsmValue ev_shift(Eval* ev) {
-    AsmValue l = ev_add_level(ev);
-    while (ev->status == ASM_OK &&
-           (ev_kind(ev) == ASM_TOK_SHL || ev_kind(ev) == ASM_TOK_SHR)) {
-        uint8_t kind = ev_kind(ev);
-        AsmValue r;
-        ev->pos++;
-        r = ev_add_level(ev);
-        if (ev->status != ASM_OK)
-            return l;
-        l = ev_binop(ev, kind, &l, &r);
-    }
-    return l;
-}
-
 static AsmValue ev_and(Eval* ev) {
-    AsmValue l = ev_shift(ev);
+    AsmValue l = ev_add_level(ev);
     while (ev->status == ASM_OK && ev_kind(ev) == ASM_TOK_AND) {
         AsmValue r;
         ev->pos++;
-        r = ev_shift(ev);
+        r = ev_add_level(ev);
         if (ev->status != ASM_OK)
             return l;
         l = ev_binop(ev, ASM_TOK_AND, &l, &r);

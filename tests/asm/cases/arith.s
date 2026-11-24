@@ -49,3 +49,8 @@ chk.w  (2, %a0), %d3
 abcd   %d0, %d1
 sbcd   -(%a0), -(%a1)
 nbcd   %d2
+cmpi.w #(1<<2)+3, %d0
+cmpi.w #1<<2+3, %d0
+cmpi.l #(2+3)<<1, %d0
+cmpi.l #1<<2*3, %d0
+cmpi.l #(8/2)>>1, %d0
