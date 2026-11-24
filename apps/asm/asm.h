@@ -14,7 +14,9 @@
 #define ASM_BSS_MAX 65536u
 #define ASM_SYMBOL_MAX 256
 #define ASM_RELOC_MAX 512
-#define ASM_NUMERIC_MAX 64
+/* Every line can define one numeric label, and the contract lets a numeric
+ * label be defined any number of times: keep room for one per line. */
+#define ASM_NUMERIC_MAX ASM_LINE_COUNT_MAX
 #define ASM_NAME_MAX 31
 #define ASM_EXPR_MAX 16
 #define ASM_DATA_EXPR_MAX 8
