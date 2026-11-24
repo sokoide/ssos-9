@@ -178,18 +178,19 @@ static LinkStatus apply_reloc(LinkImage* image, LinkLayout* layout,
             lk_put32(at, source + addend); /* constant: no fixup needed */
             return LINK_OK;
         }
-        /* A fixup record carries no addend, so the reference must be the
-         * bare symbol value. */
-        if (addend != 0)
-            return fail_reloc_target(layout, LINK_ERR_FIXUP, reloc, symbol,
-                                     reloc->offset);
+        /* The fixup payload is the offset the loader adds to the section
+         * base, so the addend folds into it: CODE32 carries
+         * header + S + A (the loader adds the code address and drops the
+         * code offset), DATA32 carries S + A. A payload outside the
+         * target section is rejected by the module validator at load. */
         if (target_section == LINK_SECTION_TEXT)
             return add_fixup(
                 image, layout, reloc, symbol, ledger->data_base + reloc->offset,
-                LINK_FIXUP_CODE32, LINK_IMAGE_HEADER_SIZE + source);
+                LINK_FIXUP_CODE32,
+                LINK_IMAGE_HEADER_SIZE + source + (uint32_t)addend);
         return add_fixup(image, layout, reloc, symbol,
                          ledger->data_base + reloc->offset, LINK_FIXUP_DATA32,
-                         source);
+                         source + (uint32_t)addend);
     case LINK_RELOC_ABS16:
         if (target_section != LINK_SECTION_ABS)
             return fail_reloc_target(layout, LINK_ERR_FIXUP, reloc, symbol,

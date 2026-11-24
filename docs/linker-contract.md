@@ -58,8 +58,8 @@ run ld OUTPUT IN1 [IN2 ...]
 | ABS8 (text) | abs | 定数として折り畳む。範囲 −128..255 (asm の `.byte` と同じ規則) |
 | ABS8 (text) | text/data/bss | 「PIC違反」エラー (8 bit の A5 変位命令は存在しない) |
 | ABS32 (data) | abs | 定数として折り畳む (fixup 不要) |
-| ABS32 (data) | text | CODE32 fixup を 1 件生成する |
-| ABS32 (data) | data/bss | DATA32 fixup を 1 件生成する |
+| ABS32 (data) | text | CODE32 fixup を 1 件生成する (payload は 80 + S + A) |
+| ABS32 (data) | data/bss | DATA32 fixup を 1 件生成する (payload は S + A) |
 | ABS16/ABS8 (data) | text/data/bss | エラー (fixup は 4 byte 整列 slot のみ。`.dc.l` で書く) |
 | ABS16/ABS8 (data) | abs | 定数として折り畳む |
 

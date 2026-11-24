@@ -226,9 +226,9 @@ def mini_link(objs):
                     patch(data, slot, target_value + addend, 4)
                     continue
                 if target_section == SECTION_TEXT:
-                    record = (slot, 1, M1_HEADER_SIZE + resolved)
+                    record = (slot, 1, M1_HEADER_SIZE + resolved + addend)
                 else:
-                    record = (slot, 2, resolved)
+                    record = (slot, 2, resolved + addend)
                 if slot in fixup_targets:
                     raise LinkError(f"duplicate fixup at slot {slot}")
                 fixup_targets.add(slot)
@@ -344,7 +344,7 @@ def link_with_host(link_host, output, inputs, workdir):
 
 def check_self_vectors(workdir, asm_host, link_host, report):
     failures = 0
-    sources = ["start.s", "main.s", "obj.s"]
+    sources = ["start.s", "main.s", "obj.s", "ptr.s"]
     objects = []
     for name in sources:
         out = workdir / (Path(name).stem + ".O")
@@ -359,7 +359,8 @@ def check_self_vectors(workdir, asm_host, link_host, report):
     # defines helper/factor before main.s references them. Both must match
     # the mini-linker byte for byte (mini_link is link-order independent).
     orders = [("PROG", ["start.O", "main.O", "obj.O"]),
-              ("PROGREV", ["start.O", "obj.O", "main.O"])]
+              ("PROGREV", ["start.O", "obj.O", "main.O"]),
+              ("PROGPTR", ["start.O", "ptr.O", "obj.O", "main.O"])]
     parsed = {path.name: parse_s9o1(path) for path in objects}
     for stem, inputs in orders:
         try:
@@ -398,8 +399,9 @@ def check_self_vectors(workdir, asm_host, link_host, report):
     if (workdir / "BAD.S9M").exists():
         report("FAIL negative: failed link left an output file")
         failures += 1
-    report("self-vector: PROG and PROGREV (definition-first order) match "
-           "the mini-linker, negative case rejected")
+    report("self-vector: PROG, PROGREV (definition-first order) and "
+           "PROGPTR (data pointer addends) match the mini-linker; "
+           "negative case rejected")
     return failures
 
 
