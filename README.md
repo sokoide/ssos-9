@@ -144,6 +144,36 @@ Human68K の他の MFP source の enable/mask 状態を変更しません。MFP 
 受入テスト全体の実行順、合否条件、XEiJ/MPX68K手順は
 [受入テスト手順](docs/acceptance-test-plan.md)を参照してください。
 
+### Release Test
+
+同じリリース候補のコミットと成果物で、次の3ターゲットを順に実行します。
+途中で失敗した場合は結果を保存し、修正後の候補で再実行します。
+
+```sh
+source ~/.elf2x68k
+make release-test-host
+```
+
+1. **Host・QEMU**。クロスビルド、host unit・統合テスト、assembler/linker golden、68000例題、QEMU t01〜t17を実行します。終了コード0を確認し、候補コミットと `ssos/build/export/ssos9.x`、`ssos9.xdf` および3つの `.s9m` のSHA-256を記録します。
+2. **XEiJ統合**。通常のXEiJを終了し、Human68kが `A:\>` まで起動できるiniを用意します。MC68000・12 MiB以上、書き込み可能なHuman68k形式SCSI HDDと `A:\TEST`、macOSのアクセシビリティ権限が必要です。次の実行で接続媒体を複製し、専用HFSとプローブを準備して起動、全26ケースを実行し、試験用XEiJを停止します。
+
+   ```sh
+   export SSOS9_XEIJ_JAR=/absolute/path/XEiJ.jar
+   export SSOS9_XEIJ_CGROM=/absolute/path/CGROM.dat
+   make release-test-xeij XEIJ_RELEASE_SOURCE_INI="$HOME/XEiJ.ini"
+   ```
+
+   `build/xeij/results/` の `result.json` で全26件が `pass`、a2でH1のMFP比較が有効かつ5回復元、ini・元媒体の前後ハッシュが一致することを確認します。複製Profileと起動ログは `build/xeij/profiles/` に残ります。C2右下セルは、保存された複製iniを同じJARで開き、目視結果を記録します。[C2の目視手順](docs/acceptance-test-plan.md#42-c2右下セルの目視-g3)
+3. **MPX68K統合**。MonitorSocket対応版を起動し、Human68kのFD0コピーから `A:\>` を表示します。FD1は空にし、端末にアクセシビリティと画面収録を許可します。`mtools`、Swift/Vision、`fsck.fat` が必要です。ターゲットが使い捨てのFD1画像を作り、挿入・試験・取り外しを行います。
+
+   ```sh
+   make release-test-mpx68k
+   ```
+
+   終了コード0、`SUMMARY: H2 result=PASS gates=11/11`、Human68kへの復帰、画像の前後SHA-256一致と `fsck.fat -n` の成功を確認します。画面証跡は `build/mpx68k-h2/` に保存されます。[MPX68Kの準備とH2の詳細](tests/README.md)
+
+**リリース合格条件**は、3ターゲットすべてが終了コード0で、C2目視を含む受入条件を満たし、ログの成果物ハッシュが公開する候補と一致することです。失敗・未実行・判定不能が残る場合は保留します。X68000実機の確認結果は別途記録します。XEiJランナーの高速化を含む変更ではG5の性能比較も適用します。[受入テスト手順と記録票](docs/acceptance-test-plan.md)
+
 ### テストコマンド
 
 - SSOS-9 の機能変更では、基本的に `make test` と `make test-qemu` を変更・実行します。変更箇所に合わせて native と統合テストへケースを追加してください。

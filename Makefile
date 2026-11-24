@@ -30,6 +30,9 @@ usage:
 	@echo "  make test-emulator-benchmark-compare-short  Compare short timing reports"
 	@echo "  make test-emulator-benchmark-compare-full   Compare full timing reports"
 	@echo "  make verify           Run automated verification and report hardware checks"
+	@echo "  make release-test-host    Run cross-build, unit, golden and QEMU tests"
+	@echo "  make release-test-xeij    Clone the XEiJ profile and run all integration cases"
+	@echo "  make release-test-mpx68k  Build fixtures and run MPX68K H2"
 	@echo "  make clean            Remove build outputs"
 	@echo "  make format           Format Markdown, C, and assembly sources"
 	@echo "  make debug            Build .x and create ELF disassembly/symbol/map files"
@@ -127,6 +130,21 @@ test-emulator-automated:
 
 test-emulator-h1:
 	python3 tools/xeij-suite.py --mfp-check a2
+
+XEIJ_RELEASE_SOURCE_INI ?= $(HOME)/XEiJ.ini
+
+.PHONY: release-test-host release-test-xeij release-test-mpx68k
+release-test-host: verify
+
+release-test-xeij: all build/xeij/mfpstate.x
+	$(MAKE) -C tests/target
+	$(MAKE) -C tests test-asm-host test-link-host
+	zsh tools/xeij-release.sh "$(XEIJ_RELEASE_SOURCE_INI)" $(EMULATOR_ALL_TESTS)
+
+release-test-mpx68k: all
+	command -v fsck.fat >/dev/null
+	$(MAKE) -C tests/target
+	tools/mpx68k-h2.sh
 
 test-emulator-benchmark:
 	$(MAKE) test-emulator-benchmark-short

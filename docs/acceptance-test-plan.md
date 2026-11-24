@@ -4,6 +4,8 @@
 
 この文書は、SSOS-9 の host/unit、QEMU、XEiJ、MPX68K 受入テストを一つの実行順にまとめたものです。実行結果はこの文書の末尾の記録票へ記入してください。実装済みテストの個別説明は本文に含め、実行スクリプトの正確なコマンドや詳細なデバッグ情報が必要な場合だけ関連文書を参照します。
 
+リリース候補の通常実行には [README の Release Test](../README.md#release-test) の3ターゲットを使います。以下の手動準備コマンドは個別確認にも使えます。
+
 ## 1. 受入範囲と判定
 
 受入対象は現在実装されている CLI-only SSOS-9 です。サポート対象は MC68000 16 MHz 以上、連続したメインRAM 12 MiB です。一般的なCランタイム、リダイレクト、未実装機能は受入対象に含めません。
@@ -84,12 +86,12 @@ make verify
 - cross-buildとXDF生成
 - host/nativeテスト、Human68k volume/storage、FAT12、mux、editor、assembler/linker core
 - assembler encoding goldenとlinker golden
-- QEMU t01〜t16
+- QEMU t01〜t17
 - 変更差分に対する `verify-check`
 
 Host/unitの対象はscheduler/context契約、native task/process/background builtins、FAT12/Human68k volumeとstorage integrity、mux入力経路、editor buffer/application、assembler parse/encode/object、linker wrap/CRCとhost coreです。assembler goldenは `m68k-xelf-as` とのencoding比較、linker goldenは独立mini-linkerおよび対応profileでGNU ldとの比較を行います。
 
-QEMU t01〜t16の対象は次のとおりです。
+QEMU t01〜t17の対象は次のとおりです。
 
 | Test | 確認内容 |
 | --- | --- |
@@ -109,6 +111,7 @@ QEMU t01〜t16の対象は次のとおりです。
 | t14 | 実asm/ld module、linked program起動、FAT fallbackと負例 |
 | t15 | editor/muxからasm→ld→runの統合フロー |
 | t16 | Human68k volume/storageのsynthetic fixture |
+| t17 | CLIのHuman68k SCSI mount・write・read |
 
 QEMU側もproduction MFP interrupt handlerを実行するものではありません。
 
