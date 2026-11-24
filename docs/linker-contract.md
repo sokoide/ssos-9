@@ -64,6 +64,7 @@ run ld OUTPUT IN1 [IN2 ...]
 | ABS16/ABS8 (data) | abs | 定数として折り畳む |
 
 - fixup の対象 slot は private data 内オフセットで、4 byte 整列と init data 領域内 (bss は image バイトを持たない) を要求する。非整列は「整列」エラー、同一 slot への重複は「二重 fixup」エラー (validator も重複を拒否する)。
+- fixup の参照先 `S + A` は CODE32 ではパディングを含む出力 code 領域内、DATA32 では出力 private data 領域内に収める。範囲外はリンク時に「範囲」エラーになる。
 - ABS16 (text) → data/bss の解釈は文脈を区別できない (`x(%a5)` の変位も `.dc.w x` も同じ ABS16 になる)。リンカはこれを常に「A5 変位」と読む。text 内での `.dc.w x` / 絶対 `.w` 参照は意味をなさないため、ソース側で書かないこと (「既知の限界」参照)。
 
 ### A5 / private data 契約

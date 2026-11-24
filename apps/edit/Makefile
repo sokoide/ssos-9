@@ -13,7 +13,7 @@ build:
 build/start.o: ../../examples/hello/start.s | build
 	$(CC) -m68000 -c $< -o $@
 
-build/%.o: %.c buffer.h ../../ssos/include/ssos9/user.h ../../ssos/include/ssos9/syscall.h | build
+build/%.o: %.c buffer.h ../../ssos/include/ssos9/user.h ../../ssos/include/ssos9/syscall.h Makefile | build
 	$(CC) $(CFLAGS) -c $< -o $@
 
 build/edit.elf: build/start.o build/main.o build/buffer.o ../../examples/hello/module.ld
@@ -21,7 +21,7 @@ build/edit.elf: build/start.o build/main.o build/buffer.o ../../examples/hello/m
 
 build/edit.s9m: build/edit.elf ../../tools/mkmodule.py
 	python3 ../../tools/mkmodule.py $< --name edit --stack-size 32768 \
-		--stack-usage $(wildcard build/*.su) -o $@
+		--stack-usage build/main.su build/buffer.su -o $@
 
 build/edit.xdf: build/edit.s9m ../../tools/mkfat12xdf.py
 	python3 ../../tools/mkfat12xdf.py $< $@ --name EDIT.S9M

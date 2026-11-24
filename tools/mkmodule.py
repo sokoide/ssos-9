@@ -145,7 +145,7 @@ def main():
     parser.add_argument("elf", type=Path)
     parser.add_argument("--name", required=True)
     parser.add_argument("--stack-size", type=int, default=STACK_DEFAULT)
-    parser.add_argument("--stack-usage", type=Path, nargs="*", default=[],
+    parser.add_argument("--stack-usage", type=Path, nargs="+", default=[],
                         help="-fstack-usage files (.su) of the module objects; "
                              "fails when main plus one nested frame and the "
                              "kernel reserve do not fit the stack")

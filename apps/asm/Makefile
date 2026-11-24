@@ -15,12 +15,12 @@ build:
 build/start.o: ../../examples/hello/start.s | build
 	$(CC) -m68000 -c $< -o $@
 
-build/%.o: %.c asm.h ../../ssos/include/ssos9/user.h ../../ssos/include/ssos9/syscall.h | build
+build/%.o: %.c asm.h ../../ssos/include/ssos9/user.h ../../ssos/include/ssos9/syscall.h Makefile | build
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Shared with apps/link; an explicit rule because ../support.c cannot be a
 # pattern-rule stem.
-build/support.o: ../support.c | build
+build/support.o: ../support.c Makefile | build
 	$(CC) $(CFLAGS) -c $< -o $@
 
 CORE_OBJS = $(patsubst %.c,build/%.o,$(CORE))

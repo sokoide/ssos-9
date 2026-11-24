@@ -399,6 +399,26 @@ def check_self_vectors(workdir, asm_host, link_host, report):
     if (workdir / "BAD.S9M").exists():
         report("FAIL negative: failed link left an output file")
         failures += 1
+    for tag, section, addend in (("code", "text", "-65536"),
+                                 ("data", "data", "+65536")):
+        source = workdir / f"bad-{tag}.s"
+        obj = f"bad-{tag}.O"
+        output = f"bad-{tag}.S9M"
+        source.write_text(f".{section}\nbase:\n.dc.l 0\n"
+                          f".data\n.dc.l base{addend}\n")
+        result = run([asm_host, source, workdir / obj])
+        if result.returncode != 0:
+            report(f"FAIL {tag} range: asm-host failed: {result.stderr.strip()}")
+            failures += 1
+            continue
+        result = link_with_host(link_host, output, [*orders[0][1], obj], workdir)
+        if result.returncode == 0 or (workdir / output).exists():
+            report(f"FAIL {tag} range: out-of-range fixup was accepted")
+            failures += 1
+        elif "Relocation value out of range" not in result.stdout + result.stderr:
+            report(f"FAIL {tag} range: unexpected diagnostic: "
+                   f"{(result.stdout + result.stderr).strip()}")
+            failures += 1
     report("self-vector: PROG, PROGREV (definition-first order) and "
            "PROGPTR (data pointer addends) match the mini-linker; "
            "negative case rejected")
