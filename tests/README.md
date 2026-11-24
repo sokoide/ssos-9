@@ -573,13 +573,13 @@ On 2026-11-21, a second coverage-review round landed the following test
 additions; host and QEMU suites pass on the integrated tree
 (native 55/55 including ASan/UBSan, QEMU 17/17), while every
 live-emulator execution is pending because no XEiJ or MPX68K was running.
-The a2 MFP probe (`tests/xeij/mfp_snapshot.c`) now also reports
-IERA/IMRA/TACR/VR and the Timer A/KEY/CRTC ($138/$13C) vectors, so the
-`SSOS9_XEIJ_MFP_CHECK=1` string comparison covers everything
-`mfp_state.s` saves and restores except TADR (a running Timer A counter
-is not a stable comparison value). MFPSTATE is now 8 byte fields plus 7
-dwords; the itest extraction strips screen wrap before matching the
-fixed-length pattern. C1 additionally runs `uptime`, `modules`, `clear`,
+The a2 MFP probe (`tests/xeij/mfp_snapshot.c`) reports
+IERA/IMRA/TACR/TBCR/VR and the Timer A/KEY/CRTC ($138/$13C) vectors, so
+the `SSOS9_XEIJ_MFP_CHECK=1` string comparison covers every register and
+vector `mfp_state.s` saves and restores. TADR appears in neither: it is
+not saved by `mfp_state.s`, and a running counter is not a stable
+comparison value. MFPSTATE is 9 byte fields plus 7 dwords; the itest
+extraction strips screen wrap before matching the fixed-length pattern. C1 additionally runs `uptime`, `modules`, `clear`,
 and `version` so every help-table command has a real-IOCS pass. New
 opt-in area c6 checks BS/DEL line editing through real IOCS ("helq"+BS
 completes to help, "cleax"+DEL to clear); the `bs`/`del` typekey names

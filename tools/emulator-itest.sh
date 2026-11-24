@@ -311,13 +311,13 @@ human68k_mfp_snapshot() {
     type_cmd 'cls'
     type_cmd 'f:mfpstate'
     wait_screen 'MFPSTATE=' 10 || fail 'Human68k MFP snapshot failed' "$s"
-    # The MFPSTATE line (8 byte fields + 7 dword fields) exceeds the
+    # The MFPSTATE line (9 byte fields + 7 dword fields) exceeds the
     # 80-column text screen, so the copy wraps it. Strip whitespace and row
     # breaks first: the wrapped halves join back into the exact-length
     # byte/dword pattern below. Padding only trails the value, so no
     # captured byte can be lost or reordered.
     MFP_SNAPSHOT=$(print -r -- "$s" | tr -d ' \r\n\t' |
-        grep -Eo 'MFPSTATE=([0-9A-F]{2}/){8}([0-9A-F]{8}/){6}[0-9A-F]{8}')
+        grep -Eo 'MFPSTATE=([0-9A-F]{2}/){9}([0-9A-F]{8}/){6}[0-9A-F]{8}')
     [[ -n "$MFP_SNAPSHOT" ]] || fail 'invalid MFP snapshot' "$s"
     if ! screen_line "$s" 'A:\\>'; then
         wait_line 'A:\\>' 8 || fail 'Human68k did not return after MFP snapshot' "$s"

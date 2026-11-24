@@ -23,6 +23,7 @@ int main(void) {
     unsigned ier_a = read_byte(0xe88007);
     unsigned imr_a = read_byte(0xe88013);
     unsigned tacr = read_byte(0xe88019);
+    unsigned tbcr = read_byte(0xe8801f);
     unsigned vr = read_byte(0xe88017);
     unsigned long timer_d = read_vector(0x110);
     unsigned long trap0 = read_vector(0x080);
@@ -36,11 +37,12 @@ int main(void) {
     /* The line is longer than the 80-column text screen and wraps on the
      * guest; the itester strips whitespace and row breaks before matching.
      * Byte fields and dword fields are told apart by width in the MFPSTATE
-     * regex. TADR is omitted on purpose: a running Timer A counter is not
-     * a stable comparison value. */
-    printf("MFPSTATE=%02X/%02X/%02X/%02X/%02X/%02X/%02X/%02X/"
+     * regex. The register set matches every register mfp_state.s saves and
+     * restores; TADR appears in neither (a running counter is not a stable
+     * comparison value). */
+    printf("MFPSTATE=%02X/%02X/%02X/%02X/%02X/%02X/%02X/%02X/%02X/"
            "%08lX/%08lX/%08lX/%08lX/%08lX/%08lX/%08lX\r\n",
-           ier_b, imr_b, tcdcr, tddr, ier_a, imr_a, tacr, vr,
+           ier_b, imr_b, tcdcr, tddr, ier_a, imr_a, tacr, tbcr, vr,
            timer_d, trap0, trap13, timer_a, key, crtc_lo, crtc_hi);
     return 0;
 }
