@@ -161,8 +161,9 @@ def main():
     report["originals_after"], report["media_after"] = profile_evidence(ini)
     if restoration["before"] != restoration["after"] or originals != report["originals_after"]:
         print("XEiJ configuration or original media changed during run", flush=True)
-        if not exit_code:
-            exit_code = 3
+        # Environment damage outranks every case result, so an unchanged exit
+        # code can never mark a run green or read as a plain case failure.
+        exit_code = 3
     report["seconds"] = time.monotonic() - suite_start
     report["exit_code"] = exit_code
     save_report(run_dir, report)

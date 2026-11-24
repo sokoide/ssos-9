@@ -56,14 +56,17 @@ release_held_keys() {
     return "$result"
 }
 finish_case() {
-    local result=$1
+    local result=$1 restore_failed=0
     trap - EXIT
     # A caught signal is reset on exec, so a restarted JVM still honors TERM.
     trap ':' HUP INT TERM
     release_held_keys || { (( result != 0 )) || result=1; }
     if [[ -n "$ini_backup" ]]; then
-        restore_xeij_ini || { (( result != 0 )) || result=3; }
+        restore_xeij_ini || restore_failed=1
     fi
+    # A broken environment outranks a case failure: a failed ini restore must
+    # surface as 3, never as the plain FAIL of exit 1.
+    (( restore_failed )) && exit 3
     exit "$result"
 }
 
